@@ -1,0 +1,56 @@
+menu "LastLink Configuration"
+
+    config LASTLINK_WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID (network name) for the example to connect to.
+
+    config LASTLINK_WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+        help
+            WiFi password (WPA or WPA2) for the example to use.
+
+    config LASTLINK_MAX_STA_CONN
+        int "Maximal STA connections"
+        default 4
+        help
+            Max number of the STA connects to AP.
+
+    choice LASTLINK_DEVICE
+        prompt "Radio device selection"
+        default LASTLINK_DEVICE_SX127x
+        help
+           Selects the specific device to use for low-level I/O
+
+    	config LASTLINK_DEVICE_SX127x
+            bool "Select SX127x Family"
+
+        config LASTLINK_DEVICE_SX126x
+            bool "Select SX126x Family"
+
+    endchoice
+
+    config LASTLINK_CONFIG_FILE
+        string "Name of config file"
+        default "/spiffs/.config"
+        help
+            Enter the name of the configuation control file
+
+    config SPIFFS_PARTITION_NAME
+        string "Name of SPIFFS partition"
+        default "storage"
+        help
+            Enter the name of the spiffs partition as used in the parition table.
+
+    config LASTLINK_INITIAL_FREE_PACKETS
+        int "Size of initial pool of packets"
+        default 10
+        help
+            The number of packets initially placed in the FREE queue.
+            More will be added if this limit is reached, but some
+            packet loss may occur if the pool is empty during an
+            interrupt service.
+
+endmenu
