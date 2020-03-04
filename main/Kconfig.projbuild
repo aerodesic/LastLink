@@ -20,17 +20,219 @@ menu "LastLink Configuration"
 
     choice LASTLINK_DEVICE
         prompt "Radio device selection"
-        default LASTLINK_DEVICE_SX127x
+        default LASTLINK_DEVICE_SX127x_SPI
         help
            Selects the specific device to use for low-level I/O
 
-    	config LASTLINK_DEVICE_SX127x
-            bool "Select SX127x Family"
+    	config LASTLINK_DEVICE_SX127x_SPI
+            bool "Select SX127x Family (SPI)"
 
-        config LASTLINK_DEVICE_SX126x
-            bool "Select SX126x Family"
+        config LASTLINK_DEVICE_SX126x_SPI
+            bool "Select SX126x Family (SPI)"
 
     endchoice
+
+    menu "LastLink SX127x Hardware connection"
+        depends on LASTLINK_DEVICE_SX127x_SPI
+ 
+        config LASTLINK_GPIO_DIO0
+            int "DIO0 GPIO line"
+            default 26
+            range 1 36
+            help
+                Connection for the DIO0 line used to report transmit and receive interrupts.
+ 
+        config LASTLINK_GPIO_DIO1
+            int "DIO1 GPIO line"
+            default 35
+            range 1 36
+            help
+                Connection for the DIO1 line
+ 
+        config LASTLINK_GPIO_DIO2
+            int "DIO2 GPIO line"
+            default 34
+            range 1 36
+            help
+                Connection for the DIO2 line
+ 
+        config LASTLINK_GPIO_SCK
+            int "SCK GPIO line"
+            default 5
+            range 1 36
+            help
+                Connection for the SPI Clock line
+ 
+        config LASTLINK_GPIO_MOSI
+            int "MOSI GPIO line"
+            default 27
+            range 1 36
+            help
+                Connection for the MOSI line
+ 
+        config LASTLINK_GPIO_MISO
+            int "MISO GPIO line"
+            default 19
+            range 1 36
+            help
+                Connection for the MISO line
+ 
+        config LASTLINK_GPIO_SS
+            int "SS GPIO line"
+            default 18
+            range 1 36
+            help
+                Connection for the SS (Select) line
+ 
+        config LASTLINK_GPIO_RESET
+            int "RESET GPIO line"
+            default 14
+            range 1 36
+            help
+                Connection for the RESET line
+    endmenu
+
+    menu "LastLink Packet Configuration"
+        config LASTLINK_ROUTE_LIFETIME
+            int "Route Lifetime in mS"
+            default 15000
+            help
+                This defines the time a route will exist before requiring
+                a new RouteRequest to be performed.
+        config LASTLINK_MAX_ROUTES
+            int "Maximum number of routes in table"
+            default 64
+            help
+                Sets the maximum number of route table entries per device.
+
+        config LASTLINK_ENABLE_ROUTE_ANNOUNCE
+            bool "Enable RouteAnnounce messages"
+            default false
+            help
+                If enabled, RouteAnnounce messages will be generated
+                every <ANNOUNCE INTERVAL> milliseconds.
+
+        config LASTLINK_ANNOUNCE_INTERVAL
+            depends on LASTLINK_ENABLE_ROUTE_ANNOUNCE
+            int "Interval (mS) for Route Announcements"
+            default 15000
+            range 15000 60000
+            help
+                When enabled, routes will be announced every <interval> milliseconds.
+
+        config LASTLINK_REPLY_TIMEOUT
+            int "Reply timeout in milliseconds"
+            default 15000
+            range 5000 30000
+            help
+                xxx
+        
+        config LASTLINK_ROUTEREQUEST_TIMEOUT
+            int "Route Request Timeout"
+            default 15000
+            range 5000 30000
+            help
+                Timeout for waiting for a RouteAnnounce from a RouteRequest.
+
+        config LASTLINK_ROUTEREQUEST_RETRIES
+            int "Route Request Retries"
+            default 5
+            range 3 10
+            help
+                Number of retries to receive a RouteAnnounce from RouteRequest
+
+        config LASTLINK_PROTOCOL_LENGTH
+            int "Length of Protocol type field"
+            default 1
+            range 1 4
+            help
+                Number of bytes in a protocol type field
+
+        config LASTLINK_FLAGS_LENGTH
+            int "Length of Flags field"
+            default 1
+            range 1 4
+            help
+                Number of bytes in Flags field.
+
+        config LASTLINK_ADDRESS_LENGTH
+            int "Length of an address"
+            default 2
+            range 1 6
+            help
+                Number of bytes in Address field.
+
+        config LASTLINK_BROADCAST_ADDRESS
+            hex "A Broadcast address"
+            default 0xFFFF
+            help
+                The address used for broadcast to all nodes
+
+        config LASTLINK_NULL_ADDRESS
+            hex "A NULL address"
+            default 0
+            help
+                The address used when an address is unspecified.
+                Used to mark packets that need to be labeled with
+                source, destination and route.
+
+        config LASTLINK_SEQUENCE_NUMBER_LENGTH
+            int "Length of a sequence number"
+            default 2
+            range 1 4
+            help
+                The length of a sequence number field in the packet.
+
+        config LASTLINK_INTERVAL_LENGTH
+            int "Length of a interval number"
+            default 2
+            range 1 4
+            help
+                The length of a interval field in the packet.
+
+        config LASTLINK_TTL_LENGTH
+            int "Length of a metric field"
+            default 1
+            range 1 4
+            help
+                The length of a ttl (time to live) field in the packet.
+
+        config LASTLINK_TTL_DEFAULT
+            int "Default TTL value"
+            default 64
+            range 1 256
+            help
+                The default value of a ttl (time to live) field in the packet.
+
+        config LASTLINK_METRIC_LENGTH
+            int "Length of a metric field"
+            default 1
+            range 1 4
+            help
+                The length of a metric field in the packet.
+
+        config LASTLINK_MAX_METRIC
+            int "Maximum value of a metric"
+            default 64
+            range 1 256
+            help
+                The maximum metric value
+
+        config LASTLINK_BEACON_NAME_LENGTH
+           int "Length of name in beacon packet"
+           default 16
+           range 10 128
+           help
+               The number of bytes available for a node name in the beacon.
+
+        config LASTLINK_REASON_LENGTH
+           int "Length of reason field in RouteError"
+           default 16
+           range 10 128
+           help
+               The number of bytes available for a reason in the RouteError.
+
+    endmenu
 
     config LASTLINK_CONFIG_FILE
         string "Name of config file"
@@ -44,13 +246,13 @@ menu "LastLink Configuration"
         help
             Enter the name of the spiffs partition as used in the parition table.
 
-    config LASTLINK_INITIAL_FREE_PACKETS
-        int "Size of initial pool of packets"
+    config LASTLINK_NUM_PACKETS
+        int "Number of available packets."
         default 10
         help
-            The number of packets initially placed in the FREE queue.
-            More will be added if this limit is reached, but some
-            packet loss may occur if the pool is empty during an
-            interrupt service.
+            This defines the number of packets available.  No additional
+            memory is allocated beyond this limit, so if you run out,
+            packets will be dropped.
+
 
 endmenu

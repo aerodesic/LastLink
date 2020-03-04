@@ -70,7 +70,7 @@ static esp_err_t delete_config_cell(configitem_t* item)
 {
     esp_err_t ret = ESP_OK;
 
-    ESP_LOGI(TAG, "delete_config_cell: '%s' type %d", item->name, item->type);
+    ESP_LOGD(TAG, "delete_config_cell: '%s' type %d", item->name, item->type);
 
     /* Remove item from table */
     item->next->prev = item->prev;
@@ -107,12 +107,12 @@ static esp_err_t release_config(configitem_t** table)
     configitem_t* item = *table;
 
     while ((ret == ESP_OK) && (item != NULL)) {
-        ESP_LOGI(TAG, "'%s' item %p next %p prev %p", item->name, item, item->next, item->prev);
+        ESP_LOGD(TAG, "'%s' item %p next %p prev %p", item->name, item, item->next, item->prev);
         configitem_t* nextitem = item->next;
         /* If deleting the last item, call it empty after deletion */
         bool empty = nextitem == item;
         ret = delete_config_cell(item);
-        ESP_LOGI(TAG, "list is %s", empty ? "empty" : "not empty");
+        ESP_LOGD(TAG, "list is %s", empty ? "empty" : "not empty");
         item = empty ? NULL : nextitem;
     }
 
@@ -184,10 +184,10 @@ static configitem_t* add_config_cell(configitem_t** owner, const char* info)
             cell->next = cell;
             cell->prev = cell;
             *owner = cell;
-            ESP_LOGI(TAG, "new cell '%s' at %p owned by list %p", info, cell, owner);
+            ESP_LOGD(TAG, "new cell '%s' at %p owned by list %p", info, cell, owner);
         } else {
             /* Insert it at end of owner */
-            ESP_LOGI(TAG, "appending '%s' at %p to owner by %p at %p", info, cell, *owner, (*owner)->prev);
+            ESP_LOGD(TAG, "appending '%s' at %p to owner by %p at %p", info, cell, *owner, (*owner)->prev);
             cell->next = *owner;
             cell->prev = (*owner)->prev;
             (*owner)->prev->next = cell;
@@ -378,7 +378,7 @@ esp_err_t init_configuration(const char* filename, const char **default_config)
                 if (new_version != NULL && new_version->type == CONFIG_VALUE &&
                     old_version != NULL && old_version->type == CONFIG_VALUE) {
 
-                    ESP_LOGI(TAG, "old_version = %s  new_version = %s", old_version->value, new_version->value);
+                    ESP_LOGD(TAG, "old_version = %s  new_version = %s", old_version->value, new_version->value);
 
                     if (strtol(new_version->value, NULL, 0) == strtol(old_version->value, NULL, 0)) {
 
@@ -390,12 +390,12 @@ esp_err_t init_configuration(const char* filename, const char **default_config)
         }
 
         if (reset_default) {
-            ESP_LOGI(TAG, "init_configuration from default");
+            ESP_LOGD(TAG, "init_configuration from default");
             release_config(&config_table);
             config_table = new_config;
             save_config(config_file_name);
         } else {
-            ESP_LOGI(TAG, "init_configuration from file");
+            ESP_LOGD(TAG, "init_configuration from file");
             release_config(&new_config);
         }
 
@@ -403,7 +403,9 @@ esp_err_t init_configuration(const char* filename, const char **default_config)
     }
 
     /* Write messages to logfile */
+#ifdef DEBUG
     save_config(NULL);
+#endif
 
     return ret;
 }
@@ -437,14 +439,14 @@ static configitem_t* find_config_entry(const char* name, configitem_t** parent, 
         tokens = NULL;
 	found = NULL;
 
-        ESP_LOGI(TAG, "find_config_item looking for '%s'", field);
+        ESP_LOGD(TAG, "find_config_item looking for '%s'", field);
 
         configitem_t* item = table;
         do {
-            ESP_LOGI(TAG, "looking for '%s' at %p '%s'", field, item, item->name);
+            ESP_LOGD(TAG, "looking for '%s' at %p '%s'", field, item, item->name);
             if (strcmp(item->name, field) == 0) {
                 /* Found field */
-                ESP_LOGI(TAG, "found at %p type %d", item, item->type);
+                ESP_LOGD(TAG, "found at %p type %d", item, item->type);
                 found = item;
             }
             item = item->next;

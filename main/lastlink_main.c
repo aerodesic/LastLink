@@ -21,6 +21,7 @@
 //#include "lastlink.h"
 #include "configdata.h"
 #include "default_config.h"
+#include "packet.h"
 
 const char* TAG = "lastlink";
 
@@ -44,17 +45,36 @@ void app_main(void)
         }
     }
 
-    ESP_LOGI(TAG, "About to load configuration");
+    ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
     init_configuration(CONFIG_LASTLINK_CONFIG_FILE, default_config);
 
-    ESP_LOGI(TAG, "zap = '%s'", get_config_str("zip", "not found"));
-    ESP_LOGI(TAG, "section1.this = '%s'", get_config_str("section1.this", "not found"));
-    ESP_LOGI(TAG, "section1.section2.blot = '%s'", get_config_str("section1.section2.blot", "not found"));
-    ESP_LOGI(TAG, "zorch = '%s'", get_config_str("zorch", "not found"));
-    ESP_LOGI(TAG, "section1.section2.section3.only = '%s'", get_config_str("section1.section2.section3.only", "not found"));
-    ESP_LOGI(TAG, "notfound = '%s'", get_config_str("notfound", "not found"));
+    ESP_LOGD(TAG, "zap = '%s'", get_config_str("zip", "not found"));
+    ESP_LOGD(TAG, "section1.this = '%s'", get_config_str("section1.this", "not found"));
+    ESP_LOGD(TAG, "section1.section2.blot = '%s'", get_config_str("section1.section2.blot", "not found"));
+    ESP_LOGD(TAG, "zorch = '%s'", get_config_str("zorch", "not found"));
+    ESP_LOGD(TAG, "section1.section2.section3.only = '%s'", get_config_str("section1.section2.section3.only", "not found"));
+    ESP_LOGD(TAG, "notfound = '%s'", get_config_str("notfound", "not found"));
+
+#ifdef DEBUG
+    /* Initialize packet system */
+    int  num_packets = init_packets(CONFIG_LASTLINK_NUM_PACKETS);
+    ESP_LOGD(TAG, "init_packets(%d) returned %d", CONFIG_LASTLINK_NUM_PACKETS, num_packets);
+
+    /* Get a free packet */
+    packet_t* packet = allocate_packet();
+    ESP_LOGD(TAG, "allocate_packet returned %p (use %d, length %d)", packet, packet->use, packet->length);
+
+    /* Show packets available */
+    ESP_LOGD(TAG, "number of packets available %d", packets_available());
+
+    bool ok = release_packet(packet);
+    ESP_LOGD(TAG, "release_packet returned %s", ok ? "OK" : "FAIL");
+
+    /* Show packets available */
+    ESP_LOGD(TAG, "number of packets available %d", packets_available());
+#endif
 
     /* initialize the lastlink network */
     //lastlink_init();
