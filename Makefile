@@ -5,5 +5,7 @@
 
 PROJECT_NAME := LastLink
 
+EXTRA_CFLAGS = -s
+
 include $(IDF_PATH)/make/project.mk
 

@@ -21,7 +21,14 @@
 //#include "lastlink.h"
 #include "configdata.h"
 #include "default_config.h"
-#include "packet.h"
+#include "packets.h"
+
+/* TEST */
+extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
+extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
+
+const uint8_t *xyz = server_root_cert_pem_end;
+/* END TEST */
 
 const char* TAG = "lastlink";
 
@@ -59,8 +66,8 @@ void app_main(void)
 
 #ifdef DEBUG
     /* Initialize packet system */
-    int  num_packets = init_packets(CONFIG_LASTLINK_NUM_PACKETS);
-    ESP_LOGD(TAG, "init_packets(%d) returned %d", CONFIG_LASTLINK_NUM_PACKETS, num_packets);
+    int  num_packets = init_packets(NUM_PACKETS);
+    ESP_LOGD(TAG, "init_packets(%d) returned %d", NUM_PACKETS, num_packets);
 
     /* Get a free packet */
     packet_t* packet = allocate_packet();
