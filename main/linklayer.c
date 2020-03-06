@@ -50,7 +50,7 @@ static int linklayer_read_register(radio_t* radio, int reg);
 static void linklayer_write_register(radio_t* radio, int reg, int value);
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
 static packet_t* linklayer_on_receive(radio_t* radio, packet_t* packet, bool crc_ok, int rssi);
-static packet_t* linklayer_on_transmit(radio_t* radio);
+static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet);
 static void linklayer_write_buffer(radio_t* radio, int reg, uint8_t* buffer, int length);
 static int linklayer_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int bufsize);
 
@@ -225,8 +225,8 @@ static void beacon_packet_process(packet_t* p)
                  name);
 
         free((void*) name);
+        packet_release(p);
     }
-    packet_release(p);
 }
 
 
@@ -330,11 +330,10 @@ static void routerequest_packet_process(packet_t* p)
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
                 send_packet_update_ttl(p);
             }
+        }
 
         xSemaphoreGiveRecursive(linklayer_lock);
-    }
-
-    packet_release(p);
+        packet_release(p);
     }
 }
 
@@ -414,13 +413,13 @@ static void data_packet_process(packet_t* p)
 }
 
 static linklayer_t linklayer = {
-    .read_register = linklayer_read_register,
-    .write_register = linklayer_write_register,
+    .read_register    = linklayer_read_register,
+    .write_register   = linklayer_write_register,
     .attach_interrupt = linklayer_attach_interrupt,
-    .on_receive = linklayer_on_receive,
-    .on_transmit = linklayer_on_transmit,
-    .write_buffer = linklayer_write_buffer,
-    .read_buffer = linklayer_read_buffer,
+    .on_receive       = linklayer_on_receive,
+    .on_transmit      = linklayer_on_transmit,
+    .write_buffer     = linklayer_write_buffer,
+    .read_buffer      = linklayer_read_buffer,
 };
 
 /* Creates the linklayer */
@@ -562,7 +561,7 @@ static packet_t* linklayer_on_receive(radio_t* radio, packet_t* packet, bool crc
     return NULL;
 }
 
-static packet_t* linklayer_on_transmit(radio_t* radio)
+static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet)
 {
     return NULL;
 }
