@@ -271,7 +271,7 @@ static void routeannounce_packet_process(packet_t* p)
                   set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                   /* Update the metric */
                   set_uint_field(p, RANN_METRIC, METRIC_LEN, get_uint_field(p, RANN_METRIC, METRIC_LEN));
-                  send_packet_update_ttl(p);
+                  linklayer_send_packet_update_ttl(p);
              }
         }
         xSemaphoreGiveRecursive(route_table.lock);
@@ -320,7 +320,7 @@ static void routerequest_packet_process(packet_t* p)
 
             /* If packet is targeted for our node, process it */
             if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
-                send_packet(routeannounce_packet_create(
+                linklayer_send_packet(routeannounce_packet_create(
                                  get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
                                  get_int_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                  get_uint_field(p, RREQ_METRIC, METRIC_LEN)));
@@ -328,7 +328,7 @@ static void routerequest_packet_process(packet_t* p)
           /* Else if it's a broadcast and we haven't seen it before, rebroadcast it to next hop */
             } else if (get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
-                send_packet_update_ttl(p);
+                linklayer_send_packet_update_ttl(p);
             }
         }
 
@@ -405,7 +405,7 @@ static void data_packet_process(packet_t* p)
             put_received_packet(p);
         } else {
             set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-            send_packet_update_ttl(p);
+            linklayer_send_packet_update_ttl(p);
         }
         packet_release(p);
         xSemaphoreGiveRecursive(linklayer_lock);
@@ -521,20 +521,25 @@ static int allocate_sequence(void)
     return sequence;
 }
 
-void send_packet(packet_t* packet)
+void linklayer_send_packet(packet_t* packet)
 {
     /* work */
 }
 
-void send_packet_update_ttl(packet_t* packet)
+void linklayer_send_packet_update_ttl(packet_t* packet)
 {
     int ttl = get_uint_field(packet, HEADER_TTL, TTL_LEN);
     if (--ttl > 0) {
         set_uint_field(packet, HEADER_TTL, TTL_LEN, ttl);
-        send_packet(packet);
+        linklayer_send_packet(packet);
     } else {
         packet_release(packet);
     }
+}
+
+int linklayer_get_node_address(void)
+{
+    return node_address;
 }
 
 static void put_received_packet(packet_t* packet)

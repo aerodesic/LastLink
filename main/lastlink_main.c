@@ -84,7 +84,7 @@ void app_main(void)
 #endif
 
     /* initialize the lastlink network */
-    //lastlink_init();
+    //linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
 
     /* This becomes the main thread */
     wifi_init_softap();

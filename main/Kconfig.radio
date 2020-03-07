@@ -3,25 +3,30 @@
 #
 config LASTLINK_RADIO_$(RADIO_NUM)_ENABLED
     bool "Enable radio $(RADIO_NUM)"
+    depends on LASTLINK_RADIO_SX126x_ENABLED || LASTLINK_RADIO_SX127x_ENABLED
     default $(DEFAULT_RADIO_ENABLE)
  
 choice "LASTLINK_RADIO_$(RADIO_NUM)"
     depends on LASTLINK_RADIO_$(RADIO_NUM)_ENABLED
+    depends on LASTLINK_RADIO_SX126x_ENABLED || LASTLINK_RADIO_SX127x_ENABLED
 
     prompt "Radio device selection"
     default LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
     help
        Selects the connection used for radio $(RADIO_NUM)
 
-    config LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
-        bool "Select SX127x Family (SPI)"
-
     config LASTLINK_RADIO_$(RADIO_NUM)_SX126x_SPI
         bool "Select SX126x Family (SPI)"
+        depends on LASTLINK_RADIO_SX126x_ENABLED
+
+    config LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
+        bool "Select SX127x Family (SPI)"
+        depends on LASTLINK_RADIO_SX127x_ENABLED
 
 endchoice
 
 menu "Radio $(RADIO_NUM) SPI configuration"
+    depends on LASTLINK_RADIO_SX12x_ENABLED || LASTLINK_RADIO_SX127x_ENABLED
     depends on LASTLINK_RADIO_$(RADIO_NUM)_SX126x_SPI || LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
 
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO0

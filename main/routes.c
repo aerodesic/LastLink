@@ -4,10 +4,7 @@
  * Handle routes
  */
 
-#include "time.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/timers.h"
+#include "os_freertos.h"
 
 #include "linklayer.h"
 #include "packets.h"
@@ -15,14 +12,14 @@
 
 static route_t*           routes;
 static int                num_routes;
-static SemaphoreHandle_t  route_mutex;
+static os_mutex_t         route_mutex;
 
 bool route_table_lock(route_table_t* rt)
 {
     bool ok = false;
 
     if (rt != NULL) {
-        ok = xSemaphoreTakeRecursive(rt->lock, 0) == pdTRUE;
+        ok = os_acquire_mutex(rt->lock);
     }
     return ok;
 }
@@ -32,7 +29,7 @@ bool route_table_unlock(route_table_t *rt)
     bool ok = false;
 
     if (rt != NULL) {
-        ok = xSemaphoreGiveRecursive(rt->lock) == pdTRUE;
+        ok = os_release_mutex(rt->lock); 
     }
     return ok;
 }
@@ -42,7 +39,7 @@ route_table_t* route_table_init(route_table_t* rt)
     /* Do not recreate a table if it exists */
     if (rt != NULL && rt->lock == NULL) {
 
-        rt->lock = xSemaphoreCreateRecursiveMutex();
+        rt->lock = os_create_recursive_mutex();
         rt->routes = NULL;
         rt->num_routes = 0;
     }
@@ -64,7 +61,7 @@ bool route_table_deinit(route_table_t* rt)
 	    }
 	    route_table_unlock(rt);
 
-        vSemaphoreDelete(rt->lock);
+        os_delete_mutex(rt->lock);
         rt->lock = NULL;
     }
 
@@ -93,7 +90,7 @@ route_t* route_create(route_table_t* rt, int target, int nexthop, int sequence, 
 	        r->pending_request = NULL;
 	        r->pending_timer = NULL;
 	        r->pending_retries = 0;
-	        r->pending_packets = xQueueCreate((UBaseType_t) ROUTE_MAX_QUEUED_PACKETS, (UBaseType_t) sizeof(packet_t*));
+	        r->pending_packets = os_create_queue(ROUTE_MAX_QUEUED_PACKETS, sizeof(packet_t*));
 
 	        /* Add to end of route list */
 	        if (route_table_lock(rt)) {
@@ -161,7 +158,7 @@ void route_update_lifetime(route_t* r, int lifetime)
     if (r != NULL) {
         route_table_t* rt = r->table; 
     	route_table_lock(rt);
-        r->lifetime = time(NULL) + lifetime;
+        r->lifetime = get_milliseconds() + lifetime;
 	    route_table_unlock(rt);
     }
 }
@@ -202,7 +199,7 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
 
 	    if (route_table_lock(rt)) {
             /* Add to packet queue */
-	        ok = xQueueSend(r->pending_packets, (void*) &p, 0) == pdPASS;
+	        ok = os_put_queue(r->pending_packets, p);
 	        route_table_unlock(rt);
         }
     }
@@ -210,16 +207,17 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
     return ok;
 }
 
-void route_request_retry(TimerHandle_t timer_id)
+void route_request_retry(os_timer_t timer)
 {
-    route_t* r = (route_t*) pvTimerGetTimerID(timer_id);
+    route_t* r = (route_t*) os_get_timer_data(timer);
+
     if (r != NULL) {
         route_table_t* rt = r->table;
 
         route_table_lock(rt);
 
 	    if (r->pending_request != NULL && --(r->pending_retries) > 0) {
-            send_packet(packet_ref(r->pending_request));
+            linklayer_send_packet(packet_ref(r->pending_request));
 	    } else {
             r = NULL;
 	    }
@@ -228,8 +226,10 @@ void route_request_retry(TimerHandle_t timer_id)
     }
 
     if (r == NULL) {
-	 /* Cancel timer */
-	 xTimerStop(timer_id, pdMS_TO_TICKS(ROUTE_REQUEST_TIMEOUT));
+	    /* Cancel timer */
+        os_stop_timer(r->pending_timer);
+        os_delete_timer(r->pending_timer);
+        r->pending_timer = NULL;
     }
 }
 
@@ -242,7 +242,8 @@ void route_set_pending_request(route_t* r, packet_t* request, int retries, int t
 
             r->pending_request = packet_ref(request);
             r->pending_retries = retries;
-            r->pending_timer = xTimerCreate("route_timer", pdMS_TO_TICKS(ROUTE_REQUEST_TIMEOUT), pdTRUE, (void*) r, route_request_retry);
+            r->pending_timer = os_create_timer("route_timer", ROUTE_REQUEST_TIMEOUT, true, (void*) r, route_request_retry);
+            os_start_timer(r->pending_timer);
 
             route_table_unlock(rt);
         }
@@ -259,15 +260,16 @@ void route_release_packets(route_t* r)
             r->pending_request = NULL;
 
 	        if (r->pending_timer != NULL) {
-                xTimerStop(r->pending_timer, pdMS_TO_TICKS(ROUTE_REQUEST_TIMEOUT));
+                os_stop_timer(r->pending_timer);
+                os_delete_timer(r->pending_timer);
 	            r->pending_timer = NULL;
 	            r->pending_retries = 0;
 	        }
 
 	        /* Move all packets to the send queue */
 	        packet_t* p;
-	        while (xQueueReceive(r->pending_packets, &p, 0) == pdPASS) {
-	            send_packet(p);
+	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+	            linklayer_send_packet(p);
 	        }
         }
         route_table_unlock(rt);
@@ -280,7 +282,7 @@ bool route_is_expired(route_t* r)
 
     if (r != NULL) {
         if (route_table_lock(r->table)) {
-            bool expired = time(NULL) > r->lifetime;
+            bool expired = get_milliseconds() > r->lifetime;
             route_table_unlock(r->table);
         }
     }

@@ -17,6 +17,14 @@ menu "LastLink Configuration"
         help
             Max number of the STA connects to AP.
 
+    config LASTLINK_RADIO_SX126x_ENABLED
+        bool "Enable SX126x Driver"
+        default n
+
+    config LASTLINK_RADIO_SX127x_ENABLED
+        bool "Enable SX127x Driver"
+        default y
+
     # Currently up to 8 radios
     RADIO_NUM:=1
     DEFAULT_RADIO_ENABLE=y
@@ -58,21 +66,6 @@ menu "LastLink Configuration"
             help
                 Sets the maximum number of route table entries per device.
 
-        config LASTLINK_ENABLE_ROUTE_ANNOUNCE
-            bool "Enable RouteAnnounce messages"
-            default false
-            help
-                If enabled, RouteAnnounce messages will be generated
-                every <ANNOUNCE INTERVAL> milliseconds.
-
-        config LASTLINK_ANNOUNCE_INTERVAL
-            depends on LASTLINK_ENABLE_ROUTE_ANNOUNCE
-            int "Interval (mS) for Route Announcements"
-            default 15000
-            range 15000 60000
-            help
-                When enabled, routes will be announced every <interval> milliseconds.
-
         config LASTLINK_ROUTE_REQUEST_TIMEOUT
             int "Route Request Timeout"
             default 15000
@@ -93,6 +86,20 @@ menu "LastLink Configuration"
             range 3 100
             help
                 The maximum number of packets queuable while waiting for a route.
+
+        config LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY
+            int "Maximum packets waiting for assembly"
+            default 8
+            range 1 16
+            help
+                The maximum number of packets waiting for out-of-order assembly.
+
+        config LASTLINK_STREAM_MAX_SIMULTANEOUS_CONNECTIONS
+            int "Maximum simultaneous connections"
+            default 10
+            range 1 20
+            help
+                The maximum number of simultaneous connections to a port.
     endmenu
 
     menu "Packet Configuration"

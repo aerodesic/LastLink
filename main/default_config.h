@@ -7,21 +7,12 @@
 #define __default_config_h_included
 
 #define DEFAULT_CONFIG {        \
-    "configversion=2",		\
-    "zip=1",			\
-    "zap=2",			\
-    "[section1]",		\
-    "    this=that",		\
-    "    that=this",		\
-    "    [section2]",		\
-    "       blah=1",		\
-    "       blot=2",		\
-    "       [section3]",        \
-    "          only=garbage",   \
-    "       [end]",             \
-    "    [end]",                \
+    "configversion=1",          \
+    "[network]",                \
+    "    address=1",            \
+    "    flags=0x00",           \
+    "    announce=0",           \
     "[end]",                    \
-    "zorch=3",                  \
     NULL,                       \
 }
 

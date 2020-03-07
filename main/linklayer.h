@@ -97,8 +97,10 @@ void linklayer_reset(void);
 bool linklayer_add_radio(radio_t* radio);
 bool linklayer_remove_radio(radio_t* radio);
 
-void send_packet(packet_t* packet);
-void send_packet_update_ttl(packet_t* packet);
+void linklayer_send_packet(packet_t* packet);
+void linklayer_send_packet_update_ttl(packet_t* packet);
+
+int linklayer_get_node_address(void);
 
 #endif /* __linklayer_h_included */
 
