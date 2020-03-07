@@ -49,7 +49,13 @@ bool os_acquire_mutex_from_isr(os_mutex_t mutex)
 
 bool os_release_mutex(os_mutex_t mutex)
 {
-    vSemaphoreDelete(mutex);
+    xSemaphoreGive(mutex);
+    return true;
+}
+
+bool os_release_mutex_from_isr(os_mutex_t mutex)
+{
+    xSemaphoreGiveFromISR(mutex, NULL);
     return true;
 }
 
@@ -69,6 +75,11 @@ bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeo
     return xQueueSend(queue, &item, timeout) == pdTRUE;
 }
 
+bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item)
+{
+    return xQueueSendFromISR(queue, item, NULL) == pdTRUE;
+}
+
 bool os_put_queue(os_queue_t queue, os_queue_item_t item)
 {
     return os_put_queue_with_timeout(queue, item, portMAX_DELAY);
@@ -81,7 +92,7 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item)
 
 bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout)
 {
-    return (xQueueReceive(queue, &item, timeout) == pdTRUE);
+    return (xQueueReceive(queue, item, timeout) == pdTRUE);
 }
 
 bool os_get_queue(os_queue_t queue, os_queue_item_t* item)
@@ -120,7 +131,7 @@ bool  os_delete_timer(os_timer_t timer)
 }
 
 
-os_thread_t os_thread_create(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param)
+os_thread_t os_create_thread(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param)
 {
     os_thread_t thread;
     if (xTaskCreate(process, name, stack_size ? stack_size : configMINIMAL_STACK_SIZE, param, priority, &thread) != pdTRUE) {
@@ -129,7 +140,7 @@ os_thread_t os_thread_create(void (*process)(void* param), const char* name, siz
     return thread;
 }
 
-bool os_thread_delete(os_thread_t thread)
+bool os_delete_thread(os_thread_t thread)
 {
     if (thread != NULL) {
         vTaskDelete(thread);

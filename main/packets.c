@@ -8,10 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
+#include "os_freertos.h"
 
 #include "esp_system.h"
 #include "esp_err.h"
@@ -20,10 +17,10 @@
 #include "packets.h"
 
 /* Where freed packets go - where we look first */
-static QueueHandle_t     free_packets_queue;
-static QueueHandle_t     packet_freeing_queue;
-static TaskHandle_t      packet_freeing_thread;
-static SemaphoreHandle_t packet_mutex;
+static os_queue_t        free_packets_queue;
+static os_queue_t        packet_freeing_queue;
+static os_thread_t       packet_freeing_thread;
+static os_mutex_t        packet_mutex;
 static int               active_packets;
 static int               dropped_allocations;
 
@@ -60,21 +57,24 @@ bool init_packets(int num_packets)
 
     ESP_LOGD(TAG, "init_packets: %d", num_packets);
 
-    packet_mutex = xSemaphoreCreateRecursiveMutex();
+    packet_mutex = os_create_recursive_mutex();
 
     if (packet_mutex != NULL) {
         ESP_LOGD(TAG, "packet_mutex created");
 
         packet_lock();
         /* Create scavanger queue for ISR to dispose of packets. */
-        packet_freeing_queue = xQueueCreate((UBaseType_t) num_packets, (UBaseType_t) sizeof(packet_t*));
+        packet_freeing_queue = os_create_queue(num_packets, sizeof(packet_t*));
 
         if (packet_freeing_queue != NULL) {
 
             /* Create thread for freeing packets */
-            if (xTaskCreate(packet_freeing_process, "packet_freeing",  configMINIMAL_STACK_SIZE, NULL, 0, &packet_freeing_thread) == pdTRUE) {
+            packet_freeing_thread = os_create_thread(packet_freeing_process, "packet_freeing", 0, 0, NULL);
+            //if (xTaskCreate(packet_freeing_process, "packet_freeing",  configMINIMAL_STACK_SIZE, NULL, 0, &packet_freeing_thread) == pdTRUE) {
+            if (packet_freeing_thread != NULL) {
 
-                free_packets_queue = xQueueCreate((UBaseType_t) num_packets, (UBaseType_t) sizeof(packet_t*));
+                //free_packets_queue = xQueueCreate((UBaseType_t) num_packets, (UBaseType_t) sizeof(packet_t*));
+                free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
 
                 if (free_packets_queue != NULL) {
 
@@ -144,13 +144,13 @@ int deinit_packets(void)
 
         if (packets_left == 0) {
             if (packet_freeing_thread != NULL) {
-                vTaskDelete(packet_freeing_thread);
+                os_delete_thread(packet_freeing_thread);
                 packet_freeing_thread = NULL;
-                vQueueDelete(packet_freeing_queue);
+                os_delete_queue(packet_freeing_queue);
                 packet_freeing_queue = NULL;
             }
 
-            vSemaphoreDelete(packet_mutex);
+            os_delete_mutex(packet_mutex);
             packet_mutex = NULL;
         }
     }
@@ -182,8 +182,8 @@ static packet_t *allocate_packet_help(bool fromisr)
 
         void* p;
 
-        if ((fromisr && (xQueueReceiveFromISR(free_packets_queue, &p, NULL) == pdPASS)) ||
-            (!fromisr && (xQueueReceive(free_packets_queue, &p, 0) == pdPASS))) {
+        if ((fromisr && (os_get_queue_from_isr(free_packets_queue, &p))) ||
+            (!fromisr && (os_get_queue_with_timeout(free_packets_queue, &p, 0)))) {
 
             ESP_LOGD(TAG, "allocate_packet_help packet from queue is %p", p);
 
@@ -262,7 +262,7 @@ bool packet_release(packet_t *p)
         ok = true;
 
         if (p != NULL && --(p->use) == 0) {
-            ok = xQueueSend(free_packets_queue, (void*) &p, 0) == pdPASS;
+            ok = os_put_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &p, 0);
         }
     }
 
@@ -278,7 +278,7 @@ bool packet_release(packet_t *p)
 bool packet_release_from_isr(packet_t* p)
 {
     /* Put on freeing queue */
-    return xQueueSendFromISR(packet_freeing_queue, (void*) &p, NULL) == pdTRUE;
+    return os_put_queue_from_isr(packet_freeing_queue, (os_queue_item_t*) &p);
 }
 
 
@@ -455,11 +455,11 @@ bool packet_lock_from_isr(void)
 
 void packet_unlock(void)
 {
-    xSemaphoreGiveRecursive(packet_mutex);
+    os_release_mutex(packet_mutex);
 }
 
 void packet_unlock_from_isr(void)
 {
-    xSemaphoreGiveRecursive(packet_mutex);
+    os_release_mutex_from_isr(packet_mutex);
 }
 
