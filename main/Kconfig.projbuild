@@ -100,6 +100,14 @@ menu "LastLink Configuration"
             range 1 20
             help
                 The maximum number of simultaneous connections to a port.
+
+        config LASTLINK_MAX_PROTOCOL_NUMBER
+            int "Maximum packet protocol number"
+            default 10
+            range 5 250
+            help
+                The maximum protocol number allowed (starts with 0)
+                (0 to 4 are used internally.)
     endmenu
 
     menu "Packet Configuration"

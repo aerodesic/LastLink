@@ -6,9 +6,7 @@
 #ifndef __routes_h_included
 #define __routes_h_included
 
-#include "freertos/semphr.h"
-#include "freertos/queue.h"
-#include "freertos/timers.h"
+#include "os_freertos.h"
 
 #include "sdkconfig.h"
 
@@ -31,15 +29,15 @@ typedef struct route {
     uint8_t             flags;
     int                 lifetime;
     packet_t*           pending_request;
-    QueueHandle_t       pending_packets;
-    TimerHandle_t       pending_timer;
+    os_queue_t          pending_packets;
+    os_timer_t          pending_timer;
     int                 pending_retries;
 } route_t;
 
 typedef struct route_table {
     route_t*            routes;
     int                 num_routes;
-    SemaphoreHandle_t   lock;
+    os_mutex_t          lock;
 } route_table_t;
 
 route_table_t* route_table_init(route_table_t* rt);

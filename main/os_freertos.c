@@ -32,14 +32,14 @@ bool os_acquire_mutex(os_mutex_t mutex)
     return os_acquire_mutex_with_timeout(mutex, portMAX_DELAY);
 }
 
-bool os_acquire_mutex_recursive_with_timeout(os_mutex_t mutex, int timeout)
+bool os_acquire_recursive_mutex_with_timeout(os_mutex_t mutex, int timeout)
 {
     return xSemaphoreTakeRecursive(mutex, timeout) == pdTRUE;
 }
 
-bool os_acquire_mutex_recursive(os_mutex_t mutex)
+bool os_acquire_recursive_mutex(os_mutex_t mutex)
 {
-    return os_acquire_mutex_recursive_with_timeout(mutex, portMAX_DELAY);
+    return os_acquire_recursive_mutex_with_timeout(mutex, portMAX_DELAY);
 }
 
 bool os_acquire_mutex_from_isr(os_mutex_t mutex)
@@ -50,6 +50,12 @@ bool os_acquire_mutex_from_isr(os_mutex_t mutex)
 bool os_release_mutex(os_mutex_t mutex)
 {
     xSemaphoreGive(mutex);
+    return true;
+}
+
+bool os_release_recursive_mutex(os_mutex_t mutex)
+{
+    xSemaphoreGiveRecursive(mutex);
     return true;
 }
 
@@ -100,6 +106,16 @@ bool os_get_queue(os_queue_t queue, os_queue_item_t* item)
     return os_get_queue_with_timeout(queue, item, portMAX_DELAY);
 }
 
+int os_items_in_queue(os_queue_t queue)
+{
+    return uxQueueMessagesWaiting(queue);
+}
+
+int os_items_in_queue_from_isr(os_queue_t queue)
+{
+    return uxQueueMessagesWaitingFromISR(queue);
+}
+
 os_timer_t os_create_timer(const char* name, int timeout, bool reload, void* param, void (*function)(void* param))
 {
     return xTimerCreate(name, pdMS_TO_TICKS(timeout), reload, param, function);
@@ -120,12 +136,12 @@ bool os_stop_timer(os_timer_t timer)
     return xTimerStop(timer, portMAX_DELAY);
 }
 
-bool  os_reset_timer(os_timer_t timer)
+bool os_reset_timer(os_timer_t timer)
 {
     return xTimerReset(timer, portMAX_DELAY);
 }
 
-bool  os_delete_timer(os_timer_t timer)
+bool os_delete_timer(os_timer_t timer)
 {
     return xTimerDelete(timer, portMAX_DELAY);
 }

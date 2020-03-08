@@ -217,7 +217,7 @@ void route_request_retry(os_timer_t timer)
         route_table_lock(rt);
 
 	    if (r->pending_request != NULL && --(r->pending_retries) > 0) {
-            linklayer_send_packet(packet_ref(r->pending_request));
+            linklayer_send_packet(ref_packet(r->pending_request));
 	    } else {
             r = NULL;
 	    }
@@ -240,7 +240,7 @@ void route_set_pending_request(route_t* r, packet_t* request, int retries, int t
 
         if (route_table_lock(rt)) {
 
-            r->pending_request = packet_ref(request);
+            r->pending_request = ref_packet(request);
             r->pending_retries = retries;
             r->pending_timer = os_create_timer("route_timer", ROUTE_REQUEST_TIMEOUT, true, (void*) r, route_request_retry);
             os_start_timer(r->pending_timer);

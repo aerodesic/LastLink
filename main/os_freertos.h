@@ -7,6 +7,8 @@
 #ifndef __os_freertos_h_included
 #define __os_freertos_h_included
 
+#define ELEMENTS_OF(x) (sizeof(x) / sizeof((x)[0]))
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -22,12 +24,15 @@ typedef TaskHandle_t      os_thread_t;
 os_mutex_t os_create_mutex(void);
 os_mutex_t os_create_recursive_mutex(void);
 bool os_delete_mutex(os_mutex_t mutex);
-bool os_acquire_mutex_with_timeout(os_mutex_t mutex, int timeout);
+
 bool os_acquire_mutex(os_mutex_t mutex);
-bool os_acquire_mutex_recursive_with_timeout(os_mutex_t mutex, int timeout);
-bool os_acquire_mutex_recursive(os_mutex_t mutex);
+bool os_acquire_recursive_mutex(os_mutex_t mutex);
+bool os_acquire_mutex_with_timeout(os_mutex_t mutex, int timeout);
+bool os_acquire_recursive_mutex_with_timeout(os_mutex_t mutex, int timeout);
 bool os_acquire_mutex_from_isr(os_mutex_t mutex);
+
 bool os_release_mutex(os_mutex_t mutex);
+bool os_release_recursive_mutex(os_mutex_t mutex);
 bool os_release_mutex_from_isr(os_mutex_t mutex);
 
 os_queue_t os_create_queue(int depth, size_t size);
@@ -38,6 +43,8 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item);
 bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout);
 bool os_get_queue(os_queue_t queue, os_queue_item_t* item);
 bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item);
+int os_items_in_queue_from_isr(os_queue_t queue);
+int os_items_in_queue(os_queue_t queue);
 
 os_timer_t os_create_timer(const char* name, int timeout, bool reload, void* param, void (*function)(void* param));
 bool os_start_timer(os_timer_t timer);

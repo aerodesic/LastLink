@@ -91,17 +91,71 @@ packet_t* create_data_packet(int target, int protocol, uint8_t* data, int length
  *    linklayer_deinit();
  */
 
+#define MAX_DIOS     3
+
+typedef enum {
+    RADIO_IS_SX126x_DEVICE,
+    RADIO_IS_SX127x_DEVICE,
+} radio_type_t;
+
+typedef struct radio_config {
+    const char* type;
+    radio_type_t radio_type;
+    int crystal;
+    int channel;
+    int delay;
+    int dios[MAX_DIOS];
+    int reset;
+    union {
+       struct {
+         int spi_host;
+         int spi_sck;
+         int spi_mosi;
+         int spi_miso;
+         int spi_cs;
+         int spi_clock;
+         void (*spi_pre_xfer_callback)(void);
+         int spi_dma;
+       };
+       struct {
+         int i2c_blah;
+         int i2c_blah2;
+       };
+       struct {
+         const char* dev;
+       };
+    };
+} radio_config_t;
+
+bool linklayer_io_init(radio_t* radio, radio_config_t* config);
 bool linklayer_init(int address, int flags, int announce_interval);
+bool linklayer_add_radio(int radio_num, const radio_config_t* radio);
+bool linklayer_remove_radio(int radio_num);
+
 bool linklayer_deinit(void);
 void linklayer_reset(void);
-bool linklayer_add_radio(radio_t* radio);
-bool linklayer_remove_radio(radio_t* radio);
+int linklayer_allocate_sequence(void);
+bool linklayer_reserve_protocol(int number, void (*protocol_processor)(packet_t* packet));
+bool linklayer_release_protocol(int number);
 
+bool linklayer_set_promiscuous_mode(bool mode);
+
+void linklayer_process_packet(packet_t* packet);
 void linklayer_send_packet(packet_t* packet);
 void linklayer_send_packet_update_ttl(packet_t* packet);
 
 int linklayer_get_node_address(void);
+void linklayer_print_packet(packet_t* packet);
+
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
+bool sx126x_radio(radio_t* radio);
+#endif
+
+#ifdef CONFIG_LASTLINK_RADIO_SX127x_ENABLED
+bool sx127x_radio(radio_t* radio);
+#endif
 
 #endif /* __linklayer_h_included */
+
 
 

@@ -10,6 +10,10 @@
 #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 
 typedef struct packet {
+    int   radio;                      /* Radio source of packet */
+    int   rssi;                       /* Received signal strength */
+    bool  crc_ok;                     /* True if good crc check */
+
     int   use;                        /* Use counter - when released is decremented; when 0 item is freed */
     int   length;                     /* Number of bytes used buffer */
     char  buffer[MAX_PACKET_LEN];     /* Buffer */
@@ -22,33 +26,33 @@ bool packet_inits(int num_packets);
 int packet_deinit(void);
 
 /*
- * Allocate a packet of specified length.  Packet is filled with zeroes.
+ * Allocate a packet.  Packet is filled with zeroes before delivery.
  */
-packet_t *packet_allocate(void);
-packet_t *packet_allocate_from_isr(void);
+packet_t *allocate_packet(void);
+packet_t *allocate_packet_from_isr(void);
 
 /*
  * Create a packet from a user supplied buffer of specified length.
  */
-packet_t *packet_create(char *buf, int length);
-packet_t *packet_create(char *buf, int length);
+packet_t *create_packet(uint8_t *buf, int length);
+packet_t *create_packet_from_isr(uint8_t *buf, int length);
 
 /*
  * Return number of available packets.
  */
-int packets_available(void);
-int packets_available_from_isr(void);
+int available_packets(void);
+int available_packets_from_isr(void);
 
 /*
  * Update usecount on packet.
  */
-packet_t* packet_ref(packet_t *p);
+packet_t* ref_packet(packet_t *p);
 
 /*
  * Decrement packet use count and if 0, free it.
  */
-bool packet_release(packet_t *p);
-bool packet_release_from_isr(packet_t *p);
+bool release_packet(packet_t *p);
+bool release_packet_from_isr(packet_t *p);
 
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.
