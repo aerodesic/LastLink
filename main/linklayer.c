@@ -42,20 +42,16 @@ static void put_received_packet(packet_t* p);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
+static void linklayer_transmit_packet(packet_t* packet);
 
 /* Calls from radio driver to linklayer */
-static int linklayer_read_register(radio_t* radio, int reg);
-static void linklayer_write_register(radio_t* radio, int reg, int value);
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
 static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet);
-static void linklayer_write_buffer(radio_t* radio, int reg, uint8_t* buffer, int length);
-static int linklayer_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int bufsize);
 
 static os_mutex_t                 linklayer_lock;
 static int                        node_address;
 static int                        node_flags;
-static os_queue_t                 transmit_queue;
 static os_queue_t                 receive_queue;
 static os_queue_t                 promiscuous_queue;
 static int                        sequence_number;
@@ -288,6 +284,7 @@ static void routeannounce_packet_process(packet_t* p)
     if (p != NULL) {
         if (os_acquire_recursive_mutex(route_table.lock)) {
             route_t* route = route_update(&route_table,
+                                          p->radio_num,
                                           get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
                                           get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
                                           get_uint_field(p, RANN_SEQUENCE, SEQUENCE_NUMBER_LEN),
@@ -338,13 +335,14 @@ static packet_t* routerequest_packet_create(int address)
 static void routerequest_packet_process(packet_t* p)
 {
     if (p != NULL) {
-        if (xSemaphoreTakeRecursive(linklayer_lock, 0) == pdTRUE) {;
+        if (os_acquire_recursive_mutex(linklayer_lock)) {
 
             /* TODO: Need brakes to avoid transmitting too many at once !! (Maybe ok for testing) */
 
             /* Update the route table and see if we have a route */
             route_t* route = route_update(
                                  &route_table,
+                                 p->radio_num,
                                  get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
                                  get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
                                  get_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
@@ -365,7 +363,7 @@ static void routerequest_packet_process(packet_t* p)
             }
         }
 
-        xSemaphoreGiveRecursive(linklayer_lock);
+        os_release_recursive_mutex(linklayer_lock);
         release_packet(p);
     }
 }
@@ -446,17 +444,16 @@ static void data_packet_process(packet_t* p)
 }
 
 /* Creates the linklayer */
-bool linklayer_init(int address, int flags, int announce_interval)
+bool linklayer_init(int address, int flags, int announce)
 {
     linklayer_lock = os_create_recursive_mutex();
     node_address = address;
     node_flags = flags; 
-    transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
     receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
     promiscuous_queue = NULL;
     sequence_number = 0;
     debug_flag = false;
-    announce_interval = announce_interval;
+    announce_interval = announce;
 
     if (announce_interval != 0) {
         /* Start the route announce thread */
@@ -525,6 +522,9 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
 
         radio->radio_num = radio_num;
 
+        /* Add our information */
+        linklayer_init_radio(radio);
+
         /*
          * Create the io device wrapper for radio.
          * This fills in the device handle field (e.g. spi channel), read and write functions, `k
@@ -548,13 +548,12 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
 
                 /* Put radio in active table. If no radio, create one. */
                 if (radio_table == NULL) {
-
                     /* Create radio table */
                     radio_table = (radio_t**) malloc(sizeof(radio_t*) * ELEMENTS_OF(radio_config));
-                }
 
-                if (radio_table != NULL) {
-                    memset(radio_table, 0, sizeof(radio_t) * ELEMENTS_OF(radio_config));
+                    if (radio_table != NULL) {
+                        memset(radio_table, 0, sizeof(radio_t) * ELEMENTS_OF(radio_config));
+                    }
                 }
             }
 
@@ -566,6 +565,8 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
         }
 
         if (!ok) {
+            linklayer_deinit_radio(radio);
+
             /* init or radio failure.  deinit  */
             io_deinit(radio);
 
@@ -624,18 +625,13 @@ static bool linklayer_deinit_radio(radio_t* radio)
 
 bool linklayer_deinit(void)
 {
-    if (xSemaphoreTakeRecursive(linklayer_lock, 0) == pdTRUE) {
+    if (os_acquire_recursive_mutex(linklayer_lock)) {
 
         if (announce_thread != NULL) {
             /* kill it */
             announce_thread = NULL;
         }
 
-
-        if (transmit_queue != NULL) {
-            os_delete_queue(transmit_queue);
-            transmit_queue = NULL;
-        }
         if (receive_queue != NULL) {
             os_delete_queue(receive_queue);
             receive_queue = NULL;
@@ -661,17 +657,85 @@ int linklayer_allocate_sequence(void)
 {
     int sequence = 0;
 
-    if (xSemaphoreTakeRecursive(linklayer_lock, 0) == pdTRUE) { 
+    if (os_acquire_recursive_mutex(linklayer_lock)) {
         sequence = ++sequence_number;
-        xSemaphoreGiveRecursive(linklayer_lock);
+        os_release_recursive_mutex(linklayer_lock);
     }
 
     return sequence;
 }
 
+/*
+ * Send a packet
+ */
 void linklayer_send_packet(packet_t* packet)
 {
-    /* work */
+    /* A packet with a source and destination is ready to transmit.
+     * Label the from address and if no to address, attempt to route
+     */
+    if (packet != NULL) {
+         /* Indicate coming from us */
+         set_uint_field(packet, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+
+         /* If source is NULL address, set it to us */
+         if (get_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
+            set_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
+         }
+
+         /*
+          * If the nexthop is NULL, then we compute next hop based on route table.
+          * If no route table, create pending NULL route and cache packet for later retransmission.
+          */
+         unsigned int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
+
+         if (nexthop == NULL_ADDRESS) {
+
+            unsigned int target = get_uint_field(packet, HEADER_TARGET_ADDRESS, ADDRESS_LEN);
+
+            route_table_lock(&route_table);
+
+            route_t* route = route_find(&route_table, target);
+            packet_t* request = NULL;
+
+            /* If no route, create a dummy and make a request */
+            if (route == NULL) {
+                route = route_update(&route_table, target, packet->radio_num, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
+
+                route_put_pending_packet(route, packet);
+
+                if (debug_flag) {
+                    linklayer_print_packet("Routing", packet);
+                }
+
+                packet_t* request = routerequest_packet_create(target);
+                packet->radio_num = ALL_RADIOS;
+                route_set_pending_request(route, request, ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
+
+            } else if (nexthop == NULL_ADDRESS) {
+                /* Still have pending route, add packet to queue */
+                route_put_pending_packet(route, packet);
+            } else {
+                /*  Label the destination for the packet */
+                set_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, route->nexthop);
+            }
+
+            /* Send any pending request */
+            packet = ref_packet(request);
+
+            route_table_unlock(&route_table);
+        }
+        /*
+         * TODO: we may need another method to restart transmit queue other than looking
+         * and transmit queue length.  A 'transmitting' flag (protected by meshlock) that
+         * is True if transmitting of packet is in progress.  Cleared on onTransmit when
+         * queue has become empty.
+         *
+         * This may need to be implemented to allow stalling transmission for windows of
+         * reception.  A timer will then restart the queue if items remain within it.
+         */
+
+        linklayer_transmit_packet(packet);
+    }
 }
 
 void linklayer_send_packet_update_ttl(packet_t* packet)
@@ -682,6 +746,27 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
         linklayer_send_packet(packet);
     } else {
         release_packet(packet);
+    }
+}
+
+/*
+ * Send packet to target radio or all radios if radio_num == ALL_RADIOS
+ */
+static void linklayer_transmit_packet(packet_t* packet)
+{
+    if (packet != NULL) {
+        os_acquire_recursive_mutex(linklayer_lock);
+
+        if (packet->radio_num == ALL_RADIOS) {
+            for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
+                radio_table[radio_num]->transmit_packet(radio_table[radio_num], ref_packet(packet));
+            }
+        } else {
+            radio_table[packet->radio_num]->transmit_packet(radio_table[packet->radio_num], ref_packet(packet));       
+        }
+
+        release_packet(packet);
+        os_release_recursive_mutex(linklayer_lock);
     }
 }
 
@@ -754,7 +839,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
             int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
 
             if (debug_flag) {
-                linklayer_print_packet(packet);
+                linklayer_print_packet("Received", packet);
             }
 
             /* In promiscuous, deliver to receiver so it can handle it (but not process it) */
@@ -790,7 +875,7 @@ static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet)
     return NULL;
 }
 
-void linklayer_print_packet(packet_t* packet)
+void linklayer_print_packet(const char* reason, packet_t* packet)
 {
     /* STUB */
 }

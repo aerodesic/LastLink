@@ -114,7 +114,7 @@ typedef struct radio_config {
          int spi_miso;
          int spi_cs;
          int spi_clock;
-         void (*spi_pre_xfer_callback)(void);
+         void (*spi_pre_xfer_callback)(spi_transaction_t*);
          int spi_dma;
        };
        struct {
@@ -145,7 +145,7 @@ void linklayer_send_packet(packet_t* packet);
 void linklayer_send_packet_update_ttl(packet_t* packet);
 
 int linklayer_get_node_address(void);
-void linklayer_print_packet(packet_t* packet);
+void linklayer_print_packet(const char* reason, packet_t* packet);
 
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
 bool sx126x_radio(radio_t* radio);

@@ -33,7 +33,7 @@ typedef struct radio_config {
          int spi_miso;
          int spi_cs;
          int spi_clock;
-         void (*spi_pre_xfer_callback)(void);
+         void (*spi_pre_xfer_callback)(spi_transaction_t*);
          int spi_dma;
        };
        struct {

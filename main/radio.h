@@ -55,9 +55,9 @@ typedef struct radio {
      
     /* Filled in by linklayer; owned by radio; removed by linklayer */
     int (*read_register)(radio_t* radio, int register);
-    void (*write_register)(radio_t* radio, int register, int value);
-    void (*write_buffer)(radio_t* radio, int register, uint8_t* buffer, int length);
-    int (*read_buffer)(radio_t* radio, int register, uint8_t* buffer, int bufsize);
+    bool (*write_register)(radio_t* radio, int register, int value);
+    bool (*write_buffer)(radio_t* radio, int register, const uint8_t* buffer, int length);
+    bool (*read_buffer)(radio_t* radio, int register, uint8_t* buffer, int bufsize);
 
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
@@ -99,6 +99,8 @@ typedef struct radio {
 
     /* Get channel and datarate */
     bool (*get_channel)(radio_t* radio, int* channel, int* datarate);
+
+    void (*transmit_packet)(radio_t* radio, packet_t* packet);
 
 } radio_t;
 

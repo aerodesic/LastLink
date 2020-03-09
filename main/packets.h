@@ -9,8 +9,10 @@
 
 #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 
+#define ALL_RADIOS           -1
+
 typedef struct packet {
-    int   radio;                      /* Radio source of packet */
+    int   radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int   rssi;                       /* Received signal strength */
     bool  crc_ok;                     /* True if good crc check */
 
@@ -70,7 +72,7 @@ bool set_int_field(packet_t *p, int from, int length, int value);
  * Get a string from a field.  If length < 0, field is to end of buffer.
  * Returns a freshly allocated char* array which must be freed by the caller.
  */
-const char* get_bytes_field(packet_t *p, int from, int length);
+const uint8_t* get_bytes_field(packet_t *p, int from, int length);
 
 /*
  * Set a string field from a char* array.

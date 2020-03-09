@@ -4,15 +4,18 @@
  * Handle routes
  */
 
+#include "esp_system.h"
+#include "esp_log.h"
+
 #include "os_freertos.h"
 
 #include "linklayer.h"
 #include "packets.h"
 #include "routes.h"
 
-static route_t*           routes;
-static int                num_routes;
-static os_mutex_t         route_mutex;
+#define TAG  "routes"
+
+//static route_t*           routes;
 
 bool route_table_lock(route_table_t* rt)
 {
@@ -68,7 +71,7 @@ bool route_table_deinit(route_table_t* rt)
     return rt->lock == NULL;
 }
     
-route_t* route_create(route_table_t* rt, int target, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_create(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -78,42 +81,42 @@ route_t* route_create(route_table_t* rt, int target, int nexthop, int sequence, 
             r = (route_t*) malloc(sizeof(route_t));
             if (r != NULL) {
                 r->target = target;
-            }
+	            r->sequence = sequence;
+	            r->metric = metric;
+	            r->nexthop = nexthop;
+	            r->flags = flags;
 
-	        r->sequence = sequence;
-	        r->metric = metric;
-	        r->nexthop = nexthop;
-	        r->flags = flags;
+	            route_update_lifetime(r, ROUTE_LIFETIME);
 
-	        route_update_lifetime(r, ROUTE_LIFETIME);
+                r->radio_num = radio_num;
+	            r->pending_request = NULL;
+	            r->pending_timer = NULL;
+	            r->pending_retries = 0;
+	            r->pending_packets = os_create_queue(ROUTE_MAX_QUEUED_PACKETS, sizeof(packet_t*));
 
-	        r->pending_request = NULL;
-	        r->pending_timer = NULL;
-	        r->pending_retries = 0;
-	        r->pending_packets = os_create_queue(ROUTE_MAX_QUEUED_PACKETS, sizeof(packet_t*));
+	            /* Add to end of route list */
+	            if (route_table_lock(rt)) {
 
-	        /* Add to end of route list */
-	        if (route_table_lock(rt)) {
+	                /* Increate the number of routes allocated */
+	                rt->num_routes ++;
 
-	            /* Increate the number of routes allocated */
-	            rt->num_routes ++;
-
-                if (routes != NULL) {
-                    /* New route next is beginning of list */
-                    r->next = rt->routes;
-	                /* New route previous is end of list */
-	                r->prev = rt->routes->prev;
-	                /* Last in list points to new route */
-	                rt->routes->prev->next = r;
-	                /* First in list previous points to new end of list */
-	                rt->routes->prev = r;
-	            } else {
-                    /* First entry */
-                    r->next = r;
-	                r->prev = r;
-	                rt->routes = r;
-	            }
-	            route_table_unlock(rt);
+                    if (rt->routes != NULL) {
+                        /* New route next is beginning of list */
+                        r->next = rt->routes;
+	                    /* New route previous is end of list */
+	                    r->prev = rt->routes->prev;
+	                    /* Last in list points to new route */
+	                    rt->routes->prev->next = r;
+	                    /* First in list previous points to new end of list */
+	                    rt->routes->prev = r;
+	                } else {
+                        /* First entry */
+                        r->next = r;
+	                    r->prev = r;
+	                    rt->routes = r;
+	                }
+	                route_table_unlock(rt);
+                }
             }
 	    }
     }
@@ -138,7 +141,7 @@ bool route_delete(route_t* r)
 	        if (--(rt->num_routes) == 0) {
 	            rt->routes = NULL;
 	            /* else if we deleted the head, advance head pointer */
-	        } else if (routes == r) {
+	        } else if (rt->routes == r) {
 	            rt->routes = r->next;
     	    }
 
@@ -169,7 +172,7 @@ void route_update_lifetime(route_t* r, int lifetime)
  * If a new route is created or the sequence number is different or the metric improves,
  * return the route_t* otherwise return NULL
  */
-route_t* route_update(route_table_t* rt, int target, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_update(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -178,10 +181,18 @@ route_t* route_update(route_table_t* rt, int target, int nexthop, int sequence, 
         r = route_find(rt, target);
         if (r == NULL) {
             /* No route, so create a new one and return it */
-            r = route_create(rt, target, sequence, metric, nexthop, flags);
+            r = route_create(rt, target, radio_num, sequence, metric, nexthop, flags);
         } else if (r != NULL && r->sequence == sequence && r->metric <= metric) {
             /* Ignore it - it's no better */
             r = NULL;
+        } else {
+            r->sequence = sequence;
+            r->metric = metric;
+            r->flags = flags;
+            r->nexthop = nexthop;
+            r->radio_num = radio_num;
+            r->target = target;
+            route_update_lifetime(r, ROUTE_LIFETIME);
         }
 
         route_table_unlock(rt);
@@ -269,6 +280,15 @@ void route_release_packets(route_t* r)
 	        /* Move all packets to the send queue */
 	        packet_t* p;
 	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+
+                if (r->radio_num == ALL_RADIOS) {
+                    ESP_LOGE(TAG, "send on route without a radio: target %d nexthop %d sequence %d", r->target, r->nexthop, r->sequence);
+                }
+
+                /* Assign the delivery route */
+                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, r->nexthop);
+                /* Direct it to specific radio */
+                p->radio_num = r->radio_num;
 	            linklayer_send_packet(p);
 	        }
         }
@@ -282,7 +302,7 @@ bool route_is_expired(route_t* r)
 
     if (r != NULL) {
         if (route_table_lock(r->table)) {
-            bool expired = get_milliseconds() > r->lifetime;
+            expired = get_milliseconds() > r->lifetime;
             route_table_unlock(r->table);
         }
     }

@@ -23,6 +23,7 @@ typedef struct route {
     struct route*       prev;
     route_table_t*      table;
     int                 target;
+    int                 radio_num;
     int                 sequence;
     int                 metric;
     int                 nexthop;
@@ -45,8 +46,8 @@ bool route_table_deinit(route_table_t* rt);
 bool route_table_lock(route_table_t* rt);
 bool route_table_unlock(route_table_t* rt);
 
-route_t* route_create(route_table_t* rt, int target, int nexthop, int sequence, int metric, uint8_t flags);
-route_t* route_update(route_table_t* rt, int target, int nexthop, int sequence, int metric, uint8_t flags);
+route_t* route_create(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags);
+route_t* route_update(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags);
 bool route_delete(route_t* r);
 
 void route_update_lifetime(route_t* r, int lifetime);

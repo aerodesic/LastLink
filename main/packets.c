@@ -18,8 +18,6 @@
 
 /* Where freed packets go - where we look first */
 static os_queue_t        free_packets_queue;
-static os_queue_t        packet_freeing_queue;
-static os_thread_t       packet_freeing_thread;
 static os_mutex_t        packet_mutex;
 static int               active_packets;
 static int               dropped_allocations;
@@ -29,19 +27,9 @@ static bool validate_field(packet_t *p, int from, int length);
 static packet_t *allocate_packet_help(bool fromisr);
 static packet_t *create_packet_help(uint8_t* buf, int length, bool fromisr);
 static bool release_packet_help(packet_t *p, bool fromisr);
-static int available_packets_help(bool fromisr)
+static int available_packets_help(bool fromisr);
 
 #define TAG     "packets"
-
-static void packet_freeing_process(void* param)
-{
-    packet_t* packet;
-
-    /* Gobble packets from the freeing queue and release them */
-    while (os_get_queue(packet_freeing_queue, (os_queue_item_t*) &packet)) {
-        packet_release(packet);
-    }
-}
 
 /*
  * init_packets
@@ -65,37 +53,27 @@ bool init_packets(int num_packets)
         ESP_LOGD(TAG, "packet_mutex created");
 
         packet_lock();
-        /* Create scavanger queue for ISR to dispose of packets. */
-        packet_freeing_queue = os_create_queue(num_packets, sizeof(packet_t*));
 
-        if (packet_freeing_queue != NULL) {
+        free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
 
-            /* Create thread for freeing packets */
-            packet_freeing_thread = os_create_thread(packet_freeing_process, "packet_freeing", 0, 0, NULL);
-            if (packet_freeing_thread != NULL) {
+        if (free_packets_queue != NULL) {
 
-                free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
+            ESP_LOGD(TAG, "free_packets_queue created");
 
-                if (free_packets_queue != NULL) {
+            ok = true;
 
-                    ESP_LOGD(TAG, "free_packets_queue created");
+            int count = 0;
 
-                    ok = true;
-
-                    int count = 0;
-
-                    while(ok && count < num_packets) {
-                        packet_t *p = (packet_t *) malloc(sizeof(packet_t));
-                        if (p != NULL) {
-                            memset(p, 0, sizeof(packet_t));
-                            p->use = 1;
-                            packet_release(p);
-                        } else {
-                            ok = false;
-                        }
-                        ++count;
-                    }
+            while(ok && count < num_packets) {
+                packet_t *p = (packet_t *) malloc(sizeof(packet_t));
+                if (p != NULL) {
+                    memset(p, 0, sizeof(packet_t));
+                    p->use = 1;
+                    release_packet(p);
+                } else {
+                    ok = false;
                 }
+                ++count;
             }
         }
         packet_unlock();
@@ -143,13 +121,6 @@ int deinit_packets(void)
         packet_unlock();
 
         if (packets_left == 0) {
-            if (packet_freeing_thread != NULL) {
-                os_delete_thread(packet_freeing_thread);
-                packet_freeing_thread = NULL;
-                os_delete_queue(packet_freeing_queue);
-                packet_freeing_queue = NULL;
-            }
-
             os_delete_mutex(packet_mutex);
             packet_mutex = NULL;
         }
@@ -233,17 +204,19 @@ static packet_t *create_packet_help(uint8_t* buf, int length, bool fromisr)
     packet_t *p = allocate_packet_help(fromisr);
     memcpy(p->buffer, buf, length);
     p->length = length;
+    p->radio_num = ALL_RADIOS;
+
     return p;
 }
 
 packet_t *create_packet(uint8_t* buf, int length)
 {
-    return packet_create_help(buf, length, false);
+    return create_packet_help(buf, length, false);
 }
 
 packet_t *create_packet_from_isr(uint8_t* buf, int length)
 {
-    return packet_create_help(buf, length, true);
+    return create_packet_help(buf, length, true);
 }
 
 /*
@@ -262,8 +235,8 @@ static bool release_packet_help(packet_t *p, bool fromisr)
         ok = true;
 
         if (p != NULL && --(p->use) == 0) {
-            ok = ((fromisr && (os_put_queue_from_isr(free_packets_queue, p))) ||
-                  (!fromisr && (os_put_queue_with_timeout(free_packets_queue, p, 0)))) {
+            ok = (fromisr && os_put_queue_from_isr(free_packets_queue, p)) ||
+                 (!fromisr && os_put_queue_with_timeout(free_packets_queue, p, 0));
         }
     }
 
@@ -298,12 +271,12 @@ static int available_packets_help(bool fromisr)
 
 int available_packets(void)
 {
-    return packets_available_help(false);
+    return available_packets_help(false);
 }
 
 int available_packets_from_isr(void)
 {
-    return packets_available_help(true);
+    return available_packets_help(true);
 }
 
 /*
@@ -372,26 +345,26 @@ const uint8_t* get_bytes_field(packet_t *p, int from, int length)
         value[length] = '\0';
     }
 
-    return value;
+    return (const uint8_t*) value;
 }
 
 /*
  * Get NUL terminated string from a field.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.
  */
-const uint8_t* get_str_field(packet_t *p, int from, int length)
+const char* get_str_field(packet_t *p, int from, int length)
 {
-    uint8_t* value = NULL;
+    char* value = NULL;
 
     if (validate_field(p, from, length)) {
         /* Determine length of field to copy */
         length = strnlen(p->buffer + from, length); 
-        value = (uint8_t*) malloc(length + 1);
+        value = (char*) malloc(length + 1);
         strncpy(value, p->buffer + from, length);
         value[length] = '\0';
     }
 
-    return value;
+    return (const char*) value;
 }
 
 /*
