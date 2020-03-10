@@ -68,7 +68,7 @@ bool init_packets(int num_packets)
                 packet_t *p = (packet_t *) malloc(sizeof(packet_t));
                 if (p != NULL) {
                     memset(p, 0, sizeof(packet_t));
-                    p->use = 1;
+                    p->ref = 1;
                     release_packet(p);
                 } else {
                     ok = false;
@@ -164,7 +164,7 @@ static packet_t *allocate_packet_help(bool fromisr)
             if (packet != NULL) {
                 memset(packet, 0, sizeof(*packet));
                 packet->length = 0;
-                packet->use = 1;
+                packet->ref = 1;
                 ++active_packets;
             }
         }
@@ -220,11 +220,11 @@ packet_t *create_packet_from_isr(uint8_t* buf, int length)
 }
 
 /*
- * Decrement packet use count and if 0, free it.
+ * Decrement packet ref count and if 0, free it.
  */
 static bool release_packet_help(packet_t *p, bool fromisr)
 {
-    ESP_LOGD(TAG, "%s: %p use %d", __func__, p, p->use);
+    ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
 
     bool ok = false;
     
@@ -234,7 +234,7 @@ static bool release_packet_help(packet_t *p, bool fromisr)
     if (free_packets_queue != NULL) {
         ok = true;
 
-        if (p != NULL && --(p->use) == 0) {
+        if (p != NULL && --(p->ref) == 0) {
             ok = (fromisr && os_put_queue_from_isr(free_packets_queue, p)) ||
                  (!fromisr && os_put_queue_with_timeout(free_packets_queue, p, 0));
         }
@@ -411,7 +411,7 @@ int set_str_field(packet_t *p, int from, int length, const char* value)
 
 packet_t* packet_ref(packet_t* p)
 {
-    p->use++;
+    p->ref++;
     return p;
 }
 

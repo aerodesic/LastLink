@@ -116,6 +116,16 @@ int os_items_in_queue_from_isr(os_queue_t queue)
     return uxQueueMessagesWaitingFromISR(queue);
 }
 
+bool os_peek_queue(os_queue_t queue, os_queue_item_t* item)
+{
+    return xQueuePeek(queue, (void**) item, 0) == pdTRUE;
+}
+
+bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t* item)
+{
+    return xQueuePeekFromISR(queue, (void**) item) == pdTRUE;
+}
+
 os_timer_t os_create_timer(const char* name, int timeout, bool reload, void* param, void (*function)(void* param))
 {
     return xTimerCreate(name, pdMS_TO_TICKS(timeout), reload, param, function);

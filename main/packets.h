@@ -16,7 +16,7 @@ typedef struct packet {
     int   rssi;                       /* Received signal strength */
     bool  crc_ok;                     /* True if good crc check */
 
-    int   use;                        /* Use counter - when released is decremented; when 0 item is freed */
+    int   ref;                        /* Ref counter - when released is decremented; when 0 item is freed */
     int   length;                     /* Number of bytes used buffer */
     char  buffer[MAX_PACKET_LEN];     /* Buffer */
 } packet_t;

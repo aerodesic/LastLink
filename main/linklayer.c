@@ -39,6 +39,8 @@ static packet_t* routeerror_packet_create(int target, int address, int sequence,
 static void routeerror_packet_process(packet_t* p);
 static void data_packet_process(packet_t* p);
 static void put_received_packet(packet_t* p);
+static void linklayer_process_raw_queue(void* param);
+static void linklayer_process_packet(packet_t* packet);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
@@ -47,12 +49,14 @@ static void linklayer_transmit_packet(packet_t* packet);
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
-static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet);
+static packet_t* linklayer_on_transmit(radio_t* radio);
 
 static os_mutex_t                 linklayer_lock;
 static int                        node_address;
 static int                        node_flags;
 static os_queue_t                 receive_queue;
+static os_queue_t                 raw_receive_queue;
+static os_thread_t                raw_receive_thread;
 static os_queue_t                 promiscuous_queue;
 static int                        sequence_number;
 static bool                       debug_flag;
@@ -443,13 +447,31 @@ static void data_packet_process(packet_t* p)
     }
 }
 
+/*
+ * Read packets from the raw queue and direct to protocol handlers.
+ */
+static void linklayer_process_raw_queue(void* param)
+{
+    packet_t* packet;
+    while (os_get_queue(raw_receive_queue, (os_queue_item_t*) &packet)) {
+        if (packet->crc_ok) {
+            linklayer_process_packet(packet);
+        }
+        release_packet(packet);
+    }
+}
+
 /* Creates the linklayer */
 bool linklayer_init(int address, int flags, int announce)
 {
     linklayer_lock = os_create_recursive_mutex();
     node_address = address;
     node_flags = flags; 
+    /* Receive queue goes to packet data layer */
     receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
+    /* Raw receive queue gets the packets from the on_receive isr */
+    raw_receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
+    raw_receive_thread = os_create_thread(linklayer_process_raw_queue, "raw_queue", 0, 0, NULL);
     promiscuous_queue = NULL;
     sequence_number = 0;
     debug_flag = false;
@@ -610,6 +632,7 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->attach_interrupt = linklayer_attach_interrupt;
     radio->on_receive = linklayer_on_receive;
     radio->on_transmit = linklayer_on_transmit;
+    radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
 
     return true;
 }
@@ -619,6 +642,8 @@ static bool linklayer_deinit_radio(radio_t* radio)
     radio->attach_interrupt = NULL;
     radio->on_receive = NULL;
     radio->on_transmit = NULL;
+    os_delete_queue(radio->transmit_queue);
+    radio->transmit_queue = NULL;
 
     return true;
 }
@@ -628,7 +653,7 @@ bool linklayer_deinit(void)
     if (os_acquire_recursive_mutex(linklayer_lock)) {
 
         if (announce_thread != NULL) {
-            /* kill it */
+            os_delete_thread(announce_thread);
             announce_thread = NULL;
         }
 
@@ -646,6 +671,13 @@ bool linklayer_deinit(void)
 
         os_release_recursive_mutex(linklayer_lock);
         os_delete_mutex(linklayer_lock);
+
+        os_delete_thread(raw_receive_thread);
+        os_delete_thread(raw_receive_thread);
+        raw_receive_thread = NULL;
+
+        os_delete_queue(raw_receive_queue);
+        raw_receive_queue = NULL;
 
         linklayer_lock = NULL;
     }
@@ -724,6 +756,7 @@ void linklayer_send_packet(packet_t* packet)
 
             route_table_unlock(&route_table);
         }
+
         /*
          * TODO: we may need another method to restart transmit queue other than looking
          * and transmit queue length.  A 'transmitting' flag (protected by meshlock) that
@@ -750,6 +783,32 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
 }
 
 /*
+ * linklayer_send_packet_to_radio
+
+ * Put the packet onto the radio send queue.  If the queue now contains one item,
+ * activate the send by issuing a send_packet to the radio.
+ *
+ * When the on_transmit() callback fires, we discard the top packet of the queue
+ * and peek to see if the queue has another item.  If so, we return that item
+ * for the next transmit action.
+ *
+ * Entry:
+ *      radio           The radio to transmit the packet
+ *      packet          The packet to transmit
+ */
+static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet)
+{
+    if (os_put_queue(radio->transmit_queue, packet)) {
+        /* See if the queue was empty */
+        if (os_items_in_queue(radio->transmit_queue) == 1) {
+            /* Start the transmission */
+            radio->transmit_packet(radio, packet);
+        }
+    }
+}
+
+
+/*
  * Send packet to target radio or all radios if radio_num == ALL_RADIOS
  */
 static void linklayer_transmit_packet(packet_t* packet)
@@ -759,24 +818,37 @@ static void linklayer_transmit_packet(packet_t* packet)
 
         if (packet->radio_num == ALL_RADIOS) {
             for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
-                radio_table[radio_num]->transmit_packet(radio_table[radio_num], ref_packet(packet));
+                linklayer_transmit_packet_to_radio(radio_table[radio_num], ref_packet(packet));
             }
         } else {
-            radio_table[packet->radio_num]->transmit_packet(radio_table[packet->radio_num], ref_packet(packet));       
+            /* Send to singal radio */
+            linklayer_transmit_packet_to_radio(radio_table[packet->radio_num], ref_packet(packet));
         }
 
+        /* Packet is released from caller */
         release_packet(packet);
         os_release_recursive_mutex(linklayer_lock);
     }
 }
 
-void linklayer_process_packet(packet_t* packet)
+static void linklayer_process_packet(packet_t* packet)
 {
+    ++packet_processed;
+
+    if (debug_flag) {
+        linklayer_print_packet("Received", packet);
+    }
+
+    /* In promiscuous, deliver to receiver so it can handle it (but not process it) */
+    if (promiscuous_queue != NULL) {
+        os_put_queue_from_isr(promiscuous_queue, ref_packet(packet));
+    }
+
     int protocol = get_int_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
 
     if (protocol >= 0 && protocol <= CONFIG_LASTLINK_MAX_PROTOCOL_NUMBER) {
         if (protocol_table[protocol] != NULL) {
-            protocol_table[protocol](packet);
+            protocol_table[protocol](ref_packet(packet));
         }
     }
 
@@ -827,7 +899,15 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge,
 }
 
 /*
+ * linklayer_on_receive
+ *
+ * ISR called by device driver.
+ *
  * A packet arrives here.  Wrap it with a packet and procecss it.
+ *
+ * Entry:
+ *      radio               Pointer to radio delivering the packet
+ *      packet              The packet (with ref=1)
  */
 static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 {
@@ -838,18 +918,8 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 
             int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
 
-            if (debug_flag) {
-                linklayer_print_packet("Received", packet);
-            }
-
-            /* In promiscuous, deliver to receiver so it can handle it (but not process it) */
-            if (promiscuous_queue != NULL) {
-                os_put_queue(promiscuous_queue, ref_packet(packet));
-            }
-
             if (nexthop == BROADCAST_ADDRESS || nexthop == node_address) {
-                linklayer_process_packet(ref_packet(packet));
-                packet_processed++;
+                os_put_queue_from_isr(raw_receive_queue, ref_packet(packet));
             } else {
                 /* It is not processed */
                 packet_ignored++;
@@ -864,15 +934,26 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 }
 
 /*
- * linklayer_on_transmit
+ * linklayer_on_transmit (ISR)
  *
  * Called from the radio driver when it receives an end-of-transmit interrupt.
  *
  * Returns next packet to transmit.
  */
-static packet_t* linklayer_on_transmit(radio_t* radio, packet_t* packet)
+static packet_t* linklayer_on_transmit(radio_t* radio)
 {
-    return NULL;
+    /* Pull packet from transmit queue and discard */
+    packet_t* packet = NULL;
+
+    if (os_get_queue_from_isr(radio->transmit_queue, (os_queue_item_t*) &packet)) {
+        release_packet_from_isr(packet);
+
+        /* Peek next packet to send */
+        os_peek_queue_from_isr(radio->transmit_queue, (os_queue_item_t*) &packet);
+    }
+
+    /* Return next packet to send or NULL if no more. */
+    return packet;
 }
 
 void linklayer_print_packet(const char* reason, packet_t* packet)

@@ -48,6 +48,8 @@ typedef struct radio {
     /* Deinit the bus; calls into linklayer_io */
     bool (*bus_deinit)(radio_t* radio);
 
+    os_queue_t* transmit_queue;
+
     /*
      * This for any private data owned by the <driver>;
      */
@@ -62,7 +64,7 @@ typedef struct radio {
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
     void (*on_receive)(radio_t* radio, packet_t* packet);
-    packet_t* (*on_transmit)(radio_t* radio, packet_t* packet);
+    packet_t* (*on_transmit)(radio_t*);
 
 
     /************************************************/

@@ -140,7 +140,6 @@ bool linklayer_release_protocol(int number);
 
 bool linklayer_set_promiscuous_mode(bool mode);
 
-void linklayer_process_packet(packet_t* packet);
 void linklayer_send_packet(packet_t* packet);
 void linklayer_send_packet_update_ttl(packet_t* packet);
 
