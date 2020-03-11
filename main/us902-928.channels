@@ -8,6 +8,20 @@ crystal 32000000
 
 frequency 90200000 92800000
 
+bandwidth_bins
+        7800
+        10400
+        15600
+        20800
+        31250
+        41700
+        62500
+        125000
+        250000
+        500000
+end
+  
+ 
 channels narrow 0 63 902300000 200000
   datarate 0 spread-factor 10 bandwidth 125000 txpower 30 payload 19
   datarate 1 spread-factor  9 bandwidth 125000 txpower 28 payload 61
@@ -23,4 +37,6 @@ channels wide 64 79  903000000 1600000
   datarate 3 spread-factor  9 bandwidth 500000 txpower  8 payload 230
   datarate 4 spread-factor  8 bandwidth 500000 txpower  6 payload 230
   datarate 5 spread-factor  7 bandwidth 500000 txpower  4 payload 255
+
+  datarate 7 spread-factor  3 bandwidth 500000 txpower  4 payload 255
 end

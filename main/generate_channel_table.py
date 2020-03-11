@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 
 import sys, os
 
@@ -8,6 +8,9 @@ class GenerateChannelTable:
         self.channels = {}
         self.datarates = {}
         self.frequency_range = []
+        self.groups = []
+        self.max_datarates = 0
+        self.bandwidth_bins = []
 
     def calc_freq(self, freq):
         frf = round(freq / self.pll_step);
@@ -24,10 +27,25 @@ class GenerateChannelTable:
         self.frequency_range = [ int(lines[line][1]), int(lines[line][2]) ]
         return line + 1
 
+    def process_bandwidth_bins(self, line, lines):
+        done = False
+        while not done and line < len(lines):
+            if lines[line][0] == "end":
+                done = True
+                line = line + 1
+            else:
+                fields = lines[line]
+                # print("datarates: %s" % fields)
+                line += 1
+                bandwidth = int(fields[0])
+                self.bandwidth_bins.append(bandwidth)
+
+        return line
+
     def process_channels(self, line, lines):
         # Build the channel table
         fields = lines[line][1:]
-        print("process_channels: %s" % fields)
+        # print("process_channels: %s" % fields)
         line = line + 1
         group = fields[0]
         first_channel = int(fields[1])
@@ -38,26 +56,31 @@ class GenerateChannelTable:
         freq = start_freq
         for c in range(first_channel, last_channel + 1):
             if c in self.channels:
-                print("channel %d already defined group '%s'" % c, self.channels[c]["group"])
+                print("channel %d already defined group '%s'" % (c, self.channels[c]["group"]), file=sys.stderr)
             else:
                 self.channels[c] = { "group": group, "freq": self.calc_freq(freq), "hz": freq }
                 freq += step_size
 
+        self.groups.append(group)
+
         # get the datarates
         done = False
+        num_datarates = 0
         while not done and line < len(lines):
             if lines[line][0] == "end":
                 done = True
                 line = line + 1
             else:
                 fields = lines[line]
-                print("datarates: %s" % fields)
+                # print("datarates: %s" % fields)
                 line += 1
                 if fields[0] in [ "datarate", "dr" ]:
                     if group not in self.datarates:
                         self.datarates[group] = {}
 
                     dr = int(fields[1])
+                    if dr+1 > num_datarates:
+                        num_datarates = dr + 1
                     sf = None
                     bw = None
                     txpower = None
@@ -69,6 +92,12 @@ class GenerateChannelTable:
                             f += 2
                         elif fields[f] in [ "bw", "bandwidth" ]:
                             bw = int(fields[f+1])
+                            if bw in self.bandwidth_bins:
+                                bw = self.bandwidth_bins.index(bw)
+                            else:
+                                print("Invalid bandwidth '%s' in datarate group '%s'" % (bw, group), file=sys.stderr)
+                                bw = 0
+                            
                             f += 2
                         elif fields[f] in [ "tx", "txpower" ]:
                             txpower = int(fields[f+1])
@@ -78,18 +107,21 @@ class GenerateChannelTable:
                             f += 2
 
                     if dr in self.datarates[group]:
-                        print("datarate %d already defined in group '%s'" % (dr, group))
+                        print("datarate %d already defined in group '%s'" % (dr, group), file=sys.stderr)
                     elif sf == None:
-                        print("sf not defined for group '%s' datarate %d" % (group, dr))
+                        print("sf not defined for group '%s' datarate %d" % (group, dr), file=sys.stderr)
                     elif bw == None:
-                        print("bw not defined for group '%s' datarate %d" % (group, dr))
+                        print("bw not defined for group '%s' datarate %d" % (group, dr), file=sys.stderr)
                     elif txpower == None:
-                        print("txpower not defined for group '%s' datarate %d" % (group, dr))
+                        print("txpower not defined for group '%s' datarate %d" % (group, dr), file=sys.stderr)
                     elif payload == None:
-                        print("payload not defined for group '%s' datarate %d" % (group, dr))
+                        print("payload not defined for group '%s' datarate %d" % (group, dr), file=sys.stderr)
 
                     else:
                         self.datarates[group][dr] = { "sf": sf, "bw": bw, "tx": txpower, "payload": payload }
+
+        if num_datarates > self.max_datarates:
+            self.max_datarates = num_datarates
 
         return line
 
@@ -117,12 +149,15 @@ class GenerateChannelTable:
             if input_file != sys.stdin:
                input_file.close()
 
-        print(lines)
+        # print(lines)
 
         line = 0
         while line < len(lines):
             if lines[line][0] == "crystal":
                 line = self.process_crystal(line, lines)
+
+            elif lines[line][0] == "bandwidth_bins":
+                line = self.process_bandwidth_bins(line+1, lines)
 
             elif lines[line][0] == "channels":
                 line = self.process_channels(line, lines)
@@ -131,26 +166,64 @@ class GenerateChannelTable:
                 line = self.process_frequencies(line, lines)
 
             else:
-                print("Invalid line: %s" % lines[line])
+                print("Invalid line: %s" % (lines[line]), file=sys.stderr)
                 line = line + 1
 
+        # Generate the channel table
+        print("/*")
+        print(" * Channel table (constructed from %s" % (self.filename if self.filename else "Standard Input"))
+        print(" *    !!! DO NOT MODIFY !!!")
+        print(" */")
+        print("typedef struct channel_entry_struct {")
+        print("    uint8_t  freq_high;")
+        print("    uint8_t  freq_mid;")
+        print("    uint8_t  freq_low;")
+        print("    uint8_t  datarate_group;")
+        print("} channel_entry_t;")
+        print("")
+        print("typedef struct datarate_entry_struct {")
+        print("    uint8_t  sf;")
+        print("    uint8_t  bw;")
+        print("    uint8_t  tx;")
+        print("    int      payload;")
+        print("} datarate_entry_t;")
+        print("")
+        print("typedef struct channel_table_struct {")
+        print("    channel_entry_t   channels[%d];" % len(self.channels))
+        print("    datarate_entry_t  datarates[%d][%d];" % (len(self.groups), self.max_datarates))
+        print("    long              bandwidth_bins[%d];" % (len(self.bandwidth_bins)))
+        print("} channel_table_t;")
+        print("")
+        print("channel_table_t channel_table = {")
+
         for channel in self.channels:
-            # print("    channel %d group '%s' frequency %.0f freq %s" % (channel, self.channels[channel]["group"],  self.channels[channel]["hz"], self.channels[channel]["freq"]))
-            print("channel %s: %s" % (channel, self.channels[channel]))
+            chinfo = self.channels[channel]
+            group = chinfo["group"]
+            datarates = self.datarates[chinfo["group"]]
+            print("    .channels[%d] = {" % channel)
+            print("        .freq_high = %d," % (chinfo["freq"][0]))
+            print("        .freq_mid = %d," % (chinfo["freq"][1]))
+            print("        .freq_low = %d," % (chinfo["freq"][2]))
+            print("        .datarate_group = %d," % (self.groups.index(group)))
+            print("    },")
 
-        for group in self.datarates:
-            print("Datarate group '%s'" % group)
-            for datarate in self.datarates[group]:
-                sf = self.datarates[group][datarate]["sf"]
-                bw = self.datarates[group][datarate]["bw"]
-                txpower = self.datarates[group][datarate]["tx"]
-                payload = self.datarates[group][datarate]["payload"]
-                print("    datarate %d spread-factor %d bandwidth %d txpower %d payload %d" % (datarate, sf, bw, txpower, payload))
+        for group in self.groups:
+            print("    .datarates[%d] = {" % self.groups.index(group))
+            for dr in self.datarates[group]:
+                print("        [%d] = {" % (dr))
+                for field in self.datarates[group][dr]:
+                    print("            .%s = %d," % (field, self.datarates[group][dr][field]))
+                print("        },")
+            print("    },")   
 
+        for bw in self.bandwidth_bins:
+            print("    .bandwidth_bins[%d] = %d," % (self.bandwidth_bins.index(bw), int(bw)))
+
+        print("};")
 
 
 def main ():
-     return GenerateChannelTable(sys.args[1] if len(sys.argv) > 1 else None).run()
+     return GenerateChannelTable(sys.argv[1] if len(sys.argv) > 1 else None).run()
 
 if __name__ == "__main__":
     main ()

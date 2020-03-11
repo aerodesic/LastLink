@@ -108,6 +108,13 @@ menu "LastLink Configuration"
             help
                 The maximum protocol number allowed (starts with 0)
                 (0 to 4 are used internally.)
+
+        config LASTLINK_CHANNEL_TABLE_FILE
+            string "Select channel table"
+            default "us902-928.h"
+            help
+                Select one of the channel table files
+
     endmenu
 
     menu "Packet Configuration"
