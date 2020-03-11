@@ -1,0 +1,26 @@
+# 
+# Channel domain list
+#
+# Defines the channels and data rates available for communication
+#
+
+crystal 32000000
+
+frequency 90200000 92800000
+
+channels narrow 0 63 902300000 200000
+  datarate 0 spread-factor 10 bandwidth 125000 txpower 30 payload 19
+  datarate 1 spread-factor  9 bandwidth 125000 txpower 28 payload 61
+  datarate 2 spread-factor  8 bandwidth 125000 txpower 26 payload 133
+  datarate 3 spread-factor  7 bandwidth 125000 txpower 24 payload 250
+  datarate 4 spread-factor  6 bandwidth 125000 txpower 20 payload 255
+end
+
+channels wide 64 79  903000000 1600000
+  datarate 0 spread-factor 12 bandwidth 500000 txpower 14 payload 41
+  datarate 1 spread-factor 11 bandwidth 500000 txpower 12 payload 17
+  datarate 2 spread-factor 10 bandwidth 500000 txpower 10 payload 230
+  datarate 3 spread-factor  9 bandwidth 500000 txpower  8 payload 230
+  datarate 4 spread-factor  8 bandwidth 500000 txpower  6 payload 230
+  datarate 5 spread-factor  7 bandwidth 500000 txpower  4 payload 255
+end
