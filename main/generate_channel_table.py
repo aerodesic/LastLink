@@ -1,16 +1,25 @@
 #! /usr/bin/env python3
 
-import sys, os
+import sys
+import os
+import argparse
 
 class GenerateChannelTable:
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, input_name, output_name, device, debug):
+        self.input_name = input_name
+        self.input_file = None
+        self.output_name = output_name
+        self.output_file = None
+        self.device = device
+        self.debug = debug
         self.channels = {}
         self.datarates = {}
         self.frequency_range = []
         self.groups = []
         self.max_datarates = 0
         self.bandwidth_bins = []
+        self.crystal = 0
+        self.pll_step = 0
 
     def calc_freq(self, freq):
         frf = round(freq / self.pll_step);
@@ -20,7 +29,22 @@ class GenerateChannelTable:
         return [ msb, mid, lsb ]
 
     def process_crystal(self, line, lines):
-        self.pll_step = float(lines[line][1]) / 2**19
+        self.crystal = float(lines[line][1])
+        self.pll_step = self.crystal / 2**19
+
+        if self.debug:
+            print("process_crystal: crystal %.f pll_step %.f" % (self.crystal, self.pll_step), file=sys.stderr)
+
+        return line + 1
+
+    def process_device(self, line, lines):
+        if self.debug:
+            print("process_device: %s" % lines[line], file=sys.stderr)
+
+        # Save only if not overriden
+        if not self.device:
+            self.device = lines[line][1]
+
         return line + 1
 
     def process_frequencies(self, line, lines):
@@ -45,7 +69,8 @@ class GenerateChannelTable:
     def process_channels(self, line, lines):
         # Build the channel table
         fields = lines[line][1:]
-        # print("process_channels: %s" % fields)
+        if self.debug:
+            print("process_channels: %s" % fields, file=sys.stdout)
         line = line + 1
         group = fields[0]
         first_channel = int(fields[1])
@@ -83,6 +108,7 @@ class GenerateChannelTable:
                         num_datarates = dr + 1
                     sf = None
                     bw = None
+                    cr = 5  # default
                     txpower = None
                     payload = None
                     f = 2
@@ -105,6 +131,9 @@ class GenerateChannelTable:
                         elif fields[f] in [ "payload" ]:
                             payload = int(fields[f+1])
                             f += 2
+                        elif fields[f] in [ "cr", "coding-rate" ]:
+                            cr = int(fields[f+1])
+                            f += 2
 
                     if dr in self.datarates[group]:
                         print("datarate %d already defined in group '%s'" % (dr, group), file=sys.stderr)
@@ -118,7 +147,7 @@ class GenerateChannelTable:
                         print("payload not defined for group '%s' datarate %d" % (group, dr), file=sys.stderr)
 
                     else:
-                        self.datarates[group][dr] = { "sf": sf, "bw": bw, "tx": txpower, "payload": payload }
+                        self.datarates[group][dr] = { "sf": sf, "bw": bw, "cr": cr, "tx": txpower, "payload": payload }
 
         if num_datarates > self.max_datarates:
             self.max_datarates = num_datarates
@@ -126,104 +155,148 @@ class GenerateChannelTable:
         return line
 
     def run(self):
-        lines = []
+        rc = 0
 
-        if self.filename == None:
-            input_file = sys.stdin
-        else:
+        if self.output_name:
             try:
-                input_file = open(self.filename, "r")
+                self.output_file = open(self.output_name, "w")
             except:
-                input_file = None
+                rc = -2
+                print("Unable to create %s" % self.output_name, file=sys.stderr)
 
-        if input_file == None:
-            return -1
-        else:
-            for line in input_file:
+        if rc == 0 and self.input_name:
+            try:
+                self.input_file = open(self.input_name, "r")
+            except:
+                rc = 3
+                print("Unable to open %s" % self.input_name, file=sys.stderr)
+
+        if rc == 0:
+            lines = []
+
+            for line in self.input_file:
                 line = line.strip().split();
 
                 # Skip comment lines
                 if len(line) > 0 and line[0][0] != "#":
                     lines.append(line)
 
-            if input_file != sys.stdin:
-               input_file.close()
+            # Close now before we do the work
+            if self.input_name != None:
+               self.input_file.close()
+               self.input_file = None
 
-        # print(lines)
+            # print(lines)
+    
+            line = 0
+            while line < len(lines):
+                if lines[line][0] == "crystal":
+                    line = self.process_crystal(line, lines)
+    
+                elif lines[line][0] == "device":
+                    line = self.process_device(line, lines)
+    
+                elif lines[line][0] == "bandwidth_bins":
+                    line = self.process_bandwidth_bins(line+1, lines)
+    
+                elif lines[line][0] == "channels":
+                    line = self.process_channels(line, lines)
+    
+                elif lines[line][0] == "frequency":
+                    line = self.process_frequencies(line, lines)
+    
+                else:
+                    print("Invalid line: %s" % (lines[line]), file=sys.stderr)
+                    line = line + 1
+    
+            # Generate the channel table
+            print("/*",                                                                                                             file=self.output_file)
+            print(" * Channel table (constructed from %s"          % (self.input_name if self.input_name else "Standard Input"),    file=self.output_file)
+            print(" *    !!! DO NOT MODIFY !!!",                                                                                    file=self.output_file)
+            print(" */",                                                                                                            file=self.output_file)
+            print("typedef struct channel_entry_struct {",                                                                          file=self.output_file)
+            print("    uint8_t  freq_high;",                                                                                        file=self.output_file)
+            print("    uint8_t  freq_mid;",                                                                                         file=self.output_file)
+            print("    uint8_t  freq_low;",                                                                                         file=self.output_file)
+            print("    uint8_t  datarate_group;",                                                                                   file=self.output_file)
+            print("} channel_entry_t;",                                                                                             file=self.output_file)
+            print("",                                                                                                               file=self.output_file)
+            print("typedef struct datarate_entry_struct {",                                                                         file=self.output_file)
+            print("    uint8_t  sf;",                                                                                               file=self.output_file)
+            print("    uint8_t  bw;",                                                                                               file=self.output_file)
+            print("    uint8_t  cr;",                                                                                               file=self.output_file)
+            print("    uint8_t  tx;",                                                                                               file=self.output_file)
+            print("    int      payload;",                                                                                          file=self.output_file)
+            print("} datarate_entry_t;",                                                                                            file=self.output_file)
+            print("",                                                                                                               file=self.output_file)
+            print("typedef struct channel_table_struct {",                                                                          file=self.output_file)
+            print("    const char*       device;",                                                                                  file=self.output_file)
+            print("    float             crystal;",                                                                                 file=self.output_file)
+            print("    channel_entry_t   channels[%d];"             % len(self.channels),                                           file=self.output_file)
+            print("    datarate_entry_t  datarates[%d][%d];"        % (len(self.groups), self.max_datarates),                       file=self.output_file)
+            print("    long              bandwidth_bins[%d];"       % (len(self.bandwidth_bins)),                                   file=self.output_file)
+            print("} channel_table_t;",                                                                                             file=self.output_file)
+            print("",                                                                                                               file=self.output_file)
+            print("channel_table_t channel_table = {",                                                                              file=self.output_file)
+    
+            print("    .device = %s,"                               % (('"' + self.device + '"') if self.device else "NULL"),       file=self.output_file)
+            print("    .crystal = %.f,"                             % (self.crystal),                                               file=self.output_file)
+            for channel in self.channels:
+                chinfo = self.channels[channel]
+                group = chinfo["group"]
+                datarates = self.datarates[chinfo["group"]]
+                print("    .channels[%d] = {"                       % channel,                                                      file=self.output_file)
+                print("        .freq_high = %d,"                    % (chinfo["freq"][0]),                                          file=self.output_file)
+                print("        .freq_mid = %d,"                     % (chinfo["freq"][1]),                                          file=self.output_file)
+                print("        .freq_low = %d,"                     % (chinfo["freq"][2]),                                          file=self.output_file)
+                print("        .datarate_group = %d,"               % (self.groups.index(group)),                                   file=self.output_file)
+                print("    },",                                                                                                     file=self.output_file)
+    
+            for group in self.groups:
+                print("    .datarates[%d] = {"                      % self.groups.index(group),                                     file=self.output_file)
+                for dr in self.datarates[group]:
+                    print("        [%d] = {"                        % (dr),                                                         file=self.output_file)
+                    for field in self.datarates[group][dr]:
+                        print("            .%s = %d,"               % (field, self.datarates[group][dr][field]),                    file=self.output_file)
+                    print("        },",                                                                                             file=self.output_file)
+                print("    },",                                                                                                     file=self.output_file)
+    
+            for bw in self.bandwidth_bins:
+                print("    .bandwidth_bins[%d] = %d,"               % (self.bandwidth_bins.index(bw), int(bw)),                             file=self.output_file)
+    
+            print("};",                                                                                                                     file=self.output_file)
 
-        line = 0
-        while line < len(lines):
-            if lines[line][0] == "crystal":
-                line = self.process_crystal(line, lines)
+        if self.input_file:
+            self.input_file.close()
 
-            elif lines[line][0] == "bandwidth_bins":
-                line = self.process_bandwidth_bins(line+1, lines)
-
-            elif lines[line][0] == "channels":
-                line = self.process_channels(line, lines)
-
-            elif lines[line][0] == "frequency":
-                line = self.process_frequencies(line, lines)
-
-            else:
-                print("Invalid line: %s" % (lines[line]), file=sys.stderr)
-                line = line + 1
-
-        # Generate the channel table
-        print("/*")
-        print(" * Channel table (constructed from %s" % (self.filename if self.filename else "Standard Input"))
-        print(" *    !!! DO NOT MODIFY !!!")
-        print(" */")
-        print("typedef struct channel_entry_struct {")
-        print("    uint8_t  freq_high;")
-        print("    uint8_t  freq_mid;")
-        print("    uint8_t  freq_low;")
-        print("    uint8_t  datarate_group;")
-        print("} channel_entry_t;")
-        print("")
-        print("typedef struct datarate_entry_struct {")
-        print("    uint8_t  sf;")
-        print("    uint8_t  bw;")
-        print("    uint8_t  tx;")
-        print("    int      payload;")
-        print("} datarate_entry_t;")
-        print("")
-        print("typedef struct channel_table_struct {")
-        print("    channel_entry_t   channels[%d];" % len(self.channels))
-        print("    datarate_entry_t  datarates[%d][%d];" % (len(self.groups), self.max_datarates))
-        print("    long              bandwidth_bins[%d];" % (len(self.bandwidth_bins)))
-        print("} channel_table_t;")
-        print("")
-        print("channel_table_t channel_table = {")
-
-        for channel in self.channels:
-            chinfo = self.channels[channel]
-            group = chinfo["group"]
-            datarates = self.datarates[chinfo["group"]]
-            print("    .channels[%d] = {" % channel)
-            print("        .freq_high = %d," % (chinfo["freq"][0]))
-            print("        .freq_mid = %d," % (chinfo["freq"][1]))
-            print("        .freq_low = %d," % (chinfo["freq"][2]))
-            print("        .datarate_group = %d," % (self.groups.index(group)))
-            print("    },")
-
-        for group in self.groups:
-            print("    .datarates[%d] = {" % self.groups.index(group))
-            for dr in self.datarates[group]:
-                print("        [%d] = {" % (dr))
-                for field in self.datarates[group][dr]:
-                    print("            .%s = %d," % (field, self.datarates[group][dr][field]))
-                print("        },")
-            print("    },")   
-
-        for bw in self.bandwidth_bins:
-            print("    .bandwidth_bins[%d] = %d," % (self.bandwidth_bins.index(bw), int(bw)))
-
-        print("};")
+        if self.output_file:
+            self.output_file.close()
+        return rc
 
 
 def main ():
-     return GenerateChannelTable(sys.argv[1] if len(sys.argv) > 1 else None).run()
+    parser = argparse.ArgumentParser(usage="%(prog)s <channels file> [options]")
+
+    parser.add_argument("-D", "--debug" , action="store_true", help="Enable debug messages to stderr")
+
+    parser.add_argument("-d", "--device", type=str, help="specify a particular device", default=None)
+
+    parser.add_argument("-o", "--output", type=str, help="specify a particular output file", default=None)
+
+    (options, args) = parser.parse_known_args()
+
+    if len(args) > 0:
+
+        input_file = args[0]
+ 
+        gt = GenerateChannelTable(input_file, options.output, options.device, options.debug)
+
+        rc = gt.run()
+    else:
+        print("Missing channel file name", file=sys.stderr)
+        rc = -1
+
+    return rc
 
 if __name__ == "__main__":
     main ()

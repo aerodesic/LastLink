@@ -109,9 +109,9 @@ menu "LastLink Configuration"
                 The maximum protocol number allowed (starts with 0)
                 (0 to 4 are used internally.)
 
-        config LASTLINK_CHANNEL_TABLE_FILE
+        config LASTLINK_CHANNEL_TABLE
             string "Select channel table"
-            default "us902-928.h"
+            default "us902_928"
             help
                 Select one of the channel table files
 

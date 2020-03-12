@@ -7,26 +7,25 @@
 # please read the ESP-IDF documents if you need to do this.
 #
 
-CHANNEL_FILES   = $(wildcard $(COMPONENT_PATH)/*.channels)
-CHANNEL_FILES_H = $(foreach f, $(CHANNEL_FILES), $(subst .channels,.h,$f))
-
-COMPONENT_EXTRA_CLEAN := $(CHANNEL_FILES_H)
+# COMPONENT_EXTRA_CLEAN := sx126x_table.h sx127x_table.h
 
 # Depedency here just to test things out.
-linklayer.o: frequency_tables
+# sx127x.o: sx127x_table.h
+# sx126x.o: sx126x_table.h
 
-# Eventually we will do
-# sx127x.o: frequency_tables
-# sx126x.o: frequency_tables
+# Create supporting table file for this compile
+linklayer.o: sx126x_table.h
 
-.PHONY: frequence_tables
+# Eventually:
+# sx127x_driver.c:	sx127x_table.h
+# sx126x_driver.c:	sx126x_table.h
 
-$(COMPONENT_LIBRARY): frequency_tables
 
-frequency_tables: $(CHANNEL_FILES_H)
-#	echo CHANNEL_FILES = $(CHANNEL_FILES)
-#	echo CHANNEL_FILES_H = $(CHANNEL_FILES_H)
+# sx127x_table.h: $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels
+sx127x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
+	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx127x -o $@
+	
+sx126x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
+	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx126x -o $@
+	
 
-%.h: %.channels 
-	echo Creating $@
-	$(COMPONENT_PATH)/generate_channel_table.py $< >$@

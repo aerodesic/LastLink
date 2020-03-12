@@ -30,11 +30,7 @@
 
 #define TAG  "linklayer"
 
-// #define JOIN_NAME_EXT(name, ext) name##ext
-// #include JOIN_NAME_EXT(CONFIG_LASTLINK_CHANNEL_TABLE_FILE, ".h")
-// #include CHANNEL_TABLE_FILE
-//#include CHANNEL_LASTLINK_CHANNEL_TABLE_FILE.h
-#include CONFIG_LASTLINK_CHANNEL_TABLE_FILE
+#include "sx127x_table.h"
 
 static void beacon_packet_process(packet_t* p);
 static packet_t* routeannounce_packet_create(int target, int sequence, int metric);

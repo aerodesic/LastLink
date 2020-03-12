@@ -4,10 +4,14 @@
 # Defines the channels and data rates available for communication
 #
 
+# Define the device to be configured (overriden with -d parameter)
+device sx127x
+
 crystal 32000000
 
 frequency 90200000 92800000
 
+# Define the device bandwidth bins
 bandwidth_bins
         7800
         10400
@@ -20,8 +24,8 @@ bandwidth_bins
         250000
         500000
 end
-  
  
+# 64 narrow band channels
 channels narrow 0 63 902300000 200000
   datarate 0 spread-factor 10 bandwidth 125000 txpower 30 payload 19
   datarate 1 spread-factor  9 bandwidth 125000 txpower 28 payload 61
@@ -29,6 +33,8 @@ channels narrow 0 63 902300000 200000
   datarate 3 spread-factor  7 bandwidth 125000 txpower 24 payload 250
   datarate 4 spread-factor  6 bandwidth 125000 txpower 20 payload 255
 end
+
+# 16 wide band channels
 
 channels wide 64 79  903000000 1600000
   datarate 0 spread-factor 12 bandwidth 500000 txpower 14 payload 41
@@ -38,5 +44,6 @@ channels wide 64 79  903000000 1600000
   datarate 4 spread-factor  8 bandwidth 500000 txpower  6 payload 230
   datarate 5 spread-factor  7 bandwidth 500000 txpower  4 payload 255
 
-  datarate 7 spread-factor  3 bandwidth 500000 txpower  4 payload 255
+  # Just a test - remove before flight...
+  datarate 7 spread-factor  3 bandwidth 500000 txpower  4 payload 255 coding-rate 8
 end
