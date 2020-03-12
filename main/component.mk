@@ -7,13 +7,7 @@
 # please read the ESP-IDF documents if you need to do this.
 #
 
-# COMPONENT_EXTRA_CLEAN := sx126x_table.h sx127x_table.h
-
 # Depedency here just to test things out.
-# sx127x.o: sx127x_table.h
-# sx126x.o: sx126x_table.h
-
-# Create supporting table file for this compile
 linklayer.o: sx126x_table.h
 
 # Eventually:
