@@ -7,21 +7,17 @@
 # please read the ESP-IDF documents if you need to do this.
 #
 
-# Depedency here just to test things out.
-linklayer.o: sx126x_table.h
+# Enumerate the drivers
+PACKET_DRIVERS = $(wildcard $(COMPONENT_PATH)/*_driver.c)
 
-# Eventually:
-# sx127x_driver.c:	sx127x_table.h
-# sx126x_driver.c:	sx126x_table.h
+# Create dependency on table.h for each driver
+PACKET_TABLES = $(patsubst %_driver.c,%_table.h, $(PACKET_DRIVERS))
 
+# The drivers depend on the table being created
+%_table.hc: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
+	echo Generating $@ from $< for $(subst _table.h,,$(notdir $@))
+	$(COMPONENT_PATH)/generate_channel_table.py $< -d $(subst _table.h,,$(notdir $@)) -o $@
 
-# sx127x_table.h: $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels
-sx127x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
-	echo Generating $@
-	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx127x -o $@
-	
-sx126x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
-	echo Generating $@
-	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx126x -o $@
-	
+$(PACKET_DRIVERS): $(PACKET_TABLES)
+
 
