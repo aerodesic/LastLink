@@ -5,26 +5,40 @@
 #
 
 # Define the device to be configured (overriden with -d parameter)
+# At the moment, this simply ends up as a string in the channel table.
+#
 device sx127x
 
+#
+# Crystal frequency of the device.  Used to calculate pll step value for the channel frequency
 crystal 32000000
 
+# Low and high values for the frequencies used for communication.
 frequency 90200000 92800000
 
-# Define the device bandwidth bins
+# Define the device bandwidth bins (in Hz)
 bandwidth_bins
-        7800
-        10400
-        15600
-        20800
-        31250
-        41700
-        62500
-        125000
-        250000
-        500000
+  7800
+  10400
+  15600
+  20800
+  31250
+  41700
+  62500
+  125000
+  250000
+  500000
 end
  
+#
+# channel table parameters for datarates:
+#   spread-factor (or sf) specifies the the spread-factor code
+#   bandwidth (or bw) specifies the channel bandwidth
+#   txpower (or tx) gives the starting tranmission power for the datarate.
+#   payload is the nominal number of bytes per packet for international channel dwell time.
+#   coding-rate (or cr) is the coding rate for the bits sent.  All expressed in 4/N form.
+#
+
 # 64 narrow band channels
 channels narrow 0 63 902300000 200000
   datarate 0 spread-factor 10 bandwidth 125000 txpower 30 payload 19

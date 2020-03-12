@@ -23,9 +23,11 @@ linklayer.o: sx126x_table.h
 
 # sx127x_table.h: $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels
 sx127x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
+	echo Generating $@
 	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx127x -o $@
 	
 sx126x_table.h: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
+	echo Generating $@
 	$(COMPONENT_PATH)/generate_channel_table.py $< -d sx126x -o $@
 	
 
