@@ -7,17 +7,15 @@
 # please read the ESP-IDF documents if you need to do this.
 #
 
-# Enumerate the drivers
-PACKET_DRIVERS = $(wildcard $(COMPONENT_PATH)/*_driver.c)
+COMPONENT_EXTRA_CLEAN := $(COMPONENT_PATH)/*_table.h
 
-# Create dependency on table.h for each driver
-PACKET_TABLES = $(patsubst %_driver.c,%_table.h, $(PACKET_DRIVERS))
+%_table.h:
+	# echo "Buildint channel table for $(notdir $(patsubst %_table.h,%,$(@)))"
+	${COMPONENT_PATH}/generate_channel_table.py ${COMPONENT_PATH}/${CONFIG_LASTLINK_CHANNEL_TABLE}.channels -d $(notdir $(patsubst %_table.h,%,$(@))) -o $@
 
-# The drivers depend on the table being created
-%_table.hc: $(shell echo $(COMPONENT_PATH)/$(CONFIG_LASTLINK_CHANNEL_TABLE).channels)
-	echo Generating $@ from $< for $(subst _table.h,,$(notdir $@))
-	$(COMPONENT_PATH)/generate_channel_table.py $< -d $(subst _table.h,,$(notdir $@)) -o $@
 
-$(PACKET_DRIVERS): $(PACKET_TABLES)
+sx127x_driver.o:	$(COMPONENT_PATH)/sx127x_table.h
+
+sx126x_driver.o:	$(COMPONENT_PATH)/sx126x_table.h
 
 

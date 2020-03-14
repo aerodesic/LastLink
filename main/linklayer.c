@@ -30,8 +30,6 @@
 
 #define TAG  "linklayer"
 
-#include "sx127x_table.h"
-
 static void beacon_packet_process(packet_t* p);
 static packet_t* routeannounce_packet_create(int target, int sequence, int metric);
 static void routeannounce_packet_process(packet_t* p);

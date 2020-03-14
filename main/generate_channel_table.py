@@ -5,12 +5,15 @@ import os
 import argparse
 
 class GenerateChannelTable:
-    def __init__(self, input_name, output_name, device, debug):
+    def __init__(self, input_name, cfile_name, hfile_name, output_name, device, debug):
         self.input_name = input_name
         self.input_file = None
+        self.cfile_name = cfile_name
+        self.cfile = None
+        self.hfile_name = hfile_name
+        self.hfile = None
         self.output_name = output_name
-        self.output_file = None
-        self.device = device
+        self.device = "sample"
         self.debug = debug
         self.channels = {}
         self.datarates = {}
@@ -41,9 +44,7 @@ class GenerateChannelTable:
         if self.debug:
             print("process_device: %s" % lines[line], file=sys.stderr)
 
-        # Save only if not overriden
-        if not self.device:
-            self.device = lines[line][1]
+        self.device = lines[line][1]
 
         return line + 1
 
@@ -157,12 +158,36 @@ class GenerateChannelTable:
     def run(self):
         rc = 0
 
+        # If output_name specified, then cfile_name and hfile_name are ignored.  both outputs to to one file.
         if self.output_name:
             try:
-                self.output_file = open(self.output_name, "w")
+               self.cfile = open(self.output_name, "w")
+               self.hfile = self.cfile
+          
             except:
                 rc = -2
                 print("Unable to create %s" % self.output_name, file=sys.stderr)
+
+        else:
+            if self.cfile_name:
+                try:
+                    self.cfile = open(self.cfile_name, "w")
+                except:
+                    rc = -2
+                    print("Unable to create %s" % self.cfile_name, file=sys.stderr)
+            else:
+               self.cfile = sys.stdout
+
+            if self.hfile_name:
+                try:
+                    self.hfile = open(self.hfile_name, "w")
+                except:
+                    rc = -2
+                    print("Unable to create %s" % self.hfile_name, file=sys.stderr)
+
+        # If no names specified, send both to stdout
+        if self.output_name == None and self.cfile_name == None and self.hfile_name == None:
+            self.cfile = self.hfile = sys.stdout
 
         if rc == 0 and self.input_name:
             try:
@@ -209,68 +234,91 @@ class GenerateChannelTable:
                     print("Invalid line: %s" % (lines[line]), file=sys.stderr)
                     line = line + 1
     
-            # Generate the channel table
-            print("/*",                                                                                                             file=self.output_file)
-            print(" * Channel table (constructed from %s"          % (self.input_name if self.input_name else "Standard Input"),    file=self.output_file)
-            print(" *    !!! DO NOT MODIFY !!!",                                                                                    file=self.output_file)
-            print(" */",                                                                                                            file=self.output_file)
-            print("typedef struct channel_entry_struct {",                                                                          file=self.output_file)
-            print("    uint8_t  freq_high;",                                                                                        file=self.output_file)
-            print("    uint8_t  freq_mid;",                                                                                         file=self.output_file)
-            print("    uint8_t  freq_low;",                                                                                         file=self.output_file)
-            print("    uint8_t  datarate_group;",                                                                                   file=self.output_file)
-            print("} channel_entry_t;",                                                                                             file=self.output_file)
-            print("",                                                                                                               file=self.output_file)
-            print("typedef struct datarate_entry_struct {",                                                                         file=self.output_file)
-            print("    uint8_t  sf;",                                                                                               file=self.output_file)
-            print("    uint8_t  bw;",                                                                                               file=self.output_file)
-            print("    uint8_t  cr;",                                                                                               file=self.output_file)
-            print("    uint8_t  tx;",                                                                                               file=self.output_file)
-            print("    int      payload;",                                                                                          file=self.output_file)
-            print("} datarate_entry_t;",                                                                                            file=self.output_file)
-            print("",                                                                                                               file=self.output_file)
-            print("typedef struct channel_table_struct {",                                                                          file=self.output_file)
-            print("    const char*       device;",                                                                                  file=self.output_file)
-            print("    float             crystal;",                                                                                 file=self.output_file)
-            print("    channel_entry_t   channels[%d];"             % len(self.channels),                                           file=self.output_file)
-            print("    datarate_entry_t  datarates[%d][%d];"        % (len(self.groups), self.max_datarates),                       file=self.output_file)
-            print("    long              bandwidth_bins[%d];"       % (len(self.bandwidth_bins)),                                   file=self.output_file)
-            print("} channel_table_t;",                                                                                             file=self.output_file)
-            print("",                                                                                                               file=self.output_file)
-            print("channel_table_t channel_table = {",                                                                              file=self.output_file)
-    
-            print("    .device = %s,"                               % (('"' + self.device + '"') if self.device else "NULL"),       file=self.output_file)
-            print("    .crystal = %.f,"                             % (self.crystal),                                               file=self.output_file)
+            # Generate the channel table h file
+            print("/*",                                                                                                             file=self.hfile)
+            print(" * Channel table (constructed from %s"           % (self.input_name if self.input_name else "Standard Input"),   file=self.hfile)
+            print(" *    !!! DO NOT MODIFY !!!",                                                                                    file=self.hfile)
+            print(" */",                                                                                                            file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            if self.hfile_name != None:
+                print("#ifndef __%s_included__"                     % self.hfile_name,                                              file=self.hfile)
+                print("#define __%s_included__"                     % self.hfile_name,                                              file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            print("typedef struct channel_entry_%s_struct {"        % self.device,                                                  file=self.hfile)
+            print("    uint8_t  freq_high;",                                                                                        file=self.hfile)
+            print("    uint8_t  freq_mid;",                                                                                         file=self.hfile)
+            print("    uint8_t  freq_low;",                                                                                         file=self.hfile)
+            print("    uint8_t  datarate_group;",                                                                                   file=self.hfile)
+            print("} channel_entry_%s_t;"                           % self.device,                                                  file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            print("typedef struct datarate_entry_%s_struct {"       % self.device,                                                  file=self.hfile)
+            print("    uint8_t  sf;",                                                                                               file=self.hfile)
+            print("    uint8_t  bw;",                                                                                               file=self.hfile)
+            print("    uint8_t  cr;",                                                                                               file=self.hfile)
+            print("    uint8_t  tx;",                                                                                               file=self.hfile)
+            print("    int      payload;",                                                                                          file=self.hfile)
+            print("} datarate_entry_%s_t;"                          % self.device,                                                  file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            print("typedef struct channel_table_%s_struct {"        % self.device,                                                  file=self.hfile)
+            print("    const char*          device;",                                                                               file=self.hfile)
+            print("    float                crystal;",                                                                              file=self.hfile)
+            print("    channel_entry_%s_t   channels[%d];"          % (self.device, len(self.channels)),                            file=self.hfile)
+            print("    datarate_entry_%s_t  datarates[%d][%d];"     % (self.device, len(self.groups), self.max_datarates),          file=self.hfile)
+            print("    long                 bandwidth_bins[%d];"    % (len(self.bandwidth_bins)),                                   file=self.hfile)
+            print("} channel_table_%s_t;"                           % self.device,                                                  file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            print("",                                                                                                               file=self.hfile)
+            if self.hfile_name != None:
+                print("#endif /* __%s_included__ */"                % self.hfile_name,                                              file=self.hfile)
+
+            # Generate the c file
+            if self.hfile_name != None:
+                print("#include \"%s\""                             % self.hfile_name,                                              file=self.cfile)
+            print("",                                                                                                               file=self.cfile)
+            print("const channel_table_%s_t channel_table_%s = {"   % (self.device, self.device),                                   file=self.cfile)
+            print("    .device = %s,"                               % (('"' + self.device + '"') if self.device else "NULL"),       file=self.cfile)
+            print("    .crystal = %.f,"                             % (self.crystal),                                               file=self.cfile)
             for channel in self.channels:
                 chinfo = self.channels[channel]
                 group = chinfo["group"]
                 datarates = self.datarates[chinfo["group"]]
-                print("    .channels[%d] = {"                       % channel,                                                      file=self.output_file)
-                print("        .freq_high = %d,"                    % (chinfo["freq"][0]),                                          file=self.output_file)
-                print("        .freq_mid = %d,"                     % (chinfo["freq"][1]),                                          file=self.output_file)
-                print("        .freq_low = %d,"                     % (chinfo["freq"][2]),                                          file=self.output_file)
-                print("        .datarate_group = %d,"               % (self.groups.index(group)),                                   file=self.output_file)
-                print("    },",                                                                                                     file=self.output_file)
+                print("    .channels[%d] = {"                       % channel,                                                      file=self.cfile)
+                print("        .freq_high = %d,"                    % (chinfo["freq"][0]),                                          file=self.cfile)
+                print("        .freq_mid = %d,"                     % (chinfo["freq"][1]),                                          file=self.cfile)
+                print("        .freq_low = %d,"                     % (chinfo["freq"][2]),                                          file=self.cfile)
+                print("        .datarate_group = %d,"               % (self.groups.index(group)),                                   file=self.cfile)
+                print("    },",                                                                                                     file=self.cfile)
     
             for group in self.groups:
-                print("    .datarates[%d] = {"                      % self.groups.index(group),                                     file=self.output_file)
+                print("    .datarates[%d] = {"                      % self.groups.index(group),                                     file=self.cfile)
                 for dr in self.datarates[group]:
-                    print("        [%d] = {"                        % (dr),                                                         file=self.output_file)
+                    print("        [%d] = {"                        % (dr),                                                         file=self.cfile)
                     for field in self.datarates[group][dr]:
-                        print("            .%s = %d,"               % (field, self.datarates[group][dr][field]),                    file=self.output_file)
-                    print("        },",                                                                                             file=self.output_file)
-                print("    },",                                                                                                     file=self.output_file)
+                        print("            .%s = %d,"               % (field, self.datarates[group][dr][field]),                    file=self.cfile)
+                    print("        },",                                                                                             file=self.cfile)
+                print("    },",                                                                                                     file=self.cfile)
     
             for bw in self.bandwidth_bins:
-                print("    .bandwidth_bins[%d] = %d,"               % (self.bandwidth_bins.index(bw), int(bw)),                             file=self.output_file)
+                print("    .bandwidth_bins[%d] = %d,"               % (self.bandwidth_bins.index(bw), int(bw)),                     file=self.cfile)
     
-            print("};",                                                                                                                     file=self.output_file)
+            print("};",                                                                                                             file=self.cfile)
+            print("",                                                                                                               file=self.cfile)
+            print("/* Create non-specific typedef for local use */",                                                                file=self.cfile)
+            print("typedef channel_table_%s_t channel_table_t;"    % (self.device),                                                 file=self.cfile)
 
         if self.input_file:
             self.input_file.close()
 
-        if self.output_file:
-            self.output_file.close()
+        if self.hfile == self.cfile:
+            # Just close one below
+            self.hfile = None
+
+        elif self.cfile and self.cfile != sys.stdout:
+            self.cfile.close()
+
+        if self.hfile and self.hfile != sys.stdout:
+            self.hfile.close()
+
         return rc
 
 
@@ -281,7 +329,11 @@ def main ():
 
     parser.add_argument("-d", "--device", type=str, help="specify a particular device", default=None)
 
-    parser.add_argument("-o", "--output", type=str, help="specify a particular output file", default=None)
+    parser.add_argument("-C", "--cfile", type=str, help="specify a particular output file for .c code", default=None)
+
+    parser.add_argument("-H", "--hfile", type=str, help="specify a particular output file for .h headers", default=None)
+
+    parser.add_argument("-o", "--output", type=str, help="specify a particular output file for combined header and code ", default=None)
 
     (options, args) = parser.parse_known_args()
 
@@ -289,7 +341,7 @@ def main ():
 
         input_file = args[0]
  
-        gt = GenerateChannelTable(input_file, options.output, options.device, options.debug)
+        gt = GenerateChannelTable(input_file, options.cfile, options.hfile, options.output, options.device, options.debug)
 
         rc = gt.run()
     else:
