@@ -42,8 +42,10 @@ typedef struct radio {
     /* Radio number */
     int radio_num;
 
+#if 0
     /* Deinit specific radio type (call into the radio module)  */
     bool (*radio_deinit)(radio_t* radio);
+#endif
 
     /* Deinit the bus; calls into linklayer_io */
     bool (*bus_deinit)(radio_t* radio);
@@ -96,11 +98,17 @@ typedef struct radio {
     /* Get current transmit power */
     int (*get_txpower)(radio_t* radio);
 
-    /* Set channel and datarate */
-    bool (*set_channel)(radio_t* radio, int channel, int datarate);
+    /* Set channel */
+    bool (*set_channel)(radio_t* radio, int channel);
 
-    /* Get channel and datarate */
-    bool (*get_channel)(radio_t* radio, int* channel, int* datarate);
+    /* Get channel */
+    int (*get_channel)(radio_t* radio);
+
+    /* Set datarate */
+    bool (*set_datarate)(radio_t* radio, int datarate);
+
+    /* Get datarate */
+    int (*get_datarate)(radio_t* radio);
 
     void (*transmit_packet)(radio_t* radio, packet_t* packet);
 

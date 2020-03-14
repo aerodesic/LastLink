@@ -558,23 +558,25 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
              */
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
             if (config->radio_type == RADIO_IS_SX126x_DEVICE) {
-                ok = sx126x_radio(radio);
+                ok = sx126x_create(radio);
             }
 #endif
 #ifdef CONFIG_LASTLINK_RADIO_SX127x_ENABLED
             if (config->radio_type == RADIO_IS_SX127x_DEVICE) {
-                ok = sx127x_radio(radio);
+                ok = sx127x_create(radio);
             }
 #endif
-            if (radio->start == NULL || radio->start(radio, config->channel)) {
+            if (ok) {
+                if (radio->set_channel(radio, config->channel)) {
 
-                /* Put radio in active table. If no radio, create one. */
-                if (radio_table == NULL) {
-                    /* Create radio table */
-                    radio_table = (radio_t**) malloc(sizeof(radio_t*) * ELEMENTS_OF(radio_config));
+                    /* Put radio in active table. If no radio, create one. */
+                    if (radio_table == NULL) {
+                        /* Create radio table */
+                        radio_table = (radio_t**) malloc(sizeof(radio_t*) * ELEMENTS_OF(radio_config));
 
-                    if (radio_table != NULL) {
-                        memset(radio_table, 0, sizeof(radio_t) * ELEMENTS_OF(radio_config));
+                        if (radio_table != NULL) {
+                            memset(radio_table, 0, sizeof(radio_t) * ELEMENTS_OF(radio_config));
+                        }
                     }
                 }
             }
@@ -639,13 +641,19 @@ static bool linklayer_init_radio(radio_t* radio)
 
 static bool linklayer_deinit_radio(radio_t* radio)
 {
-    radio->attach_interrupt = NULL;
-    radio->on_receive = NULL;
-    radio->on_transmit = NULL;
-    os_delete_queue(radio->transmit_queue);
-    radio->transmit_queue = NULL;
+    ok = true;
 
-    return true;
+    if (radio != NULL) {
+        if (radio->stop == NULL || (ok = radio->stop(radio))) {
+           radio->attach_interrupt = NULL;
+           radio->on_receive = NULL;
+           radio->on_transmit = NULL;
+           os_delete_queue(radio->transmit_queue);
+           radio->transmit_queue = NULL;
+        ]
+    }
+
+    return ok;
 }
 
 bool linklayer_deinit(void)

@@ -261,6 +261,8 @@ class GenerateChannelTable:
             print("",                                                                                                               file=self.hfile)
             print("typedef struct channel_table_%s_struct {"        % self.device,                                                  file=self.hfile)
             print("    const char*          device;",                                                                               file=self.hfile)
+            print("    int                  low_domain_freq;",                                                                      file=self.hfile)
+            print("    int                  high_domain_freq;",                                                                     file=self.hfile)
             print("    float                crystal;",                                                                              file=self.hfile)
             print("    channel_entry_%s_t   channels[%d];"          % (self.device, len(self.channels)),                            file=self.hfile)
             print("    datarate_entry_%s_t  datarates[%d][%d];"     % (self.device, len(self.groups), self.max_datarates),          file=self.hfile)
@@ -277,6 +279,8 @@ class GenerateChannelTable:
             print("",                                                                                                               file=self.cfile)
             print("const channel_table_%s_t channel_table_%s = {"   % (self.device, self.device),                                   file=self.cfile)
             print("    .device = %s,"                               % (('"' + self.device + '"') if self.device else "NULL"),       file=self.cfile)
+            print("    .low_domain_freq = %d,"                      % (self.frequency_range[0]),                                    file=self.cfile)
+            print("    .high_domain_freq = %d,"                     % (self.frequency_range[1]),                                    file=self.cfile)
             print("    .crystal = %.f,"                             % (self.crystal),                                               file=self.cfile)
             for channel in self.channels:
                 chinfo = self.channels[channel]
