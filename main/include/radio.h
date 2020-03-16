@@ -4,6 +4,8 @@
 #include "driver/spi_master.h"
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
+#include "os_freertos.h"
+#include "packets.h"
 
 typedef enum {
     DISABLED = GPIO_PIN_INTR_DISABLE,
@@ -64,7 +66,7 @@ typedef struct radio {
     bool (*read_buffer)(radio_t* radio, int register, uint8_t* buffer, int bufsize);
 
     /* linklayer functionality */
-    bool (*attach_interrupt)(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
+    bool (*attach_interrupt)(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p));
     void (*on_receive)(radio_t* radio, packet_t* packet);
     packet_t* (*on_transmit)(radio_t*);
 
@@ -110,7 +112,7 @@ typedef struct radio {
     /* Get datarate */
     int (*get_datarate)(radio_t* radio);
 
-    void (*transmit_packet)(radio_t* radio, packet_t* packet);
+    bool (*transmit_packet)(radio_t* radio, packet_t* packet);
 
 } radio_t;
 

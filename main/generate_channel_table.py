@@ -309,6 +309,7 @@ class GenerateChannelTable:
             print("",                                                                                                               file=self.cfile)
             print("/* Create non-specific typedef for local use */",                                                                file=self.cfile)
             print("typedef channel_table_%s_t channel_table_t;"    % (self.device),                                                 file=self.cfile)
+            print("#define channel_table channel_table_%s"         % (self.device),                                                 file=self.cfile)
 
         if self.input_file:
             self.input_file.close()

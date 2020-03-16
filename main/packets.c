@@ -22,10 +22,10 @@ static os_mutex_t        packet_mutex;
 static int               active_packets;
 static int               dropped_allocations;
 
-static bool validate_field(packet_t *p, int from, int length);
+static bool validate_field(packet_t *p, size_t from, size_t length);
 
 static packet_t *allocate_packet_help(bool fromisr);
-static packet_t *create_packet_help(uint8_t* buf, int length, bool fromisr);
+static packet_t *create_packet_help(uint8_t* buf, size_t length, bool fromisr);
 static bool release_packet_help(packet_t *p, bool fromisr);
 static int available_packets_help(bool fromisr);
 
@@ -132,7 +132,7 @@ int deinit_packets(void)
 /*
  * Validate the from and length fields of packet.
  */
-static bool validate_field(packet_t *p, int from, int length)
+static bool validate_field(packet_t *p, size_t from, size_t length)
 {
     return p != NULL && from < p->length && from + length <= p->length;
 }
@@ -199,7 +199,7 @@ packet_t* allocate_packet_from_isr(void)
 /*
  * Create a packet from a user supplied buffer of specified length.
  */
-static packet_t *create_packet_help(uint8_t* buf, int length, bool fromisr)
+static packet_t *create_packet_help(uint8_t* buf, size_t length, bool fromisr)
 {
     packet_t *p = allocate_packet_help(fromisr);
     memcpy(p->buffer, buf, length);
@@ -209,12 +209,12 @@ static packet_t *create_packet_help(uint8_t* buf, int length, bool fromisr)
     return p;
 }
 
-packet_t *create_packet(uint8_t* buf, int length)
+packet_t *create_packet(uint8_t* buf, size_t length)
 {
     return create_packet_help(buf, length, false);
 }
 
-packet_t *create_packet_from_isr(uint8_t* buf, int length)
+packet_t *create_packet_from_isr(uint8_t* buf, size_t length)
 {
     return create_packet_help(buf, length, true);
 }
@@ -282,7 +282,7 @@ int available_packets_from_isr(void)
 /*
  * Get an unsigned integer value from a field.  Bytes are packed to an integer in big endian format.
  */
-int get_uint_field(packet_t *p, int from, int length)
+int get_uint_field(packet_t *p, size_t from, size_t length)
 {
     unsigned int value = 0;
     if (validate_field(p, from, length)) {
@@ -299,7 +299,7 @@ int get_uint_field(packet_t *p, int from, int length)
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.
  */
-int get_int_field(packet_t *p, int from, int length)
+int get_int_field(packet_t *p, size_t from, size_t length)
 {
     int value = get_uint_field(p, from, length);
 
@@ -314,7 +314,7 @@ int get_int_field(packet_t *p, int from, int length)
 /*
  * Set an integer field from a integer value.
  */
-bool set_int_field(packet_t *p, int from, int length, int value)
+bool set_int_field(packet_t *p, size_t from, size_t length, int value)
 {
     bool ok = true;
     if (validate_field(p, from, length)) {
@@ -329,14 +329,14 @@ bool set_int_field(packet_t *p, int from, int length, int value)
 }
 
 /*
- * Get bytes from a field.  If length < 0, field is to end of buffer.
+ * Get bytes from a field.  If length == 0, field is to end of buffer.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.
  */
-const uint8_t* get_bytes_field(packet_t *p, int from, int length)
+const uint8_t* get_bytes_field(packet_t *p, size_t from, size_t length)
 {
     uint8_t* value = NULL;
 
-    if (length < 0) {
+    if (length == 0) {
         length = p->length - from;
     }
     if (validate_field(p, from, length)) {
@@ -352,15 +352,15 @@ const uint8_t* get_bytes_field(packet_t *p, int from, int length)
  * Get NUL terminated string from a field.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.
  */
-const char* get_str_field(packet_t *p, int from, int length)
+const char* get_str_field(packet_t *p, size_t from, size_t length)
 {
     char* value = NULL;
 
     if (validate_field(p, from, length)) {
         /* Determine length of field to copy */
-        length = strnlen(p->buffer + from, length); 
+        length = strnlen((char*) p->buffer + from, length); 
         value = (char*) malloc(length + 1);
-        strncpy(value, p->buffer + from, length);
+        strncpy((char*) value, (char*) p->buffer + from, length);
         value[length] = '\0';
     }
 
@@ -372,9 +372,9 @@ const char* get_str_field(packet_t *p, int from, int length)
  *
  * Returns number of bytes copied.  -1 if error.
  */
-int set_bytes_field(packet_t *p, int from, int length, const uint8_t* value)
+int set_bytes_field(packet_t *p, size_t from, size_t length, const uint8_t* value)
 {
-    int moved = 0;
+    size_t moved = 0;
 
     if (validate_field(p, from, length) && value != NULL) {
         memcpy(p->buffer + from, value, length);
@@ -391,13 +391,13 @@ int set_bytes_field(packet_t *p, int from, int length, const uint8_t* value)
  *
  * Returns number of bytes copied.  -1 if error.
  */
-int set_str_field(packet_t *p, int from, int length, const char* value)
+int set_str_field(packet_t *p, size_t from, size_t length, const char* value)
 {
     int moved = 0;
 
     if (validate_field(p, from, length) && value != NULL) {
         memset(p->buffer + from, 0, length);
-        strncpy(p->buffer + from, value, length);
+        strncpy((char*) p->buffer + from, value, length);
         moved = strlen(value);
         if (length < moved) {
             moved = length;

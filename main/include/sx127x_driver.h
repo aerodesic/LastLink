@@ -5,6 +5,9 @@
 #ifndef __sx127x_driver_h_included
 #define __sx127x_driver_h_included
 
+#include "stdbool.h"
+#include "radio.h"
+
 #define SX127x_DEFAULT_PACKET_DELAY	0.05 
 
 /* Register definitions */
@@ -100,5 +103,7 @@
 
 #define TX_FIFO_BASE		0x00
 #define RX_FIFO_BASE		0x00
+
+bool sx127x_create(radio_t* radio);
 
 #endif /* __sx127x_driver_h_included */

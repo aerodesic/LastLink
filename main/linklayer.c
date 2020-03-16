@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include "os_freertos.h"
 #include "driver/gpio.h"
+#include "esp_intr_alloc.h"
 
 #include "esp_system.h"
 #include "esp_log.h"
@@ -28,6 +29,13 @@
 #include "linklayer.h"
 #include "linklayer_io.h"
 
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
+#include "sx126x_driver.h"
+#endif
+#ifdef CONFIG_LASTLINK_RADIO_SX127x_ENABLED
+#include "sx127x_driver.h"
+#endif
+
 #define TAG  "linklayer"
 
 static void beacon_packet_process(packet_t* p);
@@ -38,16 +46,17 @@ static void routerequest_packet_process(packet_t* p);
 static packet_t* routeerror_packet_create(int target, int address, int sequence, const char* reason);
 static void routeerror_packet_process(packet_t* p);
 static void data_packet_process(packet_t* p);
-static void put_received_packet(packet_t* p);
+static bool put_received_packet(packet_t* p);
 static void linklayer_process_raw_queue(void* param);
 static void linklayer_process_packet(packet_t* packet);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
+static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet);
 static void linklayer_transmit_packet(packet_t* packet);
 
 /* Calls from radio driver to linklayer */
-static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg));
+static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
 static packet_t* linklayer_on_transmit(radio_t* radio);
 
@@ -437,11 +446,12 @@ static void data_packet_process(packet_t* p)
     if (os_acquire_recursive_mutex(linklayer_lock)) {
 
         if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
-            put_received_packet(p);
+            put_received_packet(ref_packet(p));
         } else {
             set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-            linklayer_send_packet_update_ttl(p);
+            linklayer_send_packet_update_ttl(ref_packet(p));
         }
+
         release_packet(p);
         os_release_recursive_mutex(linklayer_lock);
     }
@@ -641,7 +651,7 @@ static bool linklayer_init_radio(radio_t* radio)
 
 static bool linklayer_deinit_radio(radio_t* radio)
 {
-    ok = true;
+    bool ok = true;
 
     if (radio != NULL) {
         if (radio->stop == NULL || (ok = radio->stop(radio))) {
@@ -650,7 +660,7 @@ static bool linklayer_deinit_radio(radio_t* radio)
            radio->on_transmit = NULL;
            os_delete_queue(radio->transmit_queue);
            radio->transmit_queue = NULL;
-        ]
+        }
     }
 
     return ok;
@@ -896,14 +906,48 @@ int linklayer_get_node_address(void)
     return node_address;
 }
 
-static void put_received_packet(packet_t* packet)
+static bool put_received_packet(packet_t* packet)
 {
-    /*stub*/
+    return os_put_queue(receive_queue, packet);
 }
 
-static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* arg))
+static int isrs_installed;
+
+static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p))
 {
-    return false;
+    bool              ok = false;
+
+    if (handler != NULL) {
+        gpio_config_t     io;
+
+        io.intr_type     = edge;
+        io.pin_bit_mask  = 1ULL << dio;
+        io.mode          = GPIO_MODE_INPUT;
+        io.pull_up_en    = 0;
+
+        if (gpio_config(&io) == ESP_OK) {
+            if (isrs_installed == 0) {
+                ok = gpio_install_isr_service(0) == ESP_OK;
+            }
+            if (ok) {
+                ok = gpio_isr_handler_add(dio, handler, (void*) radio);
+            }
+            if (ok) {
+                ++isrs_installed;
+            } else if (isrs_installed == 0) {
+                /* First one failed so remove handler */
+                gpio_uninstall_isr_service();
+            } 
+        }
+    } else {
+        /* Remove irq */
+        ok = gpio_isr_handler_remove(dio);
+        if (ok && --isrs_installed == 0) {
+            gpio_uninstall_isr_service();
+        }
+    }
+
+    return ok;
 }
 
 /*
