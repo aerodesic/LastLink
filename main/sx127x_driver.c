@@ -36,7 +36,7 @@ static bool transmit_packet(radio_t* radio, packet_t* packet);       /* Send pac
 
 static void catch_interrupt(void *param);
 static void rx_handle_interrupt(radio_t* radio);
-#if defined(FHSS_ENABLED) && FHSS_ENABLED
+#if FHSS_ENABLE
 static void fhss_handle_interrupt(radio_t* radio);
 #endif
 static void tx_handle_interrupt(radio_t* radio);
@@ -55,11 +55,11 @@ static int  get_spreading_factor(radio_t* radio);
 static int set_coding_rate(radio_t* radio, int rate);
 static int set_preamble_length(radio_t* radio, int length);
 static int set_enable_crc(radio_t* radio, bool enable);
-#if FHSS_ENABLED
 static bool set_hop_period(radio_t* radio, int hop_period);
-#endif
 static bool set_implicit_header(radio_t* radio, bool implicit_header);
 static bool set_sync_word(radio_t* radio, uint8_t sync);
+static bool enable_irq(radio_t* radio, uint8_t mask);
+static bool disable_irq(radio_t* radio, uint8_t mask);
 
 /* Define the selected frequency domain */
 #include "sx127x_table.h"
@@ -71,9 +71,8 @@ typedef struct sx127x_private_data {
     uint8_t    coding_rate;
     bool       implicit_header;
     bool       implicit_header_set;
-#ifdef NOTUSED
     int        hop_period;
-#endif
+    bool       cad_detected;  /* Shows state of current CAD detected state */
     bool       enable_crc;
     int        channel;
     int        datarate;
@@ -96,11 +95,8 @@ static int          global_number_radios_active;
 
 #define FHSS_ENABLED            FALSE
 
-#define RECEIVE_TRANSMIT_IRQ_DIO 0
-
-#if defined(FHSS_ENABLED) && FHSS_ENABLED
-#define FHSS_IRQ_DIO             1
-#endif
+#define RECEIVE_CADDETECTED_CADDONE_IRQ_DIO    0
+#define TRANSMIT_FHSS_IRQ_DIO                  1
 
 #define GLOBAL_IRQ_THREAD_STACK    16384
 #define GLOBAL_IRQ_THREAD_PRIORITY 1
@@ -120,6 +116,7 @@ static int          global_number_radios_active;
 bool sx127x_create(radio_t* radio)
 {
     if (radio != NULL) {
+        /* Add callouts into the driver.  All are called with radio as first parameter */
         radio->stop             = radio_stop;
         radio->set_sleep_mode   = set_sleep_mode;
         radio->set_standby_mode = set_standby_mode;
@@ -145,9 +142,7 @@ bool sx127x_create(radio_t* radio)
             data->coding_rate               = 5;
             data->implicit_header           = false;
             data->implicit_header_set       = false;
-#ifdef NOTUSED
             data->hop_period                = 0;
-#endif
             data->enable_crc                = true;
             data->bandwidth                 = 125000;
             data->spreading_factor          = 7;
@@ -222,7 +217,7 @@ static void rx_handle_interrupt(radio_t* radio)
     }
 }
 
-#if defined(FHSS_ENABLED) && FHSS_ENABLED
+#if FHSS_ENABLE
 /* THIS NEEDS WORK */
 static void fhss_handle_interrupt(radio_t* radio)
 {
@@ -246,6 +241,7 @@ static void tx_handle_interrupt(radio_t* radio)
         data->interrupt_flags &= ~SX127x_IRQ_TX_DONE;
 
         data->tx_interrupts++;
+
         /* Discard current queue entry and get next packet to send */
         packet_t* packet = radio->on_transmit(radio);
         if (packet != NULL) {
@@ -272,11 +268,23 @@ static void global_interrupt_handler(void* param)
             if (acquire_lock(radio)) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-#if defined(FHSS_ENABLED) && FHSS_ENABLED
-                if (data->interrupt_flags & SX127x_IRQ_FHSS_DONE) {
+#if FHSS_ENABLED
+                if (data->interrupt_flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
                     fhss_handle_interrupt(radio);
                 }
 #endif
+
+                if (data->interrupt_flags & SX127x_IRQ_CAD_DONE) {
+                    /* Turn off CAD detect flag */
+                    data->cad_detected = false;
+                    data->interrupt_flags &= ~SX127x_IRQ_CAD_DONE;
+                }
+
+                if (data->interrupt_flags & SX127x_IRQ_CAD_DETECTED) {
+                    /* Turn on CAD detect flag */
+                    data->cad_detected = true;
+                    data->interrupt_flags &= ~SX127x_IRQ_CAD_DETECTED;
+                }
 
                 if (data->interrupt_flags & SX127x_IRQ_RX_DONE) {
                     rx_handle_interrupt(radio);
@@ -306,17 +314,17 @@ static bool radio_stop(radio_t* radio)
 
     if (acquire_lock(radio)) {
         /* Disable all interrupts */
-        ok = radio->write_register(radio, SX127x_REG_IRQ_FLAGS_MASK, 0xFF)
-             && radio->attach_interrupt(radio, RECEIVE_TRANSMIT_IRQ_DIO, DISABLED, NULL)
-#if defined(FHSS_ENABLED) && FHSS_ENABLED
-             && radio->attach_interrupt(radio, FHSS_IRQ_DIO, DISABLED, NULL)
-#endif
+        ok = disable_irq(radio, 0xFF)
+             && radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, DISABLED, NULL)
+             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, DISABLED, NULL)
              ;
 
         if (ok && --global_number_radios_active == 0) {
             /* Kill interrupt thread and queue */
             os_delete_thread(global_interrupt_handler_thread);
             global_interrupt_handler_thread = NULL;
+
+            /* Remove global queue */
             os_delete_queue(global_interrupt_handler_queue);
             global_interrupt_handler_queue = NULL;
         }
@@ -340,6 +348,32 @@ static bool release_lock(radio_t* radio)
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     return os_release_recursive_mutex(data->rlock);
+}
+
+static bool enable_irq(radio_t* radio, uint8_t mask)
+{
+    bool ok = false;
+
+    int cur_mask = radio->read_register(radio, SX127x_REG_IRQ_FLAGS_MASK);
+
+    if (cur_mask >= 0) {
+        ok = radio->write_register(radio, SX127x_REG_IRQ_FLAGS_MASK, (uint8_t) cur_mask & ~mask);
+    }
+
+    return ok;
+}
+
+static bool disable_irq(radio_t* radio, uint8_t mask)
+{
+    bool ok = false;
+
+    int cur_mask = radio->read_register(radio, SX127x_REG_IRQ_FLAGS_MASK);
+
+    if (cur_mask >= 0) {
+        ok = radio->write_register(radio, SX127x_REG_IRQ_FLAGS_MASK, (uint8_t) cur_mask | mask);
+    }
+
+    return ok;
 }
 
 static bool radio_start(radio_t* radio)
@@ -376,9 +410,7 @@ static bool radio_start(radio_t* radio)
             set_preamble_length(radio, data->preamble_length);
             set_sync_word(radio, data->sync_word);
             set_enable_crc(radio, data->enable_crc);
-#ifdef NOTUSED
             set_hop_period(radio, data->hop_period);
-#endif
 
             /* Configure the unit for receive channel 0; probably overriden by caller */
             set_channel(radio, 0);
@@ -392,21 +424,23 @@ static bool radio_start(radio_t* radio)
             radio->write_register(radio, SX127x_REG_TX_FIFO_BASE, TX_FIFO_BASE);
             radio->write_register(radio, SX127x_REG_RX_FIFO_BASE, RX_FIFO_BASE);
 
-            /* Mask all but Tx and Rx */
-            radio->write_register(radio, SX127x_REG_IRQ_FLAGS_MASK, 0xFF & ~(SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE));
+            /* Mask all IRQs */
+            disable_irq(radio, 0xFF);
 
             /* Clear all interrupts */
             radio->write_register(radio, SX127x_REG_IRQ_FLAGS, 0xFF);
 
             /* Capture receive/transmit interrupts */
-            radio->attach_interrupt(radio, RECEIVE_TRANSMIT_IRQ_DIO, FALLING, catch_interrupt);
+            radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, RISING, catch_interrupt);
+            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, RISING, catch_interrupt);
 
-#ifdef NOTUSED
+            /* Enable interrupts of interest */
+            enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);
+
             if (data->hop_period != 0) {
-                /* Catch the FSHH step */
-                radio->attach_interrupt(radio, FSHH_IRQ_DIO, FALLING, catch_interrupt);
+                /* Enable FHSS interrupt */
+                enable_irq(radio, SX127x_IRQ_FHSS_CHANGE_CHANNEL);
             }
-#endif
 
             radio->set_receive_mode(radio);
 
@@ -760,7 +794,6 @@ static int set_enable_crc(radio_t* radio, bool enable)
     return ok;
 }
 
-#ifdef NOTUSED
 static bool set_hop_period(radio_t* radio, int hop_period)
 {
     bool ok = false;
@@ -772,7 +805,6 @@ static bool set_hop_period(radio_t* radio, int hop_period)
 
     return ok;
 }
-#endif
 
 static bool set_sync_word(radio_t* radio, uint8_t sync)
 {
@@ -869,13 +901,14 @@ static bool transmit_packet(radio_t* radio, packet_t* packet)
 {
     bool ok = false;
 
-    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
-
     if (acquire_lock(radio)) {
+
         start_packet(radio);
         write_packet(radio, packet);
         set_transmit_mode(radio);
+
         release_lock(radio);
+
         ok = true;
     }
 

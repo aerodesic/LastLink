@@ -39,9 +39,9 @@
 #define SX127x_REG_RX_FIFO_CURRENT      0x10     /* Start addr of last packet received */
 #define SX127x_REG_IRQ_FLAGS_MASK       0x11     /* Optional IRQ flag mask */
 #define SX127x_REG_IRQ_FLAGS            0x12     /* IRQ flags */
-#define SX127x_REG_CAD_DETECTED            0x01
+#define SX127x_IRQ_CAD_DETECTED            0x01
 #define SX127x_IRQ_FHSS_CHANGE_CHANNEL     0x02
-#define SX127x_IRQ_CAD_COMPLETE            0x04
+#define SX127x_IRQ_CAD_DONE                0x04
 #define SX127x_IRQ_TX_DONE                 0x08
 #define SX127x_IRQ_VALID_HEADER            0x10
 #define SX127x_IRQ_PAYLOAD_CRC_ERROR       0x20

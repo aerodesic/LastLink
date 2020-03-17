@@ -654,6 +654,7 @@ static bool linklayer_deinit_radio(radio_t* radio)
     bool ok = true;
 
     if (radio != NULL) {
+        /* Deinitialize the radio module if active */
         if (radio->stop == NULL || (ok = radio->stop(radio))) {
            radio->attach_interrupt = NULL;
            radio->on_receive = NULL;
@@ -911,39 +912,43 @@ static bool put_received_packet(packet_t* packet)
     return os_put_queue(receive_queue, packet);
 }
 
-static int isrs_installed;
+static int num_isrs_installed;
 
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p))
 {
     bool              ok = false;
+    gpio_config_t     io;
 
-    if (handler != NULL) {
-        gpio_config_t     io;
+    io.pin_bit_mask  = 1ULL << dio;
+    io.mode          = GPIO_MODE_INPUT;
+    io.intr_type     = edge;
+    io.pull_up_en    = 0;
 
-        io.intr_type     = edge;
-        io.pin_bit_mask  = 1ULL << dio;
-        io.mode          = GPIO_MODE_INPUT;
-        io.pull_up_en    = 0;
+    /* Program the pin */
+    if (gpio_config(&io) == ESP_OK) {
 
-        if (gpio_config(&io) == ESP_OK) {
-            if (isrs_installed == 0) {
-                ok = gpio_install_isr_service(0) == ESP_OK;
+        /* If attaching vector */
+        if (handler != NULL) {
+            if (num_isrs_installed == 0) {
+                ok = gpio_install_isr_service(ESP_INTR_FLAG_EDGE) == ESP_OK;
             }
             if (ok) {
                 ok = gpio_isr_handler_add(dio, handler, (void*) radio);
             }
             if (ok) {
-                ++isrs_installed;
-            } else if (isrs_installed == 0) {
+                ++num_isrs_installed;
+            } else if (num_isrs_installed == 0) {
                 /* First one failed so remove handler */
                 gpio_uninstall_isr_service();
-            } 
-        }
-    } else {
-        /* Remove irq */
-        ok = gpio_isr_handler_remove(dio);
-        if (ok && --isrs_installed == 0) {
-            gpio_uninstall_isr_service();
+            }
+        } else {
+            /* Remove handler */
+            ok = gpio_isr_handler_remove(dio);
+
+            /* Remove service if no other attached */
+            if (ok && --num_isrs_installed == 0) {
+                gpio_uninstall_isr_service();
+            }
         }
     }
 
