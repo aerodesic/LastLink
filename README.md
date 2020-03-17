@@ -14,10 +14,8 @@ to store and distribute community-wide messages. The 'work' nodes in the initial
 public/private messaging system.  Other types, such as limit Internet gateways, could later provide messaging
 access to the Internet at large.  The API is 'REST' based with a javascript client for doing the 'heavy lifting.'  
 
-The user web interface provides a mailing list format with public and private messages and distribution lists.
+The user web interface provides a mailing list format with public and private messages and distribution lists and
+supports privately-signed SSL key.  There may be no Internet, in the usual sense, so verifying through public 'authority' servers may be unavailable in times of disaster.
 
-The user web browser interface supports privately-signed SSL keys (there may be no Internet, in the usual sense,
-so verifying through public 'authority' servers may be unavailabl in times of disaster.)  End-to-end encryption
-is provided by a layer of public or private keys.  The low-level data transport is byte-agnostic and can
-transmit streams of octets between a source and destination without interpretation, be they encrypted or
-otherwise.
+End-to-end encryption is provided by a layer of public or private keys. The low-level data transport is byte-agnostic and can
+transmit streams of octets between a source and destination without interpretation, be they encrypted or otherwise.
