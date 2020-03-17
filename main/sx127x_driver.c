@@ -36,9 +36,7 @@ static bool transmit_packet(radio_t* radio, packet_t* packet);       /* Send pac
 
 static void catch_interrupt(void *param);
 static void rx_handle_interrupt(radio_t* radio);
-#if FHSS_ENABLE
 static void fhss_handle_interrupt(radio_t* radio);
-#endif
 static void tx_handle_interrupt(radio_t* radio);
 static void global_interrupt_handler(void* param);
 static bool radio_stop(radio_t* radio);
@@ -81,6 +79,7 @@ typedef struct sx127x_private_data {
     uint8_t    tx_power;
     int        rx_interrupts;
     int        tx_interrupts;
+    int        fhss_interrupts;
     os_mutex_t rlock;
     uint8_t    interrupt_flags;
     int        packet_memory_failed;
@@ -91,7 +90,7 @@ static os_queue_t   global_interrupt_handler_queue;
 static void         global_interrupt_handler(void* param);
 static int          global_number_radios_active;
 
-#define MAX_IRQ_PENDING         5
+#define MAX_IRQ_PENDING         20
 
 #define FHSS_ENABLED            FALSE
 
@@ -99,7 +98,7 @@ static int          global_number_radios_active;
 #define TRANSMIT_FHSS_IRQ_DIO                  1
 
 #define GLOBAL_IRQ_THREAD_STACK    16384
-#define GLOBAL_IRQ_THREAD_PRIORITY 1
+#define GLOBAL_IRQ_THREAD_PRIORITY (configMAX_PRIORITIES-1)  /* Highest priority */
 
 #define WANTED_VERSION  0x12
 
@@ -196,7 +195,7 @@ static void rx_handle_interrupt(radio_t* radio)
         }
 
         /* Get a packet */
-        packet_t* packet = allocate_packet_from_isr();
+        packet_t* packet = allocate_packet();
         if (packet != NULL) {
             if (radio->read_buffer(radio, SX127x_REG_FIFO, packet->buffer, length)) {
                 /* Buffer has been read.  Set length */
@@ -217,7 +216,6 @@ static void rx_handle_interrupt(radio_t* radio)
     }
 }
 
-#if FHSS_ENABLE
 /* THIS NEEDS WORK */
 static void fhss_handle_interrupt(radio_t* radio)
 {
@@ -226,11 +224,12 @@ static void fhss_handle_interrupt(radio_t* radio)
     if (data->interrupt_flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
         data->interrupt_flags &= ~SX127x_IRQ_FHSS_CHANGE_CHANNEL;
 
-        radio->write_register(radio, SX127x_FHSS_CHANNEL, next_channel);
+#ifdef NOTUSED
+        radio->write_register(radio, SX127x_FHSS_HOP_CHANNEL, next_channel);
+#endif
         data->fhss_interrupts++;
     }
 }
-#endif
 
 
 static void tx_handle_interrupt(radio_t* radio)
@@ -245,7 +244,10 @@ static void tx_handle_interrupt(radio_t* radio)
         /* Discard current queue entry and get next packet to send */
         packet_t* packet = radio->on_transmit(radio);
         if (packet != NULL) {
-            /* If delay has expired */
+            /* Pause if CAD is detected */
+            while (data->cad_detected) {
+                os_delay(1);
+            }
             transmit_packet(radio, packet);
         } else {
             /* Other return to receive mode. */
@@ -268,21 +270,21 @@ static void global_interrupt_handler(void* param)
             if (acquire_lock(radio)) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-#if FHSS_ENABLED
                 if (data->interrupt_flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
                     fhss_handle_interrupt(radio);
                 }
-#endif
 
                 if (data->interrupt_flags & SX127x_IRQ_CAD_DONE) {
                     /* Turn off CAD detect flag */
                     data->cad_detected = false;
+                    ESP_LOGI(TAG, "CAD_DONE detected");
                     data->interrupt_flags &= ~SX127x_IRQ_CAD_DONE;
                 }
 
                 if (data->interrupt_flags & SX127x_IRQ_CAD_DETECTED) {
                     /* Turn on CAD detect flag */
                     data->cad_detected = true;
+                    ESP_LOGI(TAG, "CAD detected");
                     data->interrupt_flags &= ~SX127x_IRQ_CAD_DETECTED;
                 }
 
@@ -642,6 +644,8 @@ static bool set_datarate(radio_t* radio, int datarate)
             int cr = dataratep[datarate].cr;
             int tx = dataratep[datarate].tx;
 
+            data->datarate = datarate;
+
             ok = set_bandwidth(radio, bw) && set_spreading_factor(radio, sf) && set_coding_rate(radio, cr) && set_txpower(radio, tx);
         }
         release_lock(radio);
@@ -649,6 +653,14 @@ static bool set_datarate(radio_t* radio, int datarate)
 
     return ok;
 }
+
+static int get_datarate(radio_t* radio)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    return data->datarate;
+}
+
 
 /*
  *  Set bandwidth
@@ -861,7 +873,7 @@ static void catch_interrupt(void *param)
     /* Save flags that have occurred */
     data->interrupt_flags |= flags;
 
-    os_put_queue_from_isr(global_interrupt_handler_queue, radio);
+    os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) radio);
 }
 
 static bool start_packet(radio_t* radio)

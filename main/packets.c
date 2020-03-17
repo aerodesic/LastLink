@@ -24,11 +24,6 @@ static int               dropped_allocations;
 
 static bool validate_field(packet_t *p, size_t from, size_t length);
 
-static packet_t *allocate_packet_help(bool fromisr);
-static packet_t *create_packet_help(uint8_t* buf, size_t length, bool fromisr);
-static bool release_packet_help(packet_t *p, bool fromisr);
-static int available_packets_help(bool fromisr);
-
 #define TAG     "packets"
 
 /*
@@ -140,23 +135,20 @@ static bool validate_field(packet_t *p, size_t from, size_t length)
 /*
  * Allocate a packet of specified length.  Packet is filled with zeroes.
  */
-static packet_t *allocate_packet_help(bool fromisr)
+packet_t *allocate_packet(void)
 {
-    ESP_LOGD(TAG, "allocate_packet_help fromisr %s", fromisr ? "YES" : "NO");
+    ESP_LOGD(TAG, "allocate_packet");
 
     packet_t* packet = NULL;
-
-    ESP_LOGD(TAG, "allocate_packet_help packet_mutex acquired");
 
     /* Make sure free packet queue is present */
     if (free_packets_queue != NULL) {
 
         void* p;
 
-        if ((fromisr && (os_get_queue_from_isr(free_packets_queue, &p))) ||
-            (!fromisr && (os_get_queue_with_timeout(free_packets_queue, &p, 0)))) {
+        if  (os_get_queue_with_timeout(free_packets_queue, &p, 0)) {
 
-            ESP_LOGD(TAG, "allocate_packet_help packet from queue is %p", p);
+            ESP_LOGD(TAG, "allocate_packet packet from queue is %p", p);
 
             packet = (packet_t*) p;
 
@@ -175,33 +167,17 @@ static packet_t *allocate_packet_help(bool fromisr)
         ++dropped_allocations;
     }
 
-    if (fromisr) {
-        packet_unlock_from_isr();
-    } else {
-        packet_unlock();
-    }
-
-    ESP_LOGD(TAG, "allocate_packet_help packet_mutex released");
+    packet_unlock();
 
     return packet;
-}
-
-packet_t* allocate_packet(void)
-{
-    return allocate_packet_help(false);
-}
-
-packet_t* allocate_packet_from_isr(void)
-{
-    return allocate_packet_help(true);
 }
 
 /*
  * Create a packet from a user supplied buffer of specified length.
  */
-static packet_t *create_packet_help(uint8_t* buf, size_t length, bool fromisr)
+packet_t *create_packet(uint8_t* buf, size_t length)
 {
-    packet_t *p = allocate_packet_help(fromisr);
+    packet_t *p = allocate_packet();
     memcpy(p->buffer, buf, length);
     p->length = length;
     p->radio_num = ALL_RADIOS;
@@ -209,20 +185,15 @@ static packet_t *create_packet_help(uint8_t* buf, size_t length, bool fromisr)
     return p;
 }
 
-packet_t *create_packet(uint8_t* buf, size_t length)
+packet_t *duplicate_packet(packet_t* packet)
 {
-    return create_packet_help(buf, length, false);
-}
-
-packet_t *create_packet_from_isr(uint8_t* buf, size_t length)
-{
-    return create_packet_help(buf, length, true);
+    return create_packet(packet->buffer, packet->length);
 }
 
 /*
  * Decrement packet ref count and if 0, free it.
  */
-static bool release_packet_help(packet_t *p, bool fromisr)
+bool release_packet(packet_t *p)
 {
     ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
 
@@ -235,48 +206,22 @@ static bool release_packet_help(packet_t *p, bool fromisr)
         ok = true;
 
         if (p != NULL && --(p->ref) == 0) {
-            ok = (fromisr && os_put_queue_from_isr(free_packets_queue, p)) ||
-                 (!fromisr && os_put_queue_with_timeout(free_packets_queue, p, 0));
+            ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
         }
     }
 
     return ok;
 }
 
-bool release_packet(packet_t* p)
-{
-    return release_packet_help(p, false);
-}
-
-bool release_packet_from_isr(packet_t* p)
-{
-    return release_packet_help(p, true);
-}
-
-
-static int available_packets_help(bool fromisr)
+int available_packets(void)
 {
     int available = 0;
 
     if (free_packets_queue != NULL) {
-        if (fromisr) {
-            available = os_items_in_queue_from_isr(free_packets_queue);
-        } else {
-            available = os_items_in_queue(free_packets_queue);
-        }
+        available = os_items_in_queue(free_packets_queue);
     }
 
     return available;
-}
-
-int available_packets(void)
-{
-    return available_packets_help(false);
-}
-
-int available_packets_from_isr(void)
-{
-    return available_packets_help(true);
 }
 
 /*
@@ -409,7 +354,7 @@ int set_str_field(packet_t *p, size_t from, size_t length, const char* value)
     return moved;
 }
 
-packet_t* packet_ref(packet_t* p)
+packet_t* ref_packet(packet_t* p)
 {
     p->ref++;
     return p;
@@ -420,18 +365,8 @@ bool packet_lock(void)
     return xSemaphoreTakeRecursive(packet_mutex, 0) == pdTRUE;
 }
 
-bool packet_lock_from_isr(void)
-{
-    return xSemaphoreTakeFromISR(packet_mutex, NULL) == pdTRUE;
-}
-
 void packet_unlock(void)
 {
     os_release_mutex(packet_mutex);
-}
-
-void packet_unlock_from_isr(void)
-{
-    os_release_mutex_from_isr(packet_mutex);
 }
 

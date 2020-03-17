@@ -58,6 +58,8 @@ bool os_delete_timer(os_timer_t timer);
 os_thread_t os_create_thread(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param);
 bool os_delete_thread(os_thread_t thread);
 
+void os_delay(int ms);
+
 uint64_t get_milliseconds(void);
 
 #endif /* __os_freertos_h_included */

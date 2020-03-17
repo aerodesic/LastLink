@@ -81,9 +81,6 @@ typedef struct radio {
     /* This area set by the radio driver            */
     /************************************************/
 
-    /* Initialize radio and place in standby mode */
-    bool (*start)(radio_t* radio, int channel);
-
     /* Stop and disassemble the radio */
     bool (*stop)(radio_t* radio);
 

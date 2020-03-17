@@ -31,30 +31,31 @@ int packet_deinit(void);
  * Allocate a packet.  Packet is filled with zeroes before delivery.
  */
 packet_t *allocate_packet(void);
-packet_t *allocate_packet_from_isr(void);
 
 /*
  * Create a packet from a user supplied buffer of specified length.
  */
 packet_t *create_packet(uint8_t *buf, size_t length);
-packet_t *create_packet_from_isr(uint8_t *buf, size_t length);
+
+/*
+ * Duplicate a packet
+ */
+packet_t *duplicate_packet(packet_t *packet);
 
 /*
  * Return number of available packets.
  */
 int available_packets(void);
-int available_packets_from_isr(void);
 
 /*
  * Update usecount on packet.
  */
-packet_t* ref_packet(packet_t *p);
+packet_t *ref_packet(packet_t *p);
 
 /*
  * Decrement packet use count and if 0, free it.
  */
 bool release_packet(packet_t *p);
-bool release_packet_from_isr(packet_t *p);
 
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.
@@ -104,7 +105,5 @@ static inline packet_t *packet_dup(packet_t *p)
 
 bool packet_lock(void);
 void packet_unlock(void);
-bool packet_lock_from_isr(void);
-void packet_unlock_from_isr(void);
 
 #endif /* __packets_h_included */

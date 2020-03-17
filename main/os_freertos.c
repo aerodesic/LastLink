@@ -176,7 +176,21 @@ bool os_delete_thread(os_thread_t thread)
     }
 }
 
-extern volatile unsigned long ulHighFrequencyTimerTicks;
+void os_delay(int ms)
+{
+    int ticks = 0;
+
+    /* If a time is specified, compute nearest ticks, but always delay at least one. */
+    if (ms != 0) {
+        ticks = pdMS_TO_TICKS(ms);
+        if (ticks == 0) {
+            ticks = 1;
+        }
+    }
+
+    vTaskDelay(ticks);
+}
+
 static unsigned long last_ticks;
 static uint64_t total_ticks;
 static os_mutex_t ticks_mutex;
@@ -191,9 +205,14 @@ uint64_t get_milliseconds(void)
         ticks_mutex = os_create_mutex();
     }
     if (os_acquire_mutex(ticks_mutex)) {
-        unsigned long current_ticks = ulHighFrequencyTimerTicks;
+
+        unsigned long current_ticks = xTaskGetTickCount();
         total_ticks += current_ticks - last_ticks;
+        last_ticks = current_ticks;
+
         ret = u64TICKS_TO_MS(total_ticks);
+
+        os_release_mutex(ticks_mutex);
     }
 
     return ret;
