@@ -10,7 +10,7 @@ do not yet support (for example) EU regulations on duty-cycle or dwell time.
 LastLink is designed to be a battery powered and solar-rechargable, with WiFi accessable nodes, capable of
 providing limited community communication among users with portable web-capable wifi-equipped devices.  The
 basic interface is through a web page accessable on each WiFi-equipped node, with one or more 'work' nodes used
-to storing and distributing community-wide messages. The 'work' nodes in the initial release will support a
+to store and distribute community-wide messages. The 'work' nodes in the initial release will support a
 public/private messaging system.  Other types, such as limit Internet gateways, could later provide messaging
 access to the Internet at large.  The API is 'REST' based with a javascript client for doing the 'heavy lifting.'  
 
