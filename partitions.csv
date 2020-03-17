@@ -1,3 +1,4 @@
+# 4M device
 # Name,   Type, SubType, Offset,    Size, Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
 nvs,      data, nvs,     0x009000,   0x6000,

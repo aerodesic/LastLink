@@ -141,7 +141,7 @@ static protocol_process_t*        protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NU
     .dios[1]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),   \
     .dios[2]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),   \
     .reset      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),  \
-    .ser_name   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_SCK),    \
+    .dev        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),    \
    },
 
 static const radio_config_t radio_config[] = {
@@ -262,6 +262,7 @@ static void beacon_packet_process(packet_t* p)
                  name);
 
         free((void*) name);
+
         release_packet(p);
     }
 }
@@ -313,8 +314,10 @@ static void routeannounce_packet_process(packet_t* p)
                }
             }
             os_release_recursive_mutex(route_table.lock);
-            release_packet(p);
+        } else {
+            /* Unable to get mutex */
         }
+        release_packet(p);
     }
 }
 
@@ -370,9 +373,12 @@ static void routerequest_packet_process(packet_t* p)
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
                 linklayer_send_packet_update_ttl(p);
             }
+            os_release_recursive_mutex(linklayer_lock);
+
+        } else {
+            /* Cannot get mutex */
         }
 
-        os_release_recursive_mutex(linklayer_lock);
         release_packet(p);
     }
 }
@@ -396,18 +402,27 @@ static packet_t* routeerror_packet_create(int target, int address, int sequence,
 static void routeerror_packet_process(packet_t* p)
 {
     if (p != NULL) {
-        const char* reason = get_str_field(p, RERR_REASON, REASON_LEN);
 
-        ESP_LOGD(TAG, "RouteError: target %d source %d nexthop %d previous %d ttl %d address %d sequence %d reason '%s'",
-                 get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
-                 get_int_field(p, HEADER_TTL, TTL_LEN),
-                 get_uint_field(p, RERR_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, RERR_SEQUENCE, SEQUENCE_NUMBER_LEN), reason);
+        if (os_acquire_recursive_mutex(linklayer_lock)) {
+            const char* reason = get_str_field(p, RERR_REASON, REASON_LEN);
 
-        free((void*) reason);
+            ESP_LOGD(TAG, "RouteError: target %d source %d nexthop %d previous %d ttl %d address %d sequence %d reason '%s'",
+                     get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
+                     get_int_field(p, HEADER_TTL, TTL_LEN),
+                     get_uint_field(p, RERR_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, RERR_SEQUENCE, SEQUENCE_NUMBER_LEN), reason);
+
+            free((void*) reason);
+
+            os_release_recursive_mutex(linklayer_lock);
+
+        } else {
+            /* Cannot get mutex */
+        }
+
         release_packet(p);
     }
 }
@@ -439,17 +454,21 @@ packet_t* data_packet_create(int target, int protocol, uint8_t* data, int length
 
 static void data_packet_process(packet_t* p)
 {
-    if (os_acquire_recursive_mutex(linklayer_lock)) {
+    if (p != NULL) {
+        if (os_acquire_recursive_mutex(linklayer_lock)) {
+            if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+                put_received_packet(ref_packet(p));
+            } else {
+                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                linklayer_send_packet_update_ttl(ref_packet(p));
+            }
 
-        if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
-            put_received_packet(ref_packet(p));
+            os_release_recursive_mutex(linklayer_lock);
         } else {
-            set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-            linklayer_send_packet_update_ttl(ref_packet(p));
+            /* Cannot get mutex */
         }
 
         release_packet(p);
-        os_release_recursive_mutex(linklayer_lock);
     }
 }
 
@@ -481,7 +500,7 @@ bool linklayer_init(int address, int flags, int announce)
 
     bool ok = true;
 
-    /* Reserve first packet types */
+    /* Reserve first packet protocol types */
     if (linklayer_reserve_protocol(BEACON_PROTOCOL, beacon_packet_process)      &&
         linklayer_reserve_protocol(RREQ_PROTOCOL, routerequest_packet_process)  &&
         linklayer_reserve_protocol(RANN_PROTOCOL, routeannounce_packet_process) &&

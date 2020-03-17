@@ -37,7 +37,7 @@ typedef struct radio_config {
          int spi_dma;
        };
        struct {
-         int i2c_blah;
+         int i2c_blah1;
          int i2c_blah2;
        };
        struct {

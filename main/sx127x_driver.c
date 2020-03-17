@@ -205,11 +205,10 @@ static void rx_handle_interrupt(radio_t* radio)
                 packet->radio_num = radio->radio_num;
 
                 /* Pass it to protocol layer */
-                radio->on_receive(radio, packet);
-             } else {
-                /* Failed to read - release packet */
-                release_packet(packet);
-             }
+                radio->on_receive(radio, ref_packet(packet));
+            }
+
+            release_packet(packet);
         } else {
              data->packet_memory_failed++;
         }
