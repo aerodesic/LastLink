@@ -85,6 +85,7 @@ ls_socket_t* ls_socket(ls_socket_type_t socket_type)
 {
     ls_socket_t* socket = NULL;
 
+#ifdef NOTUSED
     /* Validate parameters */
     if (socket_type == LS_DATAGRAM || socket_type == LS_STREAM) {
 
@@ -100,6 +101,7 @@ ls_socket_t* ls_socket(ls_socket_type_t socket_type)
              socket->receive_queue = os_create_queue(0,0);
         }
     }
+#endif
 
     return socket;
 }

@@ -21,7 +21,7 @@
 #include "linklayer.h"
 #include "configdata.h"
 #include "default_config.h"
-#include "packets.h"
+#include "os_freertos.h"
 
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
@@ -36,6 +36,7 @@ static const char* default_config[] = DEFAULT_CONFIG;
 
 void app_main(void)
 {
+#if 0
     //Initialize NVS
     if (init_nvs() == ESP_OK) {
         /* pass */
@@ -52,6 +53,7 @@ void app_main(void)
         }
     }
 
+
     ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
@@ -63,29 +65,19 @@ void app_main(void)
     ESP_LOGD(TAG, "zorch = '%s'", get_config_str("zorch", "not found"));
     ESP_LOGD(TAG, "section1.section2.section3.only = '%s'", get_config_str("section1.section2.section3.only", "not found"));
     ESP_LOGD(TAG, "notfound = '%s'", get_config_str("notfound", "not found"));
-
-#ifdef DEBUG
-    /* Initialize packet system */
-    int  num_packets = init_packets(NUM_PACKETS);
-    ESP_LOGD(TAG, "init_packets(%d) returned %d", NUM_PACKETS, num_packets);
-
-    /* Get a free packet */
-    packet_t* packet = allocate_packet();
-    ESP_LOGD(TAG, "allocate_packet returned %p (use %d, length %d)", packet, packet->use, packet->length);
-
-    /* Show packets available */
-    ESP_LOGD(TAG, "number of packets available %d", packets_available());
-
-    bool ok = release_packet(packet);
-    ESP_LOGD(TAG, "release_packet returned %s", ok ? "OK" : "FAIL");
-
-    /* Show packets available */
-    ESP_LOGD(TAG, "number of packets available %d", packets_available());
+    ESP_LOGD(TAG, "address %d flags 0x%02x announce %d", get_config_int("lastlink.address", 99), get_config_int("lastlink.flags", 99), get_config_int("lastlink.announce", -1));
 #endif
 
     /* initialize the lastlink network */
     linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
 
+#if 1
     /* This becomes the main thread */
     wifi_init_softap();
+#else
+    while(true) {
+       os_delay(1000);
+       printf("Tick\n");
+    }
+#endif
 }

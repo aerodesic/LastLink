@@ -29,28 +29,36 @@ menu "LastLink Configuration"
     RADIO_NUM:=1
     DEFAULT_RADIO_ENABLE=y
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     DEFAULT_RADIO_ENABLE=n
     RADIO_NUM:=2
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
 
     RADIO_NUM:=3
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     RADIO_NUM:=4
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     RADIO_NUM:=5
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     RADIO_NUM:=6
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
 
     RADIO_NUM:=7
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     RADIO_NUM:=8
     source "$(PROJECT_PATH)/main/Kconfig.radio"
+    # source "${srctree}/main/Kconfig.radio"
     
     menu "Communication Parameters"
         config LASTLINK_ROUTE_LIFETIME

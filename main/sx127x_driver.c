@@ -317,7 +317,7 @@ static bool radio_stop(radio_t* radio)
         /* Disable all interrupts */
         ok = disable_irq(radio, 0xFF)
              && radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, DISABLED, NULL)
-             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, DISABLED, NULL)
+             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               DISABLED, NULL)
              ;
 
         if (ok && --global_number_radios_active == 0) {
@@ -433,7 +433,7 @@ static bool radio_start(radio_t* radio)
 
             /* Capture receive/transmit interrupts */
             radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, RISING, catch_interrupt);
-            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, RISING, catch_interrupt);
+            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               RISING, catch_interrupt);
 
             /* Enable interrupts of interest */
             enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);
@@ -872,7 +872,12 @@ static void catch_interrupt(void *param)
     /* Save flags that have occurred */
     data->interrupt_flags |= flags;
 
-    os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) radio);
+    bool awakened;
+    os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) radio, &awakened);
+
+    if (awakened) {
+        portYIELD_FROM_ISR();
+    }
 }
 
 static bool start_packet(radio_t* radio)

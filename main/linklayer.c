@@ -112,7 +112,9 @@ static protocol_process_t*        protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NU
     .spi_miso   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),  \
     .spi_cs     = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),    \
     .spi_host   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),   \
+    .spi_clock  = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ), \
     .spi_pre_xfer_callback = NULL,                                               \
+    .dma_chan   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),   \
    },
 
 #define RADIO_CONFIG_I2C(radio, module) \
@@ -475,43 +477,65 @@ static void data_packet_process(packet_t* p)
 /* Creates the linklayer */
 bool linklayer_init(int address, int flags, int announce)
 {
+    bool ok = false;
+
     linklayer_lock = os_create_recursive_mutex();
     node_address = address;
     node_flags = flags; 
 
-    /* Receive queue goes to packet data layer */
-    receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
+    /* Allocate packets */
+    ok = init_packets(NUM_PACKETS);
 
-    promiscuous_queue = NULL;
-    sequence_number = 0;
-    debug_flag = false;
-    announce_interval = announce;
+    if (ok) {
+#if DEBUG
+        /* Get a free packet */
+        packet_t* packet = allocate_packet();
+        ESP_LOGD(TAG, "allocate_packet returned %p (ref %d, length %d)", packet, packet->ref, packet->length);
 
-    if (announce_interval != 0) {
-        /* Start the route announce thread */
-    }
+        /* Show packets available */
+        ESP_LOGD(TAG, "number of packets available %d", available_packets());
 
-    route_table_init(&route_table);
-    packet_errors_crc = 0;
-    packet_processed = 0;
-    packet_received = 0;
-    packet_transmitted = 0;
-    packet_ignored = 0;
+        ok = release_packet(packet);
+        ESP_LOGD(TAG, "release_packet returned %s", ok ? "OK" : "FAIL");
 
-    bool ok = true;
+        /* Show packets available */
+        ESP_LOGD(TAG, "number of packets available %d", available_packets());
+#endif
 
-    /* Reserve first packet protocol types */
-    if (linklayer_reserve_protocol(BEACON_PROTOCOL, beacon_packet_process)      &&
-        linklayer_reserve_protocol(RREQ_PROTOCOL, routerequest_packet_process)  &&
-        linklayer_reserve_protocol(RANN_PROTOCOL, routeannounce_packet_process) &&
-        linklayer_reserve_protocol(RERR_PROTOCOL, routeerror_packet_process)    &&
-        linklayer_reserve_protocol(DATA_PROTOCOL, data_packet_process)) {
+        /* Receive queue goes to packet data layer */
+        receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
 
-        for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
-            ok = ok && linklayer_add_radio(radio_num, &radio_config[radio_num]);
+        promiscuous_queue = NULL;
+        sequence_number = 0;
+        debug_flag = false;
+        announce_interval = announce;
+
+        if (announce_interval != 0) {
+            /* Start the route announce thread */
         }
-    } else {
-       ok = false;
+
+        route_table_init(&route_table);
+        packet_errors_crc = 0;
+        packet_processed = 0;
+        packet_received = 0;
+        packet_transmitted = 0;
+        packet_ignored = 0;
+
+        ok = true;
+
+        /* Reserve first packet protocol types */
+        if (linklayer_reserve_protocol(BEACON_PROTOCOL, beacon_packet_process)      &&
+            linklayer_reserve_protocol(RREQ_PROTOCOL, routerequest_packet_process)  &&
+            linklayer_reserve_protocol(RANN_PROTOCOL, routeannounce_packet_process) &&
+            linklayer_reserve_protocol(RERR_PROTOCOL, routeerror_packet_process)    &&
+            linklayer_reserve_protocol(DATA_PROTOCOL, data_packet_process)) {
+
+            for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
+                ok = ok && linklayer_add_radio(radio_num, &radio_config[radio_num]);
+            }
+        } else {
+           ok = false;
+        }
     }
 
     return ok;
@@ -522,7 +546,7 @@ bool linklayer_set_promiscuous_mode(bool mode) {
 
     if (mode) {
         if (promiscuous_queue == NULL) {
-            promiscuous_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
+            promiscuous_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
             ok = promiscuous_queue != NULL;
         }
     } else {
@@ -644,7 +668,7 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->attach_interrupt = linklayer_attach_interrupt;
     radio->on_receive = linklayer_on_receive;
     radio->on_transmit = linklayer_on_transmit;
-    radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t));
+    radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
 
     return true;
 }
@@ -886,39 +910,50 @@ static int num_isrs_installed;
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p))
 {
     bool              ok = false;
-    gpio_config_t     io;
 
-    io.pin_bit_mask  = 1ULL << dio;
-    io.mode          = GPIO_MODE_INPUT;
-    io.intr_type     = edge;
-    io.pull_up_en    = 0;
+    if (dio >= 0 && dio < ELEMENTS_OF(radio_config[radio->radio_num].dios)) {
+        int gpio = radio_config[radio->radio_num].dios[dio];
 
-    /* Program the pin */
-    if (gpio_config(&io) == ESP_OK) {
+        ESP_LOGI(TAG, "%s: dio %d gpio %d edge %d", __func__, dio, gpio, edge);
 
-        /* If attaching vector */
-        if (handler != NULL) {
-            if (num_isrs_installed == 0) {
-                ok = gpio_install_isr_service(ESP_INTR_FLAG_EDGE) == ESP_OK;
-            }
-            if (ok) {
-                ok = gpio_isr_handler_add(dio, handler, (void*) radio);
-            }
-            if (ok) {
-                ++num_isrs_installed;
-            } else if (num_isrs_installed == 0) {
-                /* First one failed so remove handler */
-                gpio_uninstall_isr_service();
-            }
-        } else {
-            /* Remove handler */
-            ok = gpio_isr_handler_remove(dio);
+        gpio_config_t     io;
 
-            /* Remove service if no other attached */
-            if (ok && --num_isrs_installed == 0) {
-                gpio_uninstall_isr_service();
+        io.pin_bit_mask  = 1ULL << gpio;
+        io.mode          = GPIO_MODE_INPUT;
+        io.intr_type     = edge;
+        io.pull_up_en    = GPIO_PULLUP_DISABLE;
+        io.pull_down_en  = GPIO_PULLDOWN_DISABLE;
+
+        /* Program the pin */
+        if (gpio_config(&io) == ESP_OK) {
+    
+            /* If attaching vector */
+            if (handler != NULL) {
+                if (num_isrs_installed == 0) {
+                    //ok = gpio_install_isr_service(ESP_INTR_FLAG_EDGE) == ESP_OK;
+                    ok = gpio_install_isr_service(0) == ESP_OK;
+                }
+                if (ok) {
+                    ok = gpio_isr_handler_add(dio, handler, (void*) radio);
+                }
+                if (ok) {
+                    ++num_isrs_installed;
+                } else if (num_isrs_installed == 0) {
+                    /* First one failed so remove handler */
+                    gpio_uninstall_isr_service();
+                }
+            } else {
+                /* Remove handler */
+                ok = gpio_isr_handler_remove(dio);
+
+                /* Remove service if no other attached */
+                if (ok && --num_isrs_installed == 0) {
+                    gpio_uninstall_isr_service();
+                }
             }
         }
+    } else {
+        ESP_LOGE(TAG, "%s: dio out of range: %d on radio %d", __func__, dio, radio->radio_num);
     }
 
     return ok;

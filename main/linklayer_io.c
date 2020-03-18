@@ -57,22 +57,26 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
         .sclk_io_num = config->spi_sck,
         .quadwp_io_num = -1,  /* Not used */
         .quadhd_io_num = -1,  /* Not used */
-        .max_transfer_sz = config->spi_clock,
+        .max_transfer_sz = MAX_PACKET_LEN,
     };
+
+    ESP_LOGV(TAG, "%s: miso %d mosi %d sclk %d", __func__, buscfg.miso_io_num, buscfg.mosi_io_num, buscfg.sclk_io_num);
 
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = config->spi_clock,        /* Clock speed */
         .mode = 0,                                  /* Mode is zero */
         .spics_io_num = config->spi_cs,             /* Chip select */
-        .queue_size = 0,                            /* No queued transfers */
+        .queue_size = 1,                            /* No queued transfers */
         .command_bits = 8,                          /* 8 bit command */
         .address_bits = 0,                          /* No address field */
         .pre_cb = config->spi_pre_xfer_callback,    /* Pre-transfer callback if needed */
     };
 
-    /* Initialize the SPI device */
+    ESP_LOGV(TAG, "%s: clk speed %d mode %d cs %d", __func__, devcfg.clock_speed_hz, devcfg.mode, devcfg.spics_io_num);
 
-    esp_err_t ret = spi_bus_initialize(config->spi_host, &buscfg, config->spi_dma);
+    
+    /* Initialize the SPI device */
+    esp_err_t ret = spi_bus_initialize(config->spi_host, &buscfg, config->dma_chan);
     if (ret == ESP_OK) {
         spi_device_handle_t spi;
 
@@ -85,8 +89,11 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
             radio->read_buffer = spi_read_buffer;
             radio->write_buffer = spi_write_buffer; 
             radio->bus_deinit = spi_deinit;
+
+            ESP_LOGI(TAG, "%s spi is %p", __func__, spi);
+
         } else {
-            ESP_LOGE(TAG, "%s failed to deinit radio %d: %s", __func__, radio->radio_num, esp_err_to_name(ret));
+            ESP_LOGE(TAG, "%s failed to init radio %d: %s", __func__, radio->radio_num, esp_err_to_name(ret));
         }
     }
 
@@ -106,6 +113,8 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
 {
     spi_transaction_t t;
 
+ESP_LOGV(TAG, "%s: %02x with %02x", __func__, reg, data);
+
     memset(&t, 0, sizeof(t));
     t.cmd = reg | 0x80;                /* Write to register */
     t.tx_data[0] = data;
@@ -117,6 +126,8 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len)
 {
     spi_transaction_t t;
+
+ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
     t.cmd = reg | 0x80;
@@ -130,17 +141,27 @@ static int spi_read_register(radio_t* radio, int reg)
 {
     spi_transaction_t t;
 
+//ESP_LOGV(TAG, "%s: %02x", __func__, reg);
+
     memset(&t, 0, sizeof(t));
     t.cmd = reg & 0x7F;                /* Read from register */
     t.flags = SPI_TRANS_USE_RXDATA;
     t.length = 8+8;                    /* 2 byte transfer */
 
+#if 0
     return (spi_device_transmit(radio->spi, &t) == ESP_OK) ? t.rx_data[0] : -1;
+#else
+    int v = (spi_device_transmit(radio->spi, &t) == ESP_OK) ? t.rx_data[0] : -1;
+ESP_LOGV(TAG, "%s: %02x returned %02x", __func__, reg, v);
+    return v;
+#endif
 }
 
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
     spi_transaction_t t;
+
+ESP_LOGV(TAG, "%s: %02x for %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
     t.cmd = reg & 0x7F;

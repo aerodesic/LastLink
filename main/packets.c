@@ -40,12 +40,12 @@ bool init_packets(int num_packets)
 {
     bool ok = false;
 
-    ESP_LOGD(TAG, "init_packets: %d", num_packets);
+    // ESP_LOGD(TAG, "init_packets: %d", num_packets);
 
     packet_mutex = os_create_recursive_mutex();
 
     if (packet_mutex != NULL) {
-        ESP_LOGD(TAG, "packet_mutex created");
+        // ESP_LOGD(TAG, "packet_mutex created");
 
         packet_lock();
 
@@ -53,7 +53,7 @@ bool init_packets(int num_packets)
 
         if (free_packets_queue != NULL) {
 
-            ESP_LOGD(TAG, "free_packets_queue created");
+            // ESP_LOGD(TAG, "free_packets_queue created");
 
             ok = true;
 
@@ -76,7 +76,7 @@ bool init_packets(int num_packets)
 
     if (!ok) {
         /* Undo failed initialization */
-        packet_deinit();
+        deinit_packets();
     }
 
     return ok;
@@ -137,7 +137,7 @@ static bool validate_field(packet_t *p, size_t from, size_t length)
  */
 packet_t *allocate_packet(void)
 {
-    ESP_LOGD(TAG, "allocate_packet");
+    // ESP_LOGD(TAG, "allocate_packet");
 
     packet_t* packet = NULL;
 
@@ -148,7 +148,7 @@ packet_t *allocate_packet(void)
 
         if  (os_get_queue_with_timeout(free_packets_queue, &p, 0)) {
 
-            ESP_LOGD(TAG, "allocate_packet packet from queue is %p", p);
+            // ESP_LOGD(TAG, "allocate_packet packet from queue is %p", p);
 
             packet = (packet_t*) p;
 
@@ -195,7 +195,7 @@ packet_t *duplicate_packet(packet_t* packet)
  */
 bool release_packet(packet_t *p)
 {
-    ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
+    // ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
 
     bool ok = false;
     

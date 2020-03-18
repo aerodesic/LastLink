@@ -70,7 +70,7 @@ static esp_err_t delete_config_cell(configitem_t* item)
 {
     esp_err_t ret = ESP_OK;
 
-    ESP_LOGD(TAG, "delete_config_cell: '%s' type %d", item->name, item->type);
+    // ESP_LOGD(TAG, "delete_config_cell: '%s' type %d", item->name, item->type);
 
     /* Remove item from table */
     item->next->prev = item->prev;
@@ -107,12 +107,12 @@ static esp_err_t release_config(configitem_t** table)
     configitem_t* item = *table;
 
     while ((ret == ESP_OK) && (item != NULL)) {
-        ESP_LOGD(TAG, "'%s' item %p next %p prev %p", item->name, item, item->next, item->prev);
+        // ESP_LOGD(TAG, "'%s' item %p next %p prev %p", item->name, item, item->next, item->prev);
         configitem_t* nextitem = item->next;
         /* If deleting the last item, call it empty after deletion */
         bool empty = nextitem == item;
         ret = delete_config_cell(item);
-        ESP_LOGD(TAG, "list is %s", empty ? "empty" : "not empty");
+        // ESP_LOGD(TAG, "list is %s", empty ? "empty" : "not empty");
         item = empty ? NULL : nextitem;
     }
 
@@ -130,7 +130,7 @@ static void write_config(FILE* fp, configitem_t* cell, int indent)
         do {
             if (cell->type == CONFIG_SECTION) {
                 if (fp == NULL) {
-                    ESP_LOGI(TAG, "%*.*s[%s] (owned by %p)", indent, indent, "", cell->name, cell->owner);
+                    // ESP_LOGI(TAG, "%*.*s[%s] (owned by %p)", indent, indent, "", cell->name, cell->owner);
                 } else {
                     fprintf(fp, "%*.*s[%s]\n", indent, indent, "", cell->name);
                 }
@@ -138,13 +138,13 @@ static void write_config(FILE* fp, configitem_t* cell, int indent)
                 write_config(fp, cell->section, indent + 4);
 
                 if (fp == NULL) {
-                    ESP_LOGI(TAG, "%*.*s[end] (of '%s' owned by %p)", indent, indent, "", cell->name, cell->owner);
+                    // ESP_LOGI(TAG, "%*.*s[end] (of '%s' owned by %p)", indent, indent, "", cell->name, cell->owner);
                 } else {
                     fprintf(fp, "%*.*s[end]\n", indent, indent, "");
                 }
             } else if (cell->type == CONFIG_VALUE) {
                 if (fp == NULL) {
-                    ESP_LOGI(TAG, "%*.*s%s=%s (owned by %p)", indent, indent, "", cell->name, cell->value, cell->owner);
+                    // ESP_LOGI(TAG, "%*.*s%s=%s (owned by %p)", indent, indent, "", cell->name, cell->value, cell->owner);
                 } else {
                     fprintf(fp, "%*.*s%s=%s\n", indent, indent, "", cell->name, cell->value);
                 }
@@ -184,10 +184,10 @@ static configitem_t* add_config_cell(configitem_t** owner, const char* info)
             cell->next = cell;
             cell->prev = cell;
             *owner = cell;
-            ESP_LOGD(TAG, "new cell '%s' at %p owned by list %p", info, cell, owner);
+            // ESP_LOGD(TAG, "new cell '%s' at %p owned by list %p", info, cell, owner);
         } else {
             /* Insert it at end of owner */
-            ESP_LOGD(TAG, "appending '%s' at %p to owner by %p at %p", info, cell, *owner, (*owner)->prev);
+            // ESP_LOGD(TAG, "appending '%s' at %p to owner by %p at %p", info, cell, *owner, (*owner)->prev);
             cell->next = *owner;
             cell->prev = (*owner)->prev;
             (*owner)->prev->next = cell;
@@ -439,14 +439,14 @@ static configitem_t* find_config_entry(const char* name, configitem_t** parent, 
         tokens = NULL;
 	found = NULL;
 
-        ESP_LOGD(TAG, "find_config_item looking for '%s'", field);
+        // ESP_LOGD(TAG, "find_config_item looking for '%s'", field);
 
         configitem_t* item = table;
         do {
-            ESP_LOGD(TAG, "looking for '%s' at %p '%s'", field, item, item->name);
+            // ESP_LOGD(TAG, "looking for '%s' at %p '%s'", field, item, item->name);
             if (strcmp(item->name, field) == 0) {
                 /* Found field */
-                ESP_LOGD(TAG, "found at %p type %d", item, item->type);
+                // ESP_LOGD(TAG, "found at %p type %d", item, item->type);
                 found = item;
             }
             item = item->next;

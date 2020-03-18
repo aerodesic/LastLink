@@ -94,6 +94,19 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Connection for the RESET line
 
+    config LASTLINK_RADIO_$(RADIO_NUM)_SPI_CLOCK_HZ
+        int "SPI Clock speed for RADIO $(RADIO_NUM)"
+        default 10000000
+        range 100000 40000000
+        help
+            Clock rate for the spi
+
+    config LASTLINK_RADIO_$(RADIO_NUM)_DMA_CHAN
+        int "DMA channel (0 if off)"
+        default 0
+        help
+            Set to enable DMA (0 if disable)
+
     config LASTLINK_RADIO_$(RADIO_NUM)_CRYSTAL
         int "Crystal frequency"
         default 32000000
@@ -108,7 +121,7 @@ menu "Radio $(RADIO_NUM) SPI configuration"
             Initial channel.  First 64 or narrow band.  Last 8 are wide band.
 
     config LASTLINK_RADIO_$(RADIO_NUM)_DELAY
-        int "Transmit delay (in mS"
+        int "Transmit delay (in mS)"
         default 0
         range 0 500
         help

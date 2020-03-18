@@ -4,7 +4,12 @@
  * Provides an overlay of functions of the FreeRTOS using a common
  * naming condition and return codes.
  */
+#include "esp_system.h"
+#include "esp_log.h"
+
 #include "os_freertos.h"
+
+#define TAG "os_freertos"
 
 os_mutex_t os_create_mutex(void)
 {
@@ -42,9 +47,17 @@ bool os_acquire_recursive_mutex(os_mutex_t mutex)
     return os_acquire_recursive_mutex_with_timeout(mutex, portMAX_DELAY);
 }
 
-bool os_acquire_mutex_from_isr(os_mutex_t mutex)
+bool os_acquire_mutex_from_isr(os_mutex_t mutex, bool *awakened)
 {
-    return xSemaphoreTakeFromISR(mutex, NULL) == pdTRUE;
+    BaseType_t task_awakened = pdFALSE;
+
+    bool results = xSemaphoreTakeFromISR(mutex, &task_awakened) == pdTRUE;
+
+    if (awakened != NULL) {
+        *awakened = task_awakened == pdTRUE;
+    }
+
+    return results;
 }
 
 bool os_release_mutex(os_mutex_t mutex)
@@ -59,15 +72,28 @@ bool os_release_recursive_mutex(os_mutex_t mutex)
     return true;
 }
 
-bool os_release_mutex_from_isr(os_mutex_t mutex)
+bool os_release_mutex_from_isr(os_mutex_t mutex, bool* awakened)
 {
-    xSemaphoreGiveFromISR(mutex, NULL);
+    BaseType_t task_awakened = pdFALSE;
+
+    xSemaphoreGiveFromISR(mutex, &task_awakened);
+
+    if (awakened != NULL) {
+        *awakened = task_awakened == pdTRUE;
+    }
+
     return true;
 }
 
 os_queue_t os_create_queue(int depth, size_t size)
 {
-    return xQueueCreate((UBaseType_t) depth, (UBaseType_t) size);
+    ESP_LOGI(TAG, "%s: depth %d size %u", __func__, depth, size);
+
+    os_queue_t q = xQueueCreate((UBaseType_t) depth, (UBaseType_t) size);
+
+    ESP_LOGI(TAG, "%s: returned %p", __func__, q);
+
+    return q;
 }
 
 bool os_delete_queue(os_queue_t queue)
@@ -81,9 +107,17 @@ bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeo
     return xQueueSend(queue, &item, timeout) == pdTRUE;
 }
 
-bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item)
+bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item, bool *awakened)
 {
-    return xQueueSendFromISR(queue, item, NULL) == pdTRUE;
+    BaseType_t task_awakened = pdFALSE;
+
+    bool results =  xQueueSendFromISR(queue, item, &task_awakened) == pdTRUE;
+
+    if (awakened != NULL) {
+        *awakened = task_awakened == pdTRUE;
+    }
+
+    return results;
 }
 
 bool os_put_queue(os_queue_t queue, os_queue_item_t item)
@@ -91,9 +125,16 @@ bool os_put_queue(os_queue_t queue, os_queue_item_t item)
     return os_put_queue_with_timeout(queue, item, portMAX_DELAY);
 }
 
-bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item)
+bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakened)
 {
-    return xQueueSendFromISR(queue, &item, NULL) == pdTRUE;
+    BaseType_t task_awakened = pdFALSE;
+
+    bool results = xQueueSendFromISR(queue, &item, &task_awakened) == pdTRUE;
+    if (awakened != NULL) {
+        *awakened = task_awakened == pdTRUE;
+    }
+
+    return results;
 }
 
 bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout)
