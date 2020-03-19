@@ -97,7 +97,7 @@ static int          global_number_radios_active;
 #define RECEIVE_CADDETECTED_CADDONE_IRQ_DIO    0
 #define TRANSMIT_FHSS_IRQ_DIO                  1
 
-#define GLOBAL_IRQ_THREAD_STACK    16384
+#define GLOBAL_IRQ_THREAD_STACK    32768
 #define GLOBAL_IRQ_THREAD_PRIORITY (configMAX_PRIORITIES-1)  /* Highest priority */
 
 #define WANTED_VERSION  0x12
@@ -155,8 +155,8 @@ bool sx127x_create(radio_t* radio)
         /* Start global interrupt processing thread if not yet running */
         if (global_interrupt_handler_thread == NULL) {
             global_interrupt_handler_queue = os_create_queue(MAX_IRQ_PENDING, sizeof(radio_t*));
-            global_interrupt_handler_thread = os_create_thread(global_interrupt_handler, "sx127x_irq_thread",
-                                                               GLOBAL_IRQ_THREAD_STACK, GLOBAL_IRQ_THREAD_PRIORITY, NULL);
+            global_interrupt_handler_thread = os_create_thread_on_core(global_interrupt_handler, "sx127x_svc",
+                                                               GLOBAL_IRQ_THREAD_STACK, GLOBAL_IRQ_THREAD_PRIORITY, NULL, 0);
         }
 
         ++global_number_radios_active;

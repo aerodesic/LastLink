@@ -74,10 +74,15 @@ static int                        packet_processed;    /* Packets accepted for p
 static int                        packet_transmitted;  /* Total packets transmitted */
 static int                        packet_ignored;      /* Packets not processed */
 static radio_t**                  radio_table;
+static int                        num_isrs_installed;
 
 typedef void (protocol_process_t)(packet_t*);
 static protocol_process_t*        protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NUMBER + 1];
                             
+
+#ifdef NOTUSED
+static void test_button_handler(void*);
+#endif
 
 /*
  * Configuration
@@ -538,8 +543,67 @@ bool linklayer_init(int address, int flags, int announce)
         }
     }
 
+#ifdef NOTUSED
+/*DEBUG*/
+    if (ok) {
+        /* Attach interrupt to button */
+        gpio_config_t     io;
+    
+        io.pin_bit_mask  = 1ULL << 0;
+        io.mode          = GPIO_MODE_INPUT;
+        io.intr_type     = FALLING;
+        io.pull_up_en    = GPIO_PULLUP_ENABLE;
+        io.pull_down_en  = GPIO_PULLDOWN_DISABLE;
+    
+        /* Program the pin */
+        if (gpio_config(&io) == ESP_OK) {
+        
+            if (num_isrs_installed == 0) {
+                /* If attaching vector */
+                ok = gpio_install_isr_service(0) == ESP_OK;
+            }
+            if (ok) {
+                ok = gpio_isr_handler_add(0, test_button_handler, (void*) 0);
+                if (ok) {
+                    ESP_LOGI(TAG, "Button interrupt added");
+                } else {
+                    ESP_LOGI(TAG, "Button interrupt add failed");
+                }
+            }
+            if (ok) {
+                ++num_isrs_installed;
+            } else if (num_isrs_installed == 0) {
+                /* First one failed so remove handler */
+                gpio_uninstall_isr_service();
+            }
+        } else {
+            /* Remove handler */
+            ok = gpio_isr_handler_remove(0);
+    
+            /* Remove service if no other attached */
+            if (ok && --num_isrs_installed == 0) {
+                gpio_uninstall_isr_service();
+            }
+        }
+        if (ok) {
+            ESP_LOGI(TAG, "Button interrupt attached");
+        } else {
+            ESP_LOGI(TAG, "Button interrupt attach failed");
+        }
+    }
+/*END DEBUG*/
+#endif
+
     return ok;
 }
+
+#ifdef NOTUSED
+int button_interrupts;
+static void test_button_handler(void* param)
+{
+    ++button_interrupts;
+}
+#endif
 
 bool linklayer_set_promiscuous_mode(bool mode) {
     bool ok = true;
@@ -559,6 +623,12 @@ bool linklayer_set_promiscuous_mode(bool mode) {
     return ok;
 }
 
+bool linklayer_set_debug(bool enable)
+{
+    debug_flag = enable;
+    return true;
+}
+
 /*
  * This adds a radio definition from a radio_config_t entry.
  */
@@ -572,6 +642,7 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
 
     /* Allocate radio structure */
     radio_t* radio = (radio_t*) malloc(sizeof(radio_t));
+ESP_LOGI(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, radio);
 
     if (radio != NULL) {
         memset(radio, 0, sizeof(radio_t));
@@ -608,8 +679,9 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
                         /* Create radio table */
                         radio_table = (radio_t**) malloc(sizeof(radio_t*) * ELEMENTS_OF(radio_config));
 
+ESP_LOGI(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
                         if (radio_table != NULL) {
-                            memset(radio_table, 0, sizeof(radio_t) * ELEMENTS_OF(radio_config));
+                            memset(radio_table, 0, sizeof(radio_t*) * ELEMENTS_OF(radio_config));
                         }
                     }
                 }
@@ -905,7 +977,6 @@ static bool put_received_packet(packet_t* packet)
     return os_put_queue(receive_queue, packet);
 }
 
-static int num_isrs_installed;
 
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge, void (*handler)(void* p))
 {
@@ -934,7 +1005,11 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, dio_edge_t edge,
                     ok = gpio_install_isr_service(0) == ESP_OK;
                 }
                 if (ok) {
-                    ok = gpio_isr_handler_add(dio, handler, (void*) radio);
+                    esp_err_t err = gpio_isr_handler_add(dio, handler, (void*) radio);
+                    if (err != ESP_OK) {
+                        ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
+                        ok = false;
+                    }
                 }
                 if (ok) {
                     ++num_isrs_installed;

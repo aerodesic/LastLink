@@ -207,6 +207,15 @@ os_thread_t os_create_thread(void (*process)(void* param), const char* name, siz
     return thread;
 }
 
+os_thread_t os_create_thread_on_core(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param, int core)
+{
+    os_thread_t thread;
+    if (xTaskCreatePinnedToCore(process, name, stack_size ? stack_size : configMINIMAL_STACK_SIZE, param, priority, &thread, core) != pdTRUE) {
+        thread = 0;
+    }
+    return thread;
+}
+
 bool os_delete_thread(os_thread_t thread)
 {
     if (thread != NULL) {

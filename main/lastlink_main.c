@@ -6,6 +6,8 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/portable.h"
+
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -32,16 +34,22 @@ const uint8_t *xyz = server_root_cert_pem_end;
 
 const char* TAG = "lastlink";
 
+#if 0
+static char cTaskListBuf[4000];
+#endif
+
 static const char* default_config[] = DEFAULT_CONFIG;
 
 void app_main(void)
 {
-#if 0
+#if 1
     //Initialize NVS
     if (init_nvs() == ESP_OK) {
         /* pass */
     }
+#endif
 
+#if 0
     if (init_spiffs() == ESP_OK) {
 	/* Try to open .config and if not found, format the spiffs */
 	FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
@@ -68,8 +76,11 @@ void app_main(void)
     ESP_LOGD(TAG, "address %d flags 0x%02x announce %d", get_config_int("lastlink.address", 99), get_config_int("lastlink.flags", 99), get_config_int("lastlink.announce", -1));
 #endif
 
+#if 1
     /* initialize the lastlink network */
     linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
+    linklayer_set_debug(true);
+#endif
 
 #if 1
     /* This becomes the main thread */
@@ -77,7 +88,17 @@ void app_main(void)
 #else
     while(true) {
        os_delay(1000);
-       printf("Tick\n");
+  #if 1
+       vTaskList(cTaskListBuf);
+       puts(cTaskListBuf);
+    #if 0
+       extern int button_interrupts;
+       printf("button interrupts: %d\n", button_interrupts);
+    #endif
+  #else
+       printf("xPortCanYield %d Tasks %u\n", xPortCanYield(), uxTaskGetNumberOfTasks());
+  #endif
+    // printf("Tick\n");
     }
 #endif
 }
