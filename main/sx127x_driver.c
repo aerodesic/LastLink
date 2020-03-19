@@ -266,8 +266,11 @@ static void global_interrupt_handler(void* param)
 
         if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t*) &radio)) {
 
+            sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+ESP_LOGI(TAG, "%s: radio %d flags %02x", __func__, radio->radio_num, data->interrupt_flags);
+
             if (acquire_lock(radio)) {
-                sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
                 if (data->interrupt_flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
                     fhss_handle_interrupt(radio);
@@ -316,8 +319,8 @@ static bool radio_stop(radio_t* radio)
     if (acquire_lock(radio)) {
         /* Disable all interrupts */
         ok = disable_irq(radio, 0xFF)
-             && radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, DISABLED, NULL)
-             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               DISABLED, NULL)
+             && radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, GPIO_PIN_INTR_DISABLE, NULL)
+             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               GPIO_PIN_INTR_DISABLE, NULL)
              ;
 
         if (ok && --global_number_radios_active == 0) {
@@ -432,8 +435,8 @@ static bool radio_start(radio_t* radio)
             radio->write_register(radio, SX127x_REG_IRQ_FLAGS, 0xFF);
 
             /* Capture receive/transmit interrupts */
-            radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, RISING, catch_interrupt);
-            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               RISING, catch_interrupt);
+            radio->attach_interrupt(radio, RECEIVE_CADDETECTED_CADDONE_IRQ_DIO, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO,               GPIO_PIN_INTR_POSEDGE, catch_interrupt);
 
             /* Enable interrupts of interest */
             enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);

@@ -34,11 +34,18 @@ const uint8_t *xyz = server_root_cert_pem_end;
 
 const char* TAG = "lastlink";
 
-#if 0
+#if 1
 static char cTaskListBuf[4000];
 #endif
 
 static const char* default_config[] = DEFAULT_CONFIG;
+
+static int button_interrupts;
+
+static void test_button_handler(void* param)
+{
+    ++button_interrupts;
+}
 
 void app_main(void)
 {
@@ -82,17 +89,23 @@ void app_main(void)
     linklayer_set_debug(true);
 #endif
 
+
 #if 1
     /* This becomes the main thread */
     wifi_init_softap();
 #else
+    if (os_attach_gpio_interrupt(0, GPIO_PIN_INTR_NEGEDGE, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0)) {
+        ESP_LOGI(TAG, "Button interrupt attached");
+    } else {
+        ESP_LOGI(TAG, "Button interrupt attach failed");
+    }
+
     while(true) {
        os_delay(1000);
   #if 1
        vTaskList(cTaskListBuf);
        puts(cTaskListBuf);
-    #if 0
-       extern int button_interrupts;
+    #if 1
        printf("button interrupts: %d\n", button_interrupts);
     #endif
   #else
@@ -102,3 +115,4 @@ void app_main(void)
     }
 #endif
 }
+

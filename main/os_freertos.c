@@ -268,3 +268,60 @@ uint64_t get_milliseconds(void)
     return ret;
 }
 
+static int num_isrs_installed;
+
+bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup, gpio_pulldown_t pulldown, void (*handler)(void*), void* param)
+{
+    bool ok = true;
+
+    ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
+
+    gpio_config_t     io;
+
+    io.pin_bit_mask  = 1ULL << gpio;
+    io.mode          = GPIO_MODE_INPUT;
+    io.intr_type     = edge;
+    io.pull_up_en    = pullup;
+    io.pull_down_en  = pulldown;
+
+    /* Program the pin */
+    if (gpio_config(&io) == ESP_OK) {
+    
+        /* If attaching vector */
+        if (handler != NULL) {
+            if (num_isrs_installed == 0) {
+                esp_err_t err = gpio_install_isr_service(0);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "%s: gpio_install_isr_service failed with %s", __func__, esp_err_to_name(err));
+                    ok = false;
+                }
+            }
+
+            if (ok) {
+                esp_err_t err = gpio_isr_handler_add(gpio, handler, param);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
+                    ok = false;
+                }
+            }
+
+            if (ok) {
+                ++num_isrs_installed;
+            } else if (num_isrs_installed == 0) {
+                /* First one failed so remove handler */
+                gpio_uninstall_isr_service();
+            }
+        } else {
+            /* Remove handler */
+            ok = gpio_isr_handler_remove(gpio) == ESP_OK;
+
+            /* Remove service if no other attached */
+            if (ok && --num_isrs_installed == 0) {
+                gpio_uninstall_isr_service();
+            }
+        }
+    }
+
+    return ok;
+}
+
