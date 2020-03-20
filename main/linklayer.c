@@ -57,6 +57,7 @@ static void linklayer_transmit_packet(packet_t* packet);
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
 static packet_t* linklayer_on_transmit(radio_t* radio);
+static void reset_device(radio_t* radio);
 
 static os_mutex_t                 linklayer_lock;
 static int                        node_address;
@@ -246,6 +247,7 @@ packet_t* beacon_packet_create(const char* name)
 
     packet_t* p = create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length);
     if (p != NULL) {
+        set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_int_field(p, HEADER_TTL, TTL_LEN, 1);
         int moved = set_str_field(p, BEACON_NAME, length, name);
         /* Update packet length */
@@ -483,6 +485,8 @@ bool linklayer_init(int address, int flags, int announce)
 {
     bool ok = false;
 
+    ESP_LOGI(TAG, "%s: adddress %d flags 0x%02x announce %d", __func__, address, flags, announce);
+
     linklayer_lock = os_create_recursive_mutex();
     node_address = address;
     node_flags = flags; 
@@ -632,7 +636,7 @@ ESP_LOGI(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
             }
 #endif
             if (ok) {
-                if (radio->set_channel(radio, config->channel)) {
+//                if (radio->set_channel(radio, config->channel)) {
 
                     /* Put radio in active table. If no radio, create one. */
                     if (radio_table == NULL) {
@@ -644,7 +648,7 @@ ESP_LOGI(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
                             memset(radio_table, 0, sizeof(radio_t*) * ELEMENTS_OF(radio_config));
                         }
                     }
-                }
+//                }
             }
 
             if (radio_table != NULL) {
@@ -701,8 +705,43 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->on_receive = linklayer_on_receive;
     radio->on_transmit = linklayer_on_transmit;
     radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
+    radio->reset_device = reset_device;
 
     return true;
+}
+
+radio_t* linklayer_get_radio_from_number(int radio_num)
+{
+    if (radio_table != NULL && radio_num >= 0 && radio_num < ELEMENTS_OF(radio_config)) {
+        return radio_table[radio_num];
+    } else {
+        return NULL;
+    }
+}
+
+static void reset_device(radio_t* radio)
+{
+    int gpio = radio_config[radio->radio_num].reset;
+
+    gpio_config_t io;
+    io.intr_type = GPIO_PIN_INTR_DISABLE;
+    io.mode = GPIO_MODE_OUTPUT;
+    io.pin_bit_mask = 1ULL << gpio;
+    io.pull_down_en = 0;
+    io.pull_up_en = 0;
+    gpio_config(&io);
+
+    if (gpio_set_level(gpio, 0) != ESP_OK) {
+        ESP_LOGE(TAG, "%s: ******************************* error setting reset low", __func__);
+    }
+
+    os_delay(100);
+
+    if (gpio_set_level(gpio, 1) != ESP_OK) {
+       ESP_LOGE(TAG, "%s: ******************************* error setting reset high", __func__);
+    }
+
+    /* Leave configured as output with pulled up */
 }
 
 static bool linklayer_deinit_radio(radio_t* radio)
@@ -717,6 +756,7 @@ static bool linklayer_deinit_radio(radio_t* radio)
            radio->on_transmit = NULL;
            os_delete_queue(radio->transmit_queue);
            radio->transmit_queue = NULL;
+           radio->reset_device = NULL;
         }
     }
 
@@ -866,6 +906,8 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
  */
 static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet)
 {
+    ESP_LOGI(TAG, "%s: sending packet to radio %d", __func__, radio->radio_num);
+
     if (os_put_queue(radio->transmit_queue, packet)) {
         /* See if the queue was empty */
         if (os_items_in_queue(radio->transmit_queue) == 1) {
@@ -882,7 +924,9 @@ static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet)
 static void linklayer_transmit_packet(packet_t* packet)
 {
     if (packet != NULL) {
+        ESP_LOGI(TAG, "%s: waiting for lock", __func__);
         os_acquire_recursive_mutex(linklayer_lock);
+        ESP_LOGI(TAG, "%s: got lock", __func__);
 
         if (packet->radio_num == ALL_RADIOS) {
             for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
@@ -945,7 +989,7 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
     if (dio >= 0 && dio < ELEMENTS_OF(radio_config[radio->radio_num].dios)) {
         int gpio = radio_config[radio->radio_num].dios[dio];
 
-        ok = os_attach_gpio_interrupt(gpio, edge, GPIO_PULLUP_DISABLE, GPIO_PULLDOWN_DISABLE, handler, (void*) radio);
+        ok = os_attach_gpio_interrupt(gpio, edge, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, handler, (void*) radio);
     } else {
         ESP_LOGE(TAG, "%s: dio out of range: %d on radio %d", __func__, dio, radio->radio_num);
     }

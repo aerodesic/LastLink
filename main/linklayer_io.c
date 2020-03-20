@@ -65,10 +65,12 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = config->spi_clock,        /* Clock speed */
         .mode = 0,                                  /* Mode is zero */
+        // .mode = 1,                                  /* Mode zero not working - dropping leading bit */
         .spics_io_num = config->spi_cs,             /* Chip select */
         .queue_size = 1,                            /* No queued transfers */
         .command_bits = 8,                          /* 8 bit command */
         .address_bits = 0,                          /* No address field */
+        .cs_ena_posttrans = 3,                      /* CS Held a few cycles after transfer */
         .pre_cb = config->spi_pre_xfer_callback,    /* Pre-transfer callback if needed */
     };
 
@@ -113,7 +115,7 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
 {
     spi_transaction_t t;
 
-ESP_LOGV(TAG, "%s: %02x with %02x", __func__, reg, data);
+ ESP_LOGV(TAG, "%s: %02x with %02x", __func__, reg, data);
 
     memset(&t, 0, sizeof(t));
     t.cmd = reg | 0x80;                /* Write to register */
@@ -127,7 +129,7 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
 {
     spi_transaction_t t;
 
-ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
+ ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
     t.cmd = reg | 0x80;
@@ -141,8 +143,6 @@ static int spi_read_register(radio_t* radio, int reg)
 {
     spi_transaction_t t;
 
-//ESP_LOGV(TAG, "%s: %02x", __func__, reg);
-
     memset(&t, 0, sizeof(t));
     t.cmd = reg & 0x7F;                /* Read from register */
     t.flags = SPI_TRANS_USE_RXDATA;
@@ -152,7 +152,8 @@ static int spi_read_register(radio_t* radio, int reg)
     return (spi_device_transmit(radio->spi, &t) == ESP_OK) ? t.rx_data[0] : -1;
 #else
     int v = (spi_device_transmit(radio->spi, &t) == ESP_OK) ? t.rx_data[0] : -1;
-ESP_LOGV(TAG, "%s: %02x returned %02x", __func__, reg, v);
+ ESP_LOGV(TAG, "%s: %02x returned %02x", __func__, reg, v);
+
     return v;
 #endif
 }
@@ -161,7 +162,7 @@ static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
     spi_transaction_t t;
 
-ESP_LOGV(TAG, "%s: %02x for %d bytes", __func__, reg, len);
+ ESP_LOGV(TAG, "%s: %02x for %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
     t.cmd = reg & 0x7F;

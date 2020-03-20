@@ -12,6 +12,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -24,6 +25,7 @@
 #include "configdata.h"
 #include "default_config.h"
 #include "os_freertos.h"
+#include "packets.h"
 
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
@@ -44,6 +46,7 @@ static int button_interrupts;
 
 static void test_button_handler(void* param)
 {
+    /* Create a ping packet to broadcast */
     ++button_interrupts;
 }
 
@@ -89,20 +92,32 @@ void app_main(void)
     linklayer_set_debug(true);
 #endif
 
-
-#if 1
-    /* This becomes the main thread */
-    wifi_init_softap();
-#else
+#if 0
     if (os_attach_gpio_interrupt(0, GPIO_PIN_INTR_NEGEDGE, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0)) {
         ESP_LOGI(TAG, "Button interrupt attached");
     } else {
         ESP_LOGI(TAG, "Button interrupt attach failed");
     }
+#endif
 
+#if 0
+    /* This becomes the main thread */
+    wifi_init_softap();
+#else
     while(true) {
-       os_delay(1000);
+       for (int count = 0; count < 10; ++count) {
+           esp_task_wdt_reset();
+
+           os_delay(100);
+       }
+
   #if 1
+       packet_t* packet = beacon_packet_create("PING");
+       if (packet != NULL) {
+           ESP_LOGI(TAG, "Sending beacon");
+           linklayer_send_packet(packet);
+       }
+  #elif 1
        vTaskList(cTaskListBuf);
        puts(cTaskListBuf);
     #if 1

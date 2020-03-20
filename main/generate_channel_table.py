@@ -25,15 +25,15 @@ class GenerateChannelTable:
         self.pll_step = 0
 
     def calc_freq(self, freq):
-        frf = round(freq / self.pll_step);
-        msb = int(frf) / 65536;
-        mid = (int(frf) / 256) % 256;
-        lsb = int(frf) % 256;
+        frf = int(round(freq / self.pll_step));
+        msb = (frf >> 16) & 0xFF
+        mid = (frf >> 8) & 0xFF
+        lsb = frf & 0xFF
         return [ msb, mid, lsb ]
 
     def process_crystal(self, line, lines):
-        self.crystal = float(lines[line][1])
-        self.pll_step = self.crystal / 2**19
+        self.crystal = int(lines[line][1])
+        self.pll_step = round(self.crystal / 2**19, 3)
 
         if self.debug:
             print("process_crystal: crystal %.f pll_step %.f" % (self.crystal, self.pll_step), file=sys.stderr)
@@ -119,9 +119,7 @@ class GenerateChannelTable:
                             f += 2
                         elif fields[f] in [ "bw", "bandwidth" ]:
                             bw = int(fields[f+1])
-                            if bw in self.bandwidth_bins:
-                                bw = self.bandwidth_bins.index(bw)
-                            else:
+                            if bw not in self.bandwidth_bins:
                                 print("Invalid bandwidth '%s' in datarate group '%s'" % (bw, group), file=sys.stderr)
                                 bw = 0
                             
@@ -253,7 +251,7 @@ class GenerateChannelTable:
             print("",                                                                                                               file=self.hfile)
             print("typedef struct datarate_entry_%s_struct {"       % self.device,                                                  file=self.hfile)
             print("    uint8_t  sf;",                                                                                               file=self.hfile)
-            print("    uint8_t  bw;",                                                                                               file=self.hfile)
+            print("    int      bw;",                                                                                               file=self.hfile)
             print("    uint8_t  cr;",                                                                                               file=self.hfile)
             print("    uint8_t  tx;",                                                                                               file=self.hfile)
             print("    int      payload;",                                                                                          file=self.hfile)
@@ -281,15 +279,15 @@ class GenerateChannelTable:
             print("    .device = %s,"                               % (('"' + self.device + '"') if self.device else "NULL"),       file=self.cfile)
             print("    .low_domain_freq = %d,"                      % (self.frequency_range[0]),                                    file=self.cfile)
             print("    .high_domain_freq = %d,"                     % (self.frequency_range[1]),                                    file=self.cfile)
-            print("    .crystal = %.f,"                             % (self.crystal),                                               file=self.cfile)
+            print("    .crystal = %.f,  /* pll_step is %f */"       % (self.crystal, self.pll_step),                                file=self.cfile)
             for channel in self.channels:
                 chinfo = self.channels[channel]
                 group = chinfo["group"]
                 datarates = self.datarates[chinfo["group"]]
-                print("    .channels[%d] = {"                       % channel,                                                      file=self.cfile)
+                print("    .channels[%d] = { /* %d Hz */"           % (channel, chinfo['hz']),                                      file=self.cfile)
                 print("        .freq_high = %d,"                    % (chinfo["freq"][0]),                                          file=self.cfile)
-                print("        .freq_mid = %d,"                     % (chinfo["freq"][1]),                                          file=self.cfile)
-                print("        .freq_low = %d,"                     % (chinfo["freq"][2]),                                          file=self.cfile)
+                print("        .freq_mid  = %d,"                    % (chinfo["freq"][1]),                                          file=self.cfile)
+                print("        .freq_low  = %d,"                    % (chinfo["freq"][2]),                                          file=self.cfile)
                 print("        .datarate_group = %d,"               % (self.groups.index(group)),                                   file=self.cfile)
                 print("    },",                                                                                                     file=self.cfile)
     
