@@ -230,6 +230,9 @@ static void tx_handle_interrupt(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
+ESP_LOGI(TAG, "******************************************************");
+ESP_LOGI(TAG, "%s", __func__);
+
     data->tx_interrupts++;
 
     /* Discard current queue entry and get next packet to send */
@@ -248,6 +251,8 @@ static void tx_handle_interrupt(radio_t* radio)
 #endif
         transmit_packet(radio, packet);
     } else {
+ESP_LOGI(TAG, "%s: no packet", __func__);
+
         /* Other return to receive mode. */
         set_receive_mode(radio);
     }

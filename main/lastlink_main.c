@@ -105,7 +105,7 @@ void app_main(void)
     wifi_init_softap();
 #else
     while(true) {
-       for (int count = 0; count < 10; ++count) {
+       for (int count = 0; count < 20; ++count) {
            esp_task_wdt_reset();
 
            os_delay(100);

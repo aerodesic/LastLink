@@ -1067,13 +1067,19 @@ static packet_t* linklayer_on_transmit(radio_t* radio)
     /* Pull packet from transmit queue and discard */
     packet_t* packet = NULL;
 
-    if (os_get_queue(radio->transmit_queue, (os_queue_item_t*) &packet)) {
+ESP_LOGI(TAG, "%s: getting last packet", __func__);
+
+    if (os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &packet, 0)) {
+ESP_LOGI(TAG, "%s: releasing packet %p", __func__, packet);
         release_packet(packet);
 
         /* Peek next packet to send */
-        os_peek_queue(radio->transmit_queue, (os_queue_item_t*) &packet);
+        if (!os_peek_queue(radio->transmit_queue, (os_queue_item_t*) &packet)) {
+            packet = NULL;
+        }
     }
 
+ESP_LOGI(TAG, "%s: returning next packet %p", __func__, packet);
     /* Return next packet to send or NULL if no more. */
     return packet;
 }
