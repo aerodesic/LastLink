@@ -422,7 +422,7 @@ static bool radio_start(radio_t* radio)
             ESP_LOGE(TAG, "Wrong version detected: %02x wanted %02x", version, WANTED_VERSION);
         } else {
             /* Put receiver in standby */
-            set_standby_mode(radio);
+            set_sleep_mode(radio);
 
             /* Set initial default  parameters parameters */
             set_bandwidth(radio, data->bandwidth);
@@ -435,8 +435,6 @@ static bool radio_start(radio_t* radio)
             set_enable_crc(radio, data->enable_crc);
             set_hop_period(radio, data->hop_period);
 
-            /* Configure the unit for receive channel 0; probably overriden by caller */
-            set_channel(radio, 0);
 
             /* LNA Boost */
             radio->write_register(radio, SX127x_REG_LNA, radio->read_register(radio, SX127x_REG_LNA) | 0x03);
@@ -478,7 +476,8 @@ static bool radio_start(radio_t* radio)
                 enable_irq(radio, SX127x_IRQ_FHSS_CHANGE_CHANNEL);
             }
 
-            radio->set_receive_mode(radio);
+            /* Configure the unit for receive channel 0; probably overriden by caller */
+            set_channel(radio, 0);
 
             ESP_LOGI(TAG, "SX127x radio started");
 
@@ -637,10 +636,13 @@ static bool set_channel(radio_t* radio, int channel)
 {
     bool ok = false;
 
+ESP_LOGI(TAG, "******************************************************");
+ESP_LOGI(TAG, "%s: channel %d", __func__, channel);
+
     if (channel >= 0 && channel < ELEMENTS_OF(channel_table.channels)) {
         if (acquire_lock(radio)) {
 
-            set_standby_mode(radio);
+            set_sleep_mode(radio);
 
             sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
@@ -652,13 +654,13 @@ static bool set_channel(radio_t* radio, int channel)
             radio->write_register(radio, SX127x_REG_FREQ_MID, chanp->freq_mid);
             radio->write_register(radio, SX127x_REG_FREQ_LSB, chanp->freq_low);
 
-#ifdef NOTUSED
+//#ifdef NOTUSED
 /*TEST*/
             radio->read_register(radio, SX127x_REG_FREQ_MSB);
             radio->read_register(radio, SX127x_REG_FREQ_MID);
             radio->read_register(radio, SX127x_REG_FREQ_LSB);
 /*END TEST*/
-#endif
+//#endif
 
             set_datarate(radio, 0);
 
@@ -799,6 +801,10 @@ ESP_LOGI(TAG, "%s: sf %d", __func__, spreading_factor);
                          && radio->write_register(radio, SX127x_REG_DETECTION_THRESHOLD, (spreading_factor == 6) ? 0x0c : 0x0a)
                          && radio->write_register(radio, SX127x_REG_MODEM_CONFIG_2, (config2 & 0x0F) | (spreading_factor << 4));
                          ;
+
+/*TEST*/
+                    radio->read_register(radio, SX127x_REG_MODEM_CONFIG_2);  /* READBACK */
+/* END TEST */
                 }
             }
 

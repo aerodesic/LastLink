@@ -68,8 +68,8 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
         // .mode = 1,                                  /* Mode zero not working - dropping leading bit */
         .spics_io_num = config->spi_cs,             /* Chip select */
         .queue_size = 1,                            /* No queued transfers */
-        .command_bits = 8,                          /* 8 bit command */
-        .address_bits = 0,                          /* No address field */
+        .command_bits = 1,                          /* Command Read/Write */
+        .address_bits = 7,                          /* 7 bit  address */
         .cs_ena_posttrans = 3,                      /* CS Held a few cycles after transfer */
         .pre_cb = config->spi_pre_xfer_callback,    /* Pre-transfer callback if needed */
     };
@@ -118,10 +118,11 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
  ESP_LOGV(TAG, "%s: %02x with %02x", __func__, reg, data);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = reg | 0x80;                /* Write to register */
+    t.cmd = 1;                /* Write to register */
+    t.addr = reg;
     t.tx_data[0] = data;
     t.flags = SPI_TRANS_USE_TXDATA;
-    t.length = 8+8;                    /* 2 byte transfer */
+    t.length = 8;                    /* 1 byte transfer */
     return spi_device_transmit(radio->spi, &t) == ESP_OK;
 }
 
@@ -132,8 +133,9 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
  ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = reg | 0x80;
-    t.length = 8 + 8*len;           /* Register + data */
+    t.cmd = 1;                      /* Write */
+    t.addr = reg;
+    t.length = 8*len;           /* data */
     t.tx_buffer = buffer;
 
     return spi_device_transmit(radio->spi, &t) == ESP_OK;
@@ -144,9 +146,9 @@ static int spi_read_register(radio_t* radio, int reg)
     spi_transaction_t t;
 
     memset(&t, 0, sizeof(t));
-    t.cmd = reg & 0x7F;                /* Read from register */
+    t.addr = reg;                      /* Read from register */
     t.flags = SPI_TRANS_USE_RXDATA;
-    t.length = 8+8;                    /* 2 byte transfer */
+    t.length = 8;                    /* 1 byte transfer */
 
 #if 0
     return (spi_device_transmit(radio->spi, &t) == ESP_OK) ? t.rx_data[0] : -1;
@@ -165,8 +167,8 @@ static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
  ESP_LOGV(TAG, "%s: %02x for %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = reg & 0x7F;
-    t.length = 8 + 8*len;           /* Register + data */
+    t.cmd = reg;
+    t.length = 8*len;           /* data */
     t.rx_buffer = buffer;
 
     return spi_device_transmit(radio->spi, &t) == ESP_OK;
