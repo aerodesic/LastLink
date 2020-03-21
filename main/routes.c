@@ -293,6 +293,7 @@ void route_release_packets(route_t* r)
         route_table_lock(rt);
 
         if (r->pending_request != NULL) {
+            release_packet(r->pending_request);
             r->pending_request = NULL;
 
 	        if (r->pending_timer != NULL) {
@@ -306,7 +307,7 @@ void route_release_packets(route_t* r)
 	        packet_t* p;
 	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
 
-                if (r->radio_num == ALL_RADIOS) {
+                if (r->radio_num == UNKNOWN_RADIO) {
                     ESP_LOGE(TAG, "send on route without a radio: target %d nexthop %d sequence %d", r->target, r->nexthop, r->sequence);
                 }
 

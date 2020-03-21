@@ -68,8 +68,7 @@ static bool put_received_packet(packet_t* p);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
-static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet);
-static void linklayer_transmit_packet(packet_t* packet);
+static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
 /* Calls from radio driver to linklayer */
@@ -234,6 +233,8 @@ static const radio_config_t radio_config[] = {
 #endif
 };
 
+#define NUM_RADIOS ELEMENTS_OF(radio_config)
+
 /*
  * Create a generic packet
  *
@@ -389,7 +390,6 @@ static packet_t* routerequest_packet_create(int address)
     packet_t* p = create_generic_packet(address, RREQ_PROTOCOL, RREQ_LEN);
 
     if (p != NULL) {
-//linklayer_print_packet("ROUTERQUEST", p);
         set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_uint_field(p, RREQ_FLAGS, FLAGS_LEN, node_flags);
         set_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
@@ -826,7 +826,7 @@ bool linklayer_init(int address, int flags, int announce)
             linklayer_register_protocol(PINGREPLY_PROTOCOL, pingreply_packet_process,     pingreply_packet_format)     &&
             linklayer_register_protocol(DATA_PROTOCOL,      data_packet_process,          default_packet_format)) {
 
-            for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
+            for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
                 ok = ok && linklayer_add_radio(radio_num, &radio_config[radio_num]);
             }
         } else {
@@ -929,11 +929,11 @@ ESP_LOGI(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
                     /* Put radio in active table. If no radio, create one. */
                     if (radio_table == NULL) {
                         /* Create radio table */
-                        radio_table = (radio_t**) malloc(sizeof(radio_t*) * ELEMENTS_OF(radio_config));
+                        radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
 
 ESP_LOGI(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
                         if (radio_table != NULL) {
-                            memset(radio_table, 0, sizeof(radio_t*) * ELEMENTS_OF(radio_config));
+                            memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
                         }
                     }
 //                }
@@ -963,7 +963,7 @@ bool linklayer_remove_radio(int radio_num)
 {
     bool ok = false;
 
-    if (radio_table != NULL && radio_num >= 0 && radio_num < ELEMENTS_OF(radio_config) && radio_table[radio_num] != NULL) {
+    if (radio_table != NULL && radio_num >= 0 && radio_num < NUM_RADIOS && radio_table[radio_num] != NULL) {
         radio_t* radio = radio_table[radio_num];
 
         /* Shut down the radio itself */
@@ -1000,7 +1000,7 @@ static bool linklayer_init_radio(radio_t* radio)
 
 radio_t* linklayer_get_radio_from_number(int radio_num)
 {
-    if (radio_table != NULL && radio_num >= 0 && radio_num < ELEMENTS_OF(radio_config)) {
+    if (radio_table != NULL && radio_num >= 0 && radio_num < NUM_RADIOS) {
         return radio_table[radio_num];
     } else {
         return NULL;
@@ -1068,7 +1068,7 @@ bool linklayer_deinit(void)
         route_table_deinit(&route_table);
 
         /* Deinitialize and remove all radios */
-        for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
+        for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
             linklayer_remove_radio(radio_num);
         }
 
@@ -1098,69 +1098,75 @@ int linklayer_allocate_sequence(void)
  */
 void linklayer_send_packet(packet_t* packet)
 {
-    /* A packet with a source and destination is ready to transmit.
-     * Label the from address and if no to address, attempt to route
-     */
-    if (packet != NULL) {
-         /* Indicate coming from us */
-         set_uint_field(packet, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+    if (packet == NULL) {
+        ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
+    } else {
+        /*
+         * A packet with a source and destination is ready to transmit.
+         * Label the from address and if no to address, attempt to route
+         */
 
-         /* If source is NULL address, set it to us */
-         if (get_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
+        /* Indicate coming from us */
+        set_uint_field(packet, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+    
+        /* If source is NULL address, set it to us */
+        if (get_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
             set_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
-         }
-
-         /*
-          * If the nexthop is NULL, then we compute next hop based on route table.
-          * If no route table, create pending NULL route and cache packet for later retransmission.
-          */
-         unsigned int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
-
-         if (nexthop == NULL_ADDRESS) {
-
+        }
+    
+        /*
+         * If the nexthop is NULL, then we compute next hop based on route table.
+         * If no route table, create pending NULL route and cache packet for later retransmission.
+         */
+        unsigned int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
+        
+        radio_t* radio = NULL;  /* Gets the target radio device address */
+    
+        if (nexthop == NULL_ADDRESS) {
+        
             unsigned int target = get_uint_field(packet, HEADER_TARGET_ADDRESS, ADDRESS_LEN);
-
+        
             route_table_lock(&route_table);
-
+        
             route_t* route = route_find(&route_table, target);
-
+        
             /* If no route, create a dummy and make a request */
             if (route == NULL) {
                 route = route_update(&route_table, target, packet->radio_num, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
-ESP_LOGI(TAG, "%s: route pending nexthop %x", __func__, route->nexthop);
-
+        
                 /* Queue with it's pending ownership */
-linklayer_print_packet("PENDING1", packet);
                 route_put_pending_packet(route, packet);
-
+        
                 if (debug_flag) {
                     linklayer_print_packet("Routing", packet);
                 }
-
+        
                 /* Create a route request to be sent instead */
                 packet = routerequest_packet_create(target);
-                linklayer_print_packet("Before Queue", packet);
-
-                packet->radio_num = ALL_RADIOS;
                 route_set_pending_request(route, packet, ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
-
-                linklayer_print_packet("After Queue", packet);
-
+        
             } else if (route->nexthop == NULL_ADDRESS) {
-linklayer_print_packet("PENDING2", packet);
                 /* Still have pending route, add packet to queue */
                 route_put_pending_packet(route, packet);
                 /* And drop it */
                 packet = NULL;
-            } else {
-                /*  Label the destination for the packet */
-                set_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, route->nexthop);
-            }
 
+            } else {
+                /* We have a route so select nexthop and radio */
+                set_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, route->nexthop);
+                if (route->radio_num != UNKNOWN_RADIO) {
+        ESP_LOGI(TAG, "%s: routing to radio %d", __func__, route->radio_num);
+                    radio = radio_table[route->radio_num];
+                } else {
+        ESP_LOGE(TAG, "%s: no radio for route", __func__);
+                    release_packet(packet);
+                    packet = NULL;
+                }
+            }
 
             route_table_unlock(&route_table);
         }
-
+    
         /*
          * TODO: we may need another method to restart transmit queue other than looking
          * and transmit queue length.  A 'transmitting' flag (protected by meshlock) that
@@ -1170,12 +1176,15 @@ linklayer_print_packet("PENDING2", packet);
          * This may need to be implemented to allow stalling transmission for windows of
          * reception.  A timer will then restart the queue if items remain within it.
          */
-
+    
+        /* If radio is NULL, packet will be sent through all radios */
         if (packet != NULL) {
-            linklayer_transmit_packet(ref_packet(packet));
+            linklayer_transmit_packet(radio, ref_packet(packet));
             release_packet(packet);
         }
     }
+
+    release_packet(packet);
 }
 
 void linklayer_send_packet_update_ttl(packet_t* packet)
@@ -1190,7 +1199,7 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
 }
 
 /*
- * linklayer_send_packet_to_radio
+ * linklayer_transmit_packet
 
  * Put the packet onto the radio send queue.  If the queue now contains one item,
  * activate the send by issuing a send_packet to the radio.
@@ -1202,46 +1211,33 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
  * Entry:
  *      radio           The radio to transmit the packet
  *      packet          The packet to transmit
+ *
+ * Past this point, the 'radio_num' in the packet is meaningless.
  */
-static void linklayer_transmit_packet_to_radio(radio_t* radio, packet_t* packet)
+static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
 {
-    linklayer_print_packet("To Radio", packet);
+    if (radio == NULL) {
+        for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+            linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
+        }
+    } else {
+        char *info;
+        asprintf(&info, "To Radio %d", radio->radio_num);
+        linklayer_print_packet(info, packet);
+        free((void*) info);
 
     // ESP_LOGI(TAG, "%s: sending packet to radio %d", __func__, radio->radio_num);
 
-    if (os_put_queue(radio->transmit_queue, packet)) {
-        /* See if the queue was empty */
-        if (os_items_in_queue(radio->transmit_queue) == 1) {
-            /* Start the transmission */
-            radio->transmit_packet(radio, packet);
-        }
-    }
-}
-
-
-/*
- * Send packet to target radio or all radios if radio_num == ALL_RADIOS
- */
-static void linklayer_transmit_packet(packet_t* packet)
-{
-    if (packet != NULL) {
-        //ESP_LOGI(TAG, "%s: waiting for lock", __func__);
-        os_acquire_recursive_mutex(linklayer_lock);
-        //ESP_LOGI(TAG, "%s: got lock", __func__);
-
-        if (packet->radio_num == ALL_RADIOS) {
-            for (int radio_num = 0; radio_num < ELEMENTS_OF(radio_config); ++radio_num) {
-                linklayer_transmit_packet_to_radio(radio_table[radio_num], ref_packet(packet));
+        if (os_put_queue(radio->transmit_queue, packet)) {
+            /* See if the queue was empty */
+            if (os_items_in_queue(radio->transmit_queue) == 1) {
+                /* Start the transmission */
+                radio->transmit_packet(radio, packet);
             }
-        } else {
-            /* Send to singal radio */
-            linklayer_transmit_packet_to_radio(radio_table[packet->radio_num], ref_packet(packet));
         }
-
-        /* Packet is released from caller */
-        release_packet(packet);
-        os_release_recursive_mutex(linklayer_lock);
     }
+
+    release_packet(packet);
 }
 
 bool linklayer_register_protocol(int protocol, void (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))

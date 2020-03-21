@@ -64,7 +64,16 @@ bool init_packets(int num_packets)
                 if (p != NULL) {
                     memset(p, 0, sizeof(packet_t));
                     p->ref = 1;
-                    release_packet(p);
+                    p->buffer = (uint8_t*) os_alloc_dma_memory(MAX_PACKET_LEN);
+                    if (p->buffer == NULL) {
+ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
+                        /* Failed */
+                        free((void*) p);
+                        ok = false;
+                    } else {
+//ESP_LOGI(TAG, "%s: Packet %d at %p with buffer %p", __func__, count, p, p->buffer);
+                        release_packet(p);
+                    }
                 } else {
                     ok = false;
                 }
@@ -105,6 +114,8 @@ int deinit_packets(void)
                 /* Release free packets */
                 packet_t* packet;
                 while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
+                    free((void*) packet->buffer);
+                    packet->buffer = NULL;
                     free((void*) packet);
                 }
             }
@@ -158,9 +169,12 @@ packet_t *allocate_packet(void)
 
             /* Check for the impossible... */
             if (packet != NULL) {
-                memset(packet, 0, sizeof(*packet));
+                memset(packet->buffer, 0, MAX_PACKET_LEN);
                 packet->length = 0;
                 packet->ref = 1;
+                packet->radio_num = UNKNOWN_RADIO;
+                packet->rssi = 0;
+                packet->crc_ok = false;
                 ++active_packets;
             }
         }
@@ -181,10 +195,15 @@ packet_t *allocate_packet(void)
  */
 packet_t *create_packet(uint8_t* buf, size_t length)
 {
+    if (length > MAX_PACKET_LEN) {
+       length = MAX_PACKET_LEN;
+    }
+
     packet_t *p = allocate_packet();
+
     memcpy(p->buffer, buf, length);
     p->length = length;
-    p->radio_num = ALL_RADIOS;
+    p->radio_num = UNKNOWN_RADIO;
 
     return p;
 }
@@ -236,7 +255,7 @@ int get_uint_field(const packet_t *p, size_t from, size_t length)
     unsigned int value = 0;
     if (validate_field(p, from, length)) {
         for (int index = 0; index < length; ++index) {
-            value = (value << 8) | (p->buffer[from + index] & 0xFF);
+            value = (value << 8) | *(p->buffer + from + index);
         }
     } else {
         /* Bad index */
@@ -252,7 +271,7 @@ int get_int_field(const packet_t *p, size_t from, size_t length)
 {
     int value = get_uint_field(p, from, length);
 
-    if (value >= 0 && ((p->buffer[from] & 0x80) != 0)) {
+    if (value >= 0 && ((*(p->buffer + from) & 0x80) != 0)) {
         /* Valid value, so field is good and sign bit set - extend it */
         value -= (1 << (length * 8));
     }
@@ -268,7 +287,8 @@ bool set_int_field(packet_t *p, size_t from, size_t length, int value)
     bool ok = true;
     if (validate_field(p, from, length)) {
         for (int index = length - 1; index >= 0; --index) {
-            p->buffer[from + index] = value & 0xFF;
+//ESP_LOGI(TAG, "%s: storing %02x at %p + %d + %d", __func__, value & 0xFF, p->buffer, from, index);
+            *(p->buffer + from + index) = value & 0xFF;
             value >>= 8;
         }
     } else {

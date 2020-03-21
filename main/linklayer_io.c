@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "esp_system.h"
 #include "esp_event.h"
@@ -29,6 +30,36 @@ static bool spi_write_register(radio_t* radio, int reg, int data);
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len);
 static int spi_read_register(radio_t* radio, int reg);
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* bufer, int len);
+
+#define NUM_PER_LINE 16
+static void dump_buffer(uint8_t* buffer, int len)
+{
+    int addr = 0;
+
+    while (len != 0) {
+        printf("%04x:", addr);
+
+        int todump = NUM_PER_LINE;
+        if (todump > len) {
+            todump = len;
+        }
+
+        for (int b = 0; b < todump; ++b) {
+            printf(" %02x", buffer[addr + b]);
+        }
+
+        printf("  %*.*s", NUM_PER_LINE - todump, NUM_PER_LINE - todump, "");
+
+        for (int b = 0; b < todump; ++b) {
+            printf("%c", isprint(buffer[addr + b]) ? buffer[addr + b] : '.');
+        }
+
+        printf("\n");
+ 
+        addr += todump;
+        len -= todump;
+    }
+}
 
 bool io_init(radio_t* radio, const radio_config_t* config)
 {
@@ -163,13 +194,17 @@ static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
     spi_transaction_t t;
 
- //ESP_LOGV(TAG, "%s: %02x for %d bytes", __func__, reg, len);
+ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = reg;
+    t.addr = reg;
     t.length = 8*len;           /* data */
     t.rx_buffer = buffer;
 
-    return spi_device_transmit(radio->spi, &t) == ESP_OK;
+    bool ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
+    if (ok) {
+        dump_buffer(buffer, len);
+    }
+    return ok;
 }
 

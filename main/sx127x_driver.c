@@ -179,15 +179,12 @@ static void rx_handle_interrupt(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-    /* Clear interrupt */
-    uint8_t flags = radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
-    radio->write_register(radio, SX127x_REG_IRQ_FLAGS, flags);
-
     data->rx_interrupts++;
 
     int length;
 
     radio->write_register(radio, SX127x_REG_FIFO_PTR, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
+
     if (data->implicit_header) {
         length = radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH);
     } else {
@@ -203,6 +200,8 @@ static void rx_handle_interrupt(radio_t* radio)
             packet->crc_ok = (data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) == 0;
             packet->rssi = get_packet_rssi(radio);
             packet->radio_num = radio->radio_num;
+
+ESP_LOGI(TAG, "%s: packet len %d crc_ok %s rssi %d radio %d", __func__, packet->length, packet->crc_ok ? "OK" : "BAD", packet->rssi, packet->radio_num);
 
             /* Pass it to protocol layer */
             radio->on_receive(radio, ref_packet(packet));

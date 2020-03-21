@@ -325,3 +325,8 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
     return ok;
 }
 
+void* os_alloc_dma_memory(size_t size)
+{
+    return heap_caps_malloc(size, MALLOC_CAP_DMA);
+}
+
