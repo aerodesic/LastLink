@@ -71,7 +71,7 @@ bool route_table_deinit(route_table_t* rt)
     return rt->lock == NULL;
 }
     
-route_t* route_create(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_create(route_table_t* rt, int radio_num, int target, int nexthop, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -197,7 +197,7 @@ void route_update_lifetime(route_t* r, int lifetime)
  * If a new route is created or the sequence number is different or the metric improves,
  * return the route_t* otherwise return NULL
  */
-route_t* route_update(route_table_t* rt, int target, int radio_num, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_update(route_table_t* rt, int radio_num, int target, int nexthop, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -206,11 +206,14 @@ route_t* route_update(route_table_t* rt, int target, int radio_num, int nexthop,
         r = route_find(rt, target);
         if (r == NULL) {
             /* No route, so create a new one and return it */
-            r = route_create(rt, target, radio_num, nexthop, sequence, metric, flags);
+            r = route_create(rt, radio_num, target, nexthop, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: creating route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
         } else if (r != NULL && r->sequence == sequence && r->metric <= metric) {
             /* Ignore it - it's no better */
+ESP_LOGI(TAG, "%s: ingored route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
             r = NULL;
         } else {
+ESP_LOGI(TAG, "%s: updating route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
             r->sequence = sequence;
             r->metric = metric;
             r->flags = flags;
@@ -346,7 +349,9 @@ route_t* route_find(route_table_t* rt, int address)
 
         if (start != NULL) {
             do {
+ESP_LOGI(TAG, "%s: looking for %d at %d", __func__, address, route->target);
                 if (route->target == address) {
+ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->target);
                     found = route;
                 }
                 route = route->next;

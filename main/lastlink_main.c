@@ -88,7 +88,11 @@ void app_main(void)
 
 #if 1
     /* initialize the lastlink network */
-    linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
+    #if CONFIG_LASTLINK_ADDRESS_OVERRIDE
+        linklayer_init(CONFIG_LASTLINK_ADDRESS_OVERRIDE, get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
+    #else
+        linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
+    #endif
     linklayer_set_debug(true);
 #endif
 
@@ -109,26 +113,18 @@ void app_main(void)
            esp_task_wdt_reset();
 
            os_delay(100);
-           ESP_LOGI(TAG, "%d free packets", available_packets());
        }
 
-  #if 1
-       packet_t* packet = ping_packet_create(1);
+       ESP_LOGI(TAG, "%d free packets", available_packets());
+
+  #if CONFIG_LASTLINK_PING_ADDRESS
+       packet_t* packet = ping_packet_create(CONFIG_LASTLINK_PING_ADDRESS);
        linklayer_print_packet("created", packet);
        if (packet != NULL) {
            ESP_LOGI(TAG, "Sending ping");
            linklayer_send_packet(packet);
        }
-  #elif 1
-       vTaskList(cTaskListBuf);
-       puts(cTaskListBuf);
-    #if 1
-       printf("button interrupts: %d\n", button_interrupts);
-    #endif
-  #else
-       printf("xPortCanYield %d Tasks %u\n", xPortCanYield(), uxTaskGetNumberOfTasks());
   #endif
-    // printf("Tick\n");
     }
 #endif
 }

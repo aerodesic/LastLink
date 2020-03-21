@@ -326,6 +326,8 @@ static packet_t* routeannounce_packet_create(int target, int sequence, int metri
         set_uint_field(p, RANN_FLAGS, FLAGS_LEN, node_flags);
         set_uint_field(p, RANN_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
         set_uint_field(p, RANN_METRIC, METRIC_LEN, metric);
+        set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
     }
 
     return p;
@@ -334,11 +336,12 @@ static packet_t* routeannounce_packet_create(int target, int sequence, int metri
 static void routeannounce_packet_process(packet_t* p)
 {
     if (p != NULL) {
+        linklayer_print_packet("Route Announce", p);
         if (route_table_lock(&route_table)) {
             route_t* route = route_update(&route_table,
                                           p->radio_num,
                                           get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                                          get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
                                           get_uint_field(p, RANN_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                           get_uint_field(p, RANN_METRIC, METRIC_LEN),
                                           get_uint_field(p, RANN_FLAGS, FLAGS_LEN));
@@ -353,12 +356,15 @@ static void routeannounce_packet_process(packet_t* p)
                     /* Update the metric */
                     set_uint_field(p, RANN_METRIC, METRIC_LEN, get_uint_field(p, RANN_METRIC, METRIC_LEN));
                     linklayer_send_packet_update_ttl(p);
-               }
+                }
             }
+
             route_table_unlock(&route_table);
+
         } else {
             /* Unable to get mutex */
         }
+
         release_packet(p);
     }
 }
@@ -391,6 +397,8 @@ static packet_t* routerequest_packet_create(int address)
 
     if (p != NULL) {
         set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
         set_uint_field(p, RREQ_FLAGS, FLAGS_LEN, node_flags);
         set_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
         set_uint_field(p, RREQ_METRIC, METRIC_LEN, 0);
@@ -402,6 +410,8 @@ static packet_t* routerequest_packet_create(int address)
 static void routerequest_packet_process(packet_t* p)
 {
     if (p != NULL) {
+        linklayer_print_packet("Route Request", p);
+
         if (os_acquire_recursive_mutex(linklayer_lock)) {
 
             /* TODO: Need brakes to avoid transmitting too many at once !! (Maybe ok for testing) */
@@ -411,19 +421,23 @@ static void routerequest_packet_process(packet_t* p)
                                  &route_table,
                                  p->radio_num,
                                  get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                                 get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
                                  get_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                  get_uint_field(p, RREQ_METRIC, METRIC_LEN),
                                  get_uint_field(p, RREQ_FLAGS, FLAGS_LEN));
 
             /* If packet is targeted for our node, process it */
             if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
-                linklayer_send_packet(routeannounce_packet_create(
-                                 get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                                 get_int_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
-                                 get_uint_field(p, RREQ_METRIC, METRIC_LEN)));
+                packet_t* ra = routeannounce_packet_create(
+                                          get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
+                                          get_int_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                                          get_uint_field(p, RREQ_METRIC, METRIC_LEN));
 
-          /* Else if it's a broadcast and we haven't seen it before, rebroadcast it to next hop */
+                ra->radio_num = p->radio_num;
+                linklayer_send_packet(ref_packet(ra));
+                release_packet(ra);
+
+            /* Else if it's a broadcast and we haven't seen it before, rebroadcast it to next hop */
             } else if (get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
                 linklayer_send_packet_update_ttl(p);
@@ -531,15 +545,17 @@ packet_t* ping_packet_create(int target)
 static void ping_packet_process(packet_t* p)
 {
     if (p != NULL) {
+linklayer_print_packet("PING RECEIVE", p);
+
         if (os_acquire_recursive_mutex(linklayer_lock)) {
             /* Sanity check - reuse last entry if full */
             if (p->length >= MAX_PACKET_LEN) {
                 p->length = MAX_PACKET_LEN - ADDRESS_LEN;
             }
 
-            set_uint_field(p, p->length, ADDRESS_LEN, node_address);
-
             p->length += ADDRESS_LEN;
+            set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, node_address);
+
 
             /* If for us, turn packet into PING_REPLY */
             if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
@@ -549,9 +565,15 @@ static void ping_packet_process(packet_t* p)
                 set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
                 /* Rewind TTL */
                 set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
-            }
 
-            linklayer_send_packet_update_ttl(ref_packet(p));
+linklayer_print_packet("PING REPLY", p);
+
+                linklayer_send_packet(ref_packet(p));
+            } else {
+                /* Relable nexthop so it forwards it on */
+                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                linklayer_send_packet_update_ttl(ref_packet(p));
+            }
 
             os_release_recursive_mutex(linklayer_lock);
 
@@ -629,9 +651,8 @@ static void pingreply_packet_process(packet_t* p)
                     p->length = MAX_PACKET_LEN - ADDRESS_LEN;
                 }
 
-                set_uint_field(p, p->length, ADDRESS_LEN, node_address);
-
                 p->length += ADDRESS_LEN;
+                set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, node_address);
             }
 
             linklayer_send_packet_update_ttl(ref_packet(p));
@@ -1132,7 +1153,7 @@ void linklayer_send_packet(packet_t* packet)
         
             /* If no route, create a dummy and make a request */
             if (route == NULL) {
-                route = route_update(&route_table, target, packet->radio_num, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
+                route = route_update(&route_table, packet->radio_num, target, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
         
                 /* Queue with it's pending ownership */
                 route_put_pending_packet(route, packet);
@@ -1194,6 +1215,7 @@ void linklayer_send_packet_update_ttl(packet_t* packet)
         set_uint_field(packet, HEADER_TTL, TTL_LEN, ttl);
         linklayer_send_packet(packet);
     } else {
+linklayer_print_packet("TTL EXPIRED", packet);
         release_packet(packet);
     }
 }
@@ -1335,13 +1357,17 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                         os_put_queue(promiscuous_queue, duplicate_packet(packet));
                     }
 
-                    int protocol = get_int_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
+                    int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
 
                     if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
                         if (protocol_table[protocol].process != NULL) {
                             protocol_table[protocol].process(ref_packet(packet));
+                        } else {
+                            ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
                         }
-                    }
+                    } else {
+                        ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
+                   }
                 }
             } else {
                 /* It is not processed */
@@ -1395,11 +1421,11 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
         int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
         int ttl      = get_uint_field(packet, HEADER_TTL, TTL_LEN);
 
-        //ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Len=%d Ref=%d", reason, target, source, nexthop, previous, ttl, protocol, packet->length, packet->ref);
+        //ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Len=%d Ref=%d Radio=%d", reason, target, source, nexthop, previous, ttl, protocol, packet->length, packet->ref, packet->radio_num);
 
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Ref=%d: %s", reason, target, source, nexthop, previous, ttl, protocol, packet->ref, info ? info : "");
+        ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, target, source, nexthop, previous, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
     } else {

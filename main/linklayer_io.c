@@ -32,9 +32,11 @@ static int spi_read_register(radio_t* radio, int reg);
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* bufer, int len);
 
 #define NUM_PER_LINE 16
-static void dump_buffer(uint8_t* buffer, int len)
+static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
 {
     int addr = 0;
+
+    printf("%s: ", ident);
 
     while (len != 0) {
         printf("%04x:", addr);
@@ -98,9 +100,10 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
         .mode = 0,                                  /* Mode is zero */
         .spics_io_num = config->spi_cs,             /* Chip select */
         .queue_size = 1,                            /* No queued transfers */
-        .command_bits = 1,                          /* Command Read/Write */
-        .address_bits = 7,                          /* 7 bit  address */
-        .cs_ena_posttrans = 3,                      /* CS Held a few cycles after transfer */
+        .command_bits = 0,                          /* Command Read/Write */
+        .address_bits = 8,                          /* 7 bit  address */
+        // .flags = SPI_DEVICE_HALFDUPLEX,
+        // .cs_ena_posttrans = 3,                      /* CS Held a few cycles after transfer */
         .pre_cb = config->spi_pre_xfer_callback,    /* Pre-transfer callback if needed */
     };
 
@@ -148,8 +151,7 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
  //ESP_LOGV(TAG, "%s: %02x with %02x", __func__, reg, data);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = 1;                /* Write to register */
-    t.addr = reg;
+    t.addr = reg | 0x80;
     t.tx_data[0] = data;
     t.flags = SPI_TRANS_USE_TXDATA;
     t.length = 8;                    /* 1 byte transfer */
@@ -158,17 +160,27 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
 
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len)
 {
+#ifndef BROKEN_CODE_HERE_SOMEWHERE
     spi_transaction_t t;
 
  //ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
 
     memset(&t, 0, sizeof(t));
-    t.cmd = 1;                      /* Write */
-    t.addr = reg;
+    t.addr = reg | 0x80 ;
     t.length = 8*len;           /* data */
     t.tx_buffer = buffer;
 
+    dump_buffer("Write", buffer, len);
+
     return spi_device_transmit(radio->spi, &t) == ESP_OK;
+#else
+    bool ok = true;
+
+    for (int b = 0; ok && b < len; ++b) {
+        ok = spi_write_register(radio, reg, buffer[b]);
+    }
+    return ok;
+#endif
 }
 
 static int spi_read_register(radio_t* radio, int reg)
@@ -176,7 +188,7 @@ static int spi_read_register(radio_t* radio, int reg)
     spi_transaction_t t;
 
     memset(&t, 0, sizeof(t));
-    t.addr = reg;                      /* Read from register */
+    t.addr = reg & 0x7F;                      /* Read from register */
     t.flags = SPI_TRANS_USE_RXDATA;
     t.length = 8;                    /* 1 byte transfer */
 
@@ -192,18 +204,33 @@ static int spi_read_register(radio_t* radio, int reg)
 
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
+#ifndef BROKEN_CODE_HERE_SOMEWHERE
     spi_transaction_t t;
 
 ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
 
     memset(&t, 0, sizeof(t));
-    t.addr = reg;
+    t.addr = reg & 0x7F;
     t.length = 8*len;           /* data */
     t.rx_buffer = buffer;
 
     bool ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
+#else
+    /* Do it the hard way by looping several read register functions. */
+    bool ok = true;
+
+    for (int b = 0; ok &&  b < len; ++b) {
+        int ch = spi_read_register(radio, reg);
+        if (ch >= 0) {
+            buffer[b] = ch;
+        } else {
+            ok =  false;
+        }
+    }
+#endif
+
     if (ok) {
-        dump_buffer(buffer, len);
+        dump_buffer("Read", buffer, len);
     }
     return ok;
 }

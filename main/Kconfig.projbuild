@@ -246,6 +246,19 @@ menu "LastLink Configuration"
             default "storage"
             help
                 Enter the name of the spiffs partition as used in the parition table.
+
+        config LASTLINK_PING_ADDRESS
+            int "Produce pings periodically to this address (0 disables)"
+            default 0
+            help
+                Select to enable sending PING packets periodically
+
+        config LASTLINK_ADDRESS_OVERRIDE
+            int "Select address to override config (0 defaults to config)"
+            default 0
+            help
+                 Use to override config address for testing.
+
     endmenu
 
 endmenu
