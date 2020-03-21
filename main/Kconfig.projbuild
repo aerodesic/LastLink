@@ -76,7 +76,7 @@ menu "LastLink Configuration"
 
         config LASTLINK_ROUTE_REQUEST_TIMEOUT
             int "Route Request Timeout"
-            default 15000
+            default 5000
             range 5000 30000
             help
                 Timeout for waiting for a RouteAnnounce from a RouteRequest.

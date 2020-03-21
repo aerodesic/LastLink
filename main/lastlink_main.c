@@ -59,7 +59,7 @@ void app_main(void)
     }
 #endif
 
-#if 0
+#if 1
     if (init_spiffs() == ESP_OK) {
 	/* Try to open .config and if not found, format the spiffs */
 	FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
@@ -109,12 +109,14 @@ void app_main(void)
            esp_task_wdt_reset();
 
            os_delay(100);
+           ESP_LOGI(TAG, "%d free packets", available_packets());
        }
 
   #if 1
-       packet_t* packet = beacon_packet_create("PING");
+       packet_t* packet = ping_packet_create(1);
+       linklayer_print_packet("created", packet);
        if (packet != NULL) {
-           ESP_LOGI(TAG, "Sending beacon");
+           ESP_LOGI(TAG, "Sending ping");
            linklayer_send_packet(packet);
        }
   #elif 1

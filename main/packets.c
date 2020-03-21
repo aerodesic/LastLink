@@ -22,7 +22,7 @@ static os_mutex_t        packet_mutex;
 static int               active_packets;
 static int               dropped_allocations;
 
-static bool validate_field(packet_t *p, size_t from, size_t length);
+static bool validate_field(const packet_t *p, size_t from, size_t length);
 
 #define TAG     "packets"
 
@@ -127,9 +127,13 @@ int deinit_packets(void)
 /*
  * Validate the from and length fields of packet.
  */
-static bool validate_field(packet_t *p, size_t from, size_t length)
+static bool validate_field(const packet_t *p, size_t from, size_t length)
 {
-    return p != NULL && from < p->length && from + length <= p->length;
+    bool rc = p != NULL && from < p->length && from + length <= p->length;
+
+// ESP_LOGI(TAG, "%s: length %u from %u for %u bytes: %s", __func__, p->length, from, length, rc ? "OK": "FAIL");
+
+    return rc;
 }
 
 /*
@@ -227,7 +231,7 @@ int available_packets(void)
 /*
  * Get an unsigned integer value from a field.  Bytes are packed to an integer in big endian format.
  */
-int get_uint_field(packet_t *p, size_t from, size_t length)
+int get_uint_field(const packet_t *p, size_t from, size_t length)
 {
     unsigned int value = 0;
     if (validate_field(p, from, length)) {
@@ -244,7 +248,7 @@ int get_uint_field(packet_t *p, size_t from, size_t length)
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.
  */
-int get_int_field(packet_t *p, size_t from, size_t length)
+int get_int_field(const packet_t *p, size_t from, size_t length)
 {
     int value = get_uint_field(p, from, length);
 
@@ -277,7 +281,7 @@ bool set_int_field(packet_t *p, size_t from, size_t length, int value)
  * Get bytes from a field.  If length == 0, field is to end of buffer.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.
  */
-const uint8_t* get_bytes_field(packet_t *p, size_t from, size_t length)
+const uint8_t* get_bytes_field(const packet_t *p, size_t from, size_t length)
 {
     uint8_t* value = NULL;
 
@@ -297,7 +301,7 @@ const uint8_t* get_bytes_field(packet_t *p, size_t from, size_t length)
  * Get NUL terminated string from a field.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.
  */
-const char* get_str_field(packet_t *p, size_t from, size_t length)
+const char* get_str_field(const packet_t *p, size_t from, size_t length)
 {
     char* value = NULL;
 

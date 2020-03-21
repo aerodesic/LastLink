@@ -22,7 +22,7 @@ bool route_table_lock(route_table_t* rt)
     bool ok = false;
 
     if (rt != NULL) {
-        ok = os_acquire_mutex(rt->lock);
+        ok = os_acquire_recursive_mutex(rt->lock);
     }
     return ok;
 }
@@ -32,7 +32,7 @@ bool route_table_unlock(route_table_t *rt)
     bool ok = false;
 
     if (rt != NULL) {
-        ok = os_release_mutex(rt->lock); 
+        ok = os_release_recursive_mutex(rt->lock); 
     }
     return ok;
 }
@@ -85,6 +85,7 @@ route_t* route_create(route_table_t* rt, int target, int radio_num, int nexthop,
 	            r->metric = metric;
 	            r->nexthop = nexthop;
 	            r->flags = flags;
+                r->table = rt;
 
 	            route_update_lifetime(r, ROUTE_LIFETIME);
 
@@ -124,6 +125,9 @@ route_t* route_create(route_table_t* rt, int target, int radio_num, int nexthop,
     return r;
 }
 
+/*
+ * Remove route from table, delete it's contents and free it.
+ */
 bool route_delete(route_t* r)
 {
     bool ok = false;
@@ -144,6 +148,27 @@ bool route_delete(route_t* r)
 	        } else if (rt->routes == r) {
 	            rt->routes = r->next;
     	    }
+
+            ESP_LOGI(TAG, "%s: cancelling pending route request", __func__);
+	        /* Cancel timer */
+            if (r->pending_timer) {
+                os_stop_timer(r->pending_timer);
+                os_delete_timer(r->pending_timer);
+                r->pending_timer = NULL;
+            }
+
+            if (r->pending_request) {
+                linklayer_print_packet("PENDING REQUEST", r->pending_request);
+                release_packet(r->pending_request);
+                r->pending_request = NULL;
+            }
+
+            /* Discard the packets waiting */
+	        packet_t* p;
+	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+                linklayer_print_packet("PENDING PACKETS", p);
+                release_packet(p);
+            }
 
     	    free((void*) r);
 
@@ -181,7 +206,7 @@ route_t* route_update(route_table_t* rt, int target, int radio_num, int nexthop,
         r = route_find(rt, target);
         if (r == NULL) {
             /* No route, so create a new one and return it */
-            r = route_create(rt, target, radio_num, sequence, metric, nexthop, flags);
+            r = route_create(rt, target, radio_num, nexthop, sequence, metric, flags);
         } else if (r != NULL && r->sequence == sequence && r->metric <= metric) {
             /* Ignore it - it's no better */
             r = NULL;
@@ -218,29 +243,29 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
     return ok;
 }
 
+/*
+ * Called by timer
+ */
 void route_request_retry(os_timer_t timer)
 {
+    ESP_LOGI(TAG, "%s: timer fired", __func__);
+
     route_t* r = (route_t*) os_get_timer_data(timer);
 
     if (r != NULL) {
         route_table_t* rt = r->table;
 
-        route_table_lock(rt);
+        if (route_table_lock(rt)) {
 
-	    if (r->pending_request != NULL && --(r->pending_retries) > 0) {
-            linklayer_send_packet(ref_packet(r->pending_request));
-	    } else {
-            r = NULL;
-	    }
+	        if (r->pending_request != NULL && --(r->pending_retries) > 0) {
+                linklayer_send_packet(ref_packet(r->pending_request));
+	        } else {
+                /* No joy, delete the route; will rebuild if necessary */
+                route_delete(r);
+	        }
 
-	    route_table_unlock(rt);
-    }
-
-    if (r == NULL) {
-	    /* Cancel timer */
-        os_stop_timer(r->pending_timer);
-        os_delete_timer(r->pending_timer);
-        r->pending_timer = NULL;
+	        route_table_unlock(rt);
+        }
     }
 }
 
@@ -318,12 +343,14 @@ route_t* route_find(route_table_t* rt, int address)
         route_t* start = rt->routes;
         route_t* route = start; 
 
-        do {
-            if (route->target == address) {
-                found = route;
-            }
-            route = route->next;
-        } while (!found && route != start);
+        if (start != NULL) {
+            do {
+                if (route->target == address) {
+                    found = route;
+                }
+                route = route->next;
+            } while (!found && route != start);
+        }
 
         route_table_unlock(rt);
     }
