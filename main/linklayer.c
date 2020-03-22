@@ -40,27 +40,27 @@
 
 #define TAG  "linklayer"
 
-static void beacon_packet_process(packet_t* p);
+static bool beacon_packet_process(packet_t* p);
 static const char* beacon_packet_format(const packet_t* p);
 
 static packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
-static void routeannounce_packet_process(packet_t* p);
+static bool routeannounce_packet_process(packet_t* p);
 
 static const char* routeannounce_packet_format(const packet_t* p);
 static packet_t* routerequest_packet_create(int address);
 
-static void routerequest_packet_process(packet_t* p);
+static bool routerequest_packet_process(packet_t* p);
 static const char* routerequest_packet_format(const packet_t* p);
 
 static packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
-static void routeerror_packet_process(packet_t* p);
+static bool routeerror_packet_process(packet_t* p);
 
 static const char* ping_packet_format(const packet_t* p);
 static const char* pingreply_packet_format(const packet_t* p);
-static void ping_packet_process(packet_t* p);
-static void pingreply_packet_process(packet_t* p);
+static bool ping_packet_process(packet_t* p);
+static bool pingreply_packet_process(packet_t* p);
 
-static void data_packet_process(packet_t* p);
+static bool data_packet_process(packet_t* p);
 static char tohex(int v);
 static const char* escape_raw_data(const uint8_t* data, size_t length);
 static const char* default_packet_format(const packet_t* p);
@@ -95,7 +95,7 @@ static int                        packet_ignored;      /* Packets not processed 
 static radio_t**                  radio_table;
 
 typedef struct protocol_entry {
-    void        (*process)(packet_t*);                 /* Process function */
+    bool        (*process)(packet_t*);                 /* Process function; return true if processed */
     const char* (*format)(const  packet_t*);           /* Format for printing */
 } protocol_entry_t;
 
@@ -280,8 +280,10 @@ packet_t* beacon_packet_create(const char* name)
     return p;
 }
 
-static void beacon_packet_process(packet_t* p)
+static bool beacon_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
         const char* name = get_str_field(p, BEACON_NAME, BEACON_NAME_LEN);
 
@@ -295,8 +297,10 @@ static void beacon_packet_process(packet_t* p)
 
         free((void*) name);
 
-        release_packet(p);
+        processed = true;
     }
+
+    return processed;
 }
 
 static const char* beacon_packet_format(const packet_t* p)
@@ -333,8 +337,10 @@ static packet_t* routeannounce_packet_create(int dest, int sequence, int metric)
     return p;
 }
 
-static void routeannounce_packet_process(packet_t* p)
+static bool routeannounce_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
         linklayer_print_packet("Route Announce", p);
         if (route_table_lock(&route_table)) {
@@ -349,14 +355,19 @@ static void routeannounce_packet_process(packet_t* p)
             if (route != NULL) {
                 /* If this packet was for us, then release any pending route packets to queue now */
                 if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
+                    /* We now have a route, so release all packets waiting to go on this route. */
                     route_release_packets(route);
+
                 } else {
+
                     /* Not for us, so clear routeto so a re-route will be done */
                     set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                     /* Update the metric */
                     set_uint_field(p, RANN_METRIC, METRIC_LEN, get_uint_field(p, RANN_METRIC, METRIC_LEN));
                     linklayer_send_packet_update_ttl(p);
                 }
+
+                processed = true;
             }
 
             route_table_unlock(&route_table);
@@ -364,9 +375,9 @@ static void routeannounce_packet_process(packet_t* p)
         } else {
             /* Unable to get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 static const char* routeannounce_packet_format(const packet_t* p)
@@ -407,8 +418,10 @@ static packet_t* routerequest_packet_create(int address)
     return p;
 }
 
-static void routerequest_packet_process(packet_t* p)
+static bool routerequest_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
         linklayer_print_packet("Route Request", p);
 
@@ -437,19 +450,21 @@ static void routerequest_packet_process(packet_t* p)
                 linklayer_send_packet(ref_packet(ra));
                 release_packet(ra);
 
+                processed = true;
             /* Else if it's a broadcast and we haven't seen it before, rebroadcast it to next hop */
             } else if (get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
                 linklayer_send_packet_update_ttl(p);
+                processed = true;
             }
             os_release_recursive_mutex(linklayer_lock);
 
         } else {
             /* Cannot get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 static const char* routerequest_packet_format(const packet_t* p)
@@ -481,8 +496,10 @@ static packet_t* routeerror_packet_create(int dest, int address, int sequence, c
     return p;
 }
 
-static void routeerror_packet_process(packet_t* p)
+static bool routeerror_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
 
         if (os_acquire_recursive_mutex(linklayer_lock)) {
@@ -499,14 +516,16 @@ static void routeerror_packet_process(packet_t* p)
 
             free((void*) reason);
 
+            processed = true;
+
             os_release_recursive_mutex(linklayer_lock);
 
         } else {
             /* Cannot get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 static const char* routeerror_packet_format(const packet_t* p)
@@ -542,8 +561,10 @@ packet_t* ping_packet_create(int dest)
     return p;
 }
 
-static void ping_packet_process(packet_t* p)
+static bool ping_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
 linklayer_print_packet("PING RECEIVE", p);
 
@@ -553,26 +574,34 @@ linklayer_print_packet("PING RECEIVE", p);
                 p->length = MAX_PACKET_LEN - ADDRESS_LEN;
             }
 
+            /* Add our address to the chain of addresses */
             p->length += ADDRESS_LEN;
             set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, node_address);
 
-
             /* If for us, turn packet into PING_REPLY */
             if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
+
+                /* Alter the protocol */
                 set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, PINGREPLY_PROTOCOL);
-                /* And reroute back to sender */
+
+                /* Turn the packet around */
                 set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
                 set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, node_address);
+
                 /* Rewind TTL */
                 set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
 
-linklayer_print_packet("PING REPLY", p);
+linklayer_print_packet("SEND PING REPLY", p);
 
                 linklayer_send_packet(ref_packet(p));
+
+                processed = true;
+#if 0
             } else {
-                /* Relable routeto so it forwards it on */
+                /* Relable routeto so forward it on */
                 set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                 linklayer_send_packet_update_ttl(ref_packet(p));
+#endif
             }
 
             os_release_recursive_mutex(linklayer_lock);
@@ -580,9 +609,9 @@ linklayer_print_packet("PING REPLY", p);
         } else {
             /* Cannot get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 static const char* ping_format_routes(const packet_t* p)
@@ -636,8 +665,10 @@ static const char* pingreply_packet_format(const packet_t* p)
     return info;
 }
 
-static void pingreply_packet_process(packet_t* p)
+static bool pingreply_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
         if (os_acquire_recursive_mutex(linklayer_lock)) {
 
@@ -657,14 +688,16 @@ static void pingreply_packet_process(packet_t* p)
 
             linklayer_send_packet_update_ttl(ref_packet(p));
 
+            processed = true;
+
             os_release_recursive_mutex(linklayer_lock);
 
         } else {
             /* Cannot get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 /*
@@ -692,24 +725,29 @@ packet_t* data_packet_create(int dest, int protocol, uint8_t* data, int length)
     return p;
 }
 
-static void data_packet_process(packet_t* p)
+static bool data_packet_process(packet_t* p)
 {
+    bool processed = false;
+
     if (p != NULL) {
         if (os_acquire_recursive_mutex(linklayer_lock)) {
             if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                 put_received_packet(ref_packet(p));
+                processed = true;
+#if 0
             } else {
                 set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                 linklayer_send_packet_update_ttl(ref_packet(p));
+#endif
             }
 
             os_release_recursive_mutex(linklayer_lock);
         } else {
             /* Cannot get mutex */
         }
-
-        release_packet(p);
     }
+
+    return processed;
 }
 
 static char tohex(int v)
@@ -821,7 +859,7 @@ bool linklayer_init(int address, int flags, int announce)
         receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
 
         promiscuous_queue = NULL;
-        sequence_number = 0;
+        sequence_number = UNDEFINED_SEQUENCE_NUMBER;
         debug_flag = false;
         announce_interval = announce;
 
@@ -1107,7 +1145,10 @@ int linklayer_allocate_sequence(void)
     int sequence = 0;
 
     if (os_acquire_recursive_mutex(linklayer_lock)) {
-        sequence = ++sequence_number;
+        /* Create new sequence number but skip the undefined one */
+        do { 
+            sequence = ++sequence_number;
+        } while (sequence == UNDEFINED_SEQUENCE_NUMBER);
         os_release_recursive_mutex(linklayer_lock);
     }
 
@@ -1367,15 +1408,27 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                  packet->radio_num,
                                  get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
                                  get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
-                                 NON_EXISTANT_SEQUENCE_NUMBER,
-                                 IMPOSSIBLY_HIGH_METRIC,
+                                 UNDEFINED_SEQUENCE_NUMBER,
+                                 MAX_METRIC,
                                  NO_HOST_FLAGS);
 #endif
+
                     int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
 
                     if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
                         if (protocol_table[protocol].process != NULL) {
-                            protocol_table[protocol].process(ref_packet(packet));
+                            bool processed = protocol_table[protocol].process(ref_packet(packet));
+                            if (! processed) {
+                                /* Look for a route for forward */
+                                route_t* route = route_find(&route_table, get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN));
+                                if (route != NULL) {
+                                    /* Reroute packet and resend */
+                                    set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
+                                    linklayer_send_packet_update_ttl(ref_packet(packet));
+                                } else {
+                                    /* No route, so  packet is dropped on the floor */
+                                }
+                            }
                         } else {
                             ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
                         }
@@ -1447,12 +1500,16 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
     } 
 }
 
-static const  char* linklayer_packet_format(const packet_t* packet, int protocol)
+static const char* linklayer_packet_format(const packet_t* packet, int protocol)
 {
+    const char* text;
+
     if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table) && protocol_table[protocol].format != NULL) {
-        return protocol_table[protocol].format(packet);
+        text = protocol_table[protocol].format(packet);
     } else {
-        return default_packet_format(packet);
+        text = default_packet_format(packet);
     }
+
+    return text;
 }
 

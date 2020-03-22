@@ -313,19 +313,25 @@ void route_release_packets(route_t* r)
 	            r->pending_retries = 0;
 	        }
 
-	        /* Move all packets to the send queue */
-	        packet_t* p;
-	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+            if (r->pending_packets != NULL) {
+	            /* Move all packets to the send queue */
+	            packet_t* p;
+	            while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
 
-                if (r->radio_num == UNKNOWN_RADIO) {
-                    ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d sequence %d", r->dest, r->routeto, r->sequence);
+                    if (r->radio_num == UNKNOWN_RADIO) {
+                        ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d sequence %d", r->dest, r->routeto, r->sequence);
+                    }
+
+                    /* Assign the delivery route */
+                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, r->routeto);
+
+                    /* Direct it to specific radio */
+                    p->radio_num = r->radio_num;
+	                linklayer_send_packet(p);
                 }
 
-                /* Assign the delivery route */
-                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, r->routeto);
-                /* Direct it to specific radio */
-                p->radio_num = r->radio_num;
-	            linklayer_send_packet(p);
+                os_delete_queue(r->pending_packets);
+                r->pending_packets = NULL;
 	        }
         }
         route_table_unlock(rt);
