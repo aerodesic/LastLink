@@ -123,6 +123,14 @@ menu "LastLink Configuration"
             help
                 Select one of the channel table files
 
+        config LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
+            bool "Create opportunistic routes"
+            default false
+            help
+                When a packet is received, capture a provisional route
+                to the SOURCE via the SENDER, marking with invalid
+                SEQUENCE and impossibly high METRIC.
+
     endmenu
 
     menu "Packet Configuration"

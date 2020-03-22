@@ -8,7 +8,7 @@
  *      ls_socket_t* socket = ls_socket(LS_DATAGRAM);
  *      // Bind port
  *      ls_bind(socket, 1234)
- *      ls_connect(socket, <target address>, <target port>)
+ *      ls_connect(socket, <destination address>, <destination port>)
  *      int len = ls_read(socket, buf, buflen);
  *          -or-
  *      int len = ls_write(socket, buf, buflen);
@@ -21,7 +21,7 @@
  *      ls_socket_t* socket = ls_socket(LS_STREAM);
  *      // Bind port
  *      ls_bind(socket, 1234)
- *      int rc = ls_connect(socket, <target address>, <target port>)
+ *      int rc = ls_connect(socket, <destination address>, <destination port>)
  *      if (rc == LS_NO_ERROR) {
  *          int len = ls_read(socket, buf, buflen);
  *              -or-

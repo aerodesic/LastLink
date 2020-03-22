@@ -43,7 +43,7 @@
 static void beacon_packet_process(packet_t* p);
 static const char* beacon_packet_format(const packet_t* p);
 
-static packet_t* routeannounce_packet_create(int target, int sequence, int metric);
+static packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
 static void routeannounce_packet_process(packet_t* p);
 
 static const char* routeannounce_packet_format(const packet_t* p);
@@ -52,7 +52,7 @@ static packet_t* routerequest_packet_create(int address);
 static void routerequest_packet_process(packet_t* p);
 static const char* routerequest_packet_format(const packet_t* p);
 
-static packet_t* routeerror_packet_create(int target, int address, int sequence, const char* reason);
+static packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
 static void routeerror_packet_process(packet_t* p);
 
 static const char* ping_packet_format(const packet_t* p);
@@ -239,20 +239,20 @@ static const radio_config_t radio_config[] = {
  * Create a generic packet
  *
  * Entry:
- *      target          Target address
+ *      dest          Target address
  *      protocol        Protocol number
  *      length          Payload length
  */
-packet_t* create_generic_packet(int target, int protocol, int length)
+packet_t* create_generic_packet(int dest, int protocol, int length)
 {
     packet_t* p = allocate_packet();
     if (p != NULL) {
          /* Set to header length plus payload required */
          p->length = HEADER_LEN + length;
-         set_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN, target);
-         set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-         set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-         set_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+         set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
+         set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+         set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+         set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
          set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, protocol);
          set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
     }
@@ -271,7 +271,7 @@ packet_t* beacon_packet_create(const char* name)
 
     packet_t* p = create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length);
     if (p != NULL) {
-        set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_int_field(p, HEADER_TTL, TTL_LEN, 1);
         int moved = set_str_field(p, BEACON_NAME, length, name);
         /* Update packet length */
@@ -285,11 +285,11 @@ static void beacon_packet_process(packet_t* p)
     if (p != NULL) {
         const char* name = get_str_field(p, BEACON_NAME, BEACON_NAME_LEN);
 
-        ESP_LOGD(TAG, "Beacon: target %d source %d nexthop %d previous %d ttl %d name '%s'",
-                 get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
+        ESP_LOGD(TAG, "Beacon: dest %d origin %d routeto %d sender %d ttl %d name '%s'",
+                 get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
                  get_int_field(p, HEADER_TTL, TTL_LEN),
                  name);
 
@@ -319,15 +319,15 @@ static const char* beacon_packet_format(const packet_t* p)
  * When sent as broadcast, it helps establish routes (and gateway status)
  * and is rebroadcast so adjacent nodes will see it.
  */
-static packet_t* routeannounce_packet_create(int target, int sequence, int metric)
+static packet_t* routeannounce_packet_create(int dest, int sequence, int metric)
 {
-    packet_t* p = create_generic_packet(target, RANN_PROTOCOL, RANN_LEN);
+    packet_t* p = create_generic_packet(dest, RANN_PROTOCOL, RANN_LEN);
     if (p != NULL) {
         set_uint_field(p, RANN_FLAGS, FLAGS_LEN, node_flags);
         set_uint_field(p, RANN_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
         set_uint_field(p, RANN_METRIC, METRIC_LEN, metric);
-        set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
-        set_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, node_address);
     }
 
     return p;
@@ -340,19 +340,19 @@ static void routeannounce_packet_process(packet_t* p)
         if (route_table_lock(&route_table)) {
             route_t* route = route_update(&route_table,
                                           p->radio_num,
-                                          get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                                          get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
                                           get_uint_field(p, RANN_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                           get_uint_field(p, RANN_METRIC, METRIC_LEN),
                                           get_uint_field(p, RANN_FLAGS, FLAGS_LEN));
 
             if (route != NULL) {
                 /* If this packet was for us, then release any pending route packets to queue now */
-                if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+                if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                     route_release_packets(route);
                 } else {
-                    /* Not for us, so clear nexthop so a re-route will be done */
-                    set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                    /* Not for us, so clear routeto so a re-route will be done */
+                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                     /* Update the metric */
                     set_uint_field(p, RANN_METRIC, METRIC_LEN, get_uint_field(p, RANN_METRIC, METRIC_LEN));
                     linklayer_send_packet_update_ttl(p);
@@ -383,7 +383,7 @@ static const char* routeannounce_packet_format(const packet_t* p)
 }
 
 /*
- * A route request is sent by a node when it needs to know a route to a specific target
+ * A route request is sent by a node when it needs to know a route to a specific dest
  * node.  This packet is always braodcast rather than single address.
  *
  * This packet will be rebroadcast until it reaches all nodes.  This will
@@ -396,9 +396,9 @@ static packet_t* routerequest_packet_create(int address)
     packet_t* p = create_generic_packet(address, RREQ_PROTOCOL, RREQ_LEN);
 
     if (p != NULL) {
-        set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
-        set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
-        set_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, node_address);
         set_uint_field(p, RREQ_FLAGS, FLAGS_LEN, node_flags);
         set_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
         set_uint_field(p, RREQ_METRIC, METRIC_LEN, 0);
@@ -420,16 +420,16 @@ static void routerequest_packet_process(packet_t* p)
             route_t* route = route_update(
                                  &route_table,
                                  p->radio_num,
-                                 get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                                 get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
                                  get_uint_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                  get_uint_field(p, RREQ_METRIC, METRIC_LEN),
                                  get_uint_field(p, RREQ_FLAGS, FLAGS_LEN));
 
-            /* If packet is targeted for our node, process it */
-            if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+            /* If packet is dest for our node, process it */
+            if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                 packet_t* ra = routeannounce_packet_create(
-                                          get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
                                           get_int_field(p, RREQ_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                           get_uint_field(p, RREQ_METRIC, METRIC_LEN));
 
@@ -438,7 +438,7 @@ static void routerequest_packet_process(packet_t* p)
                 release_packet(ra);
 
             /* Else if it's a broadcast and we haven't seen it before, rebroadcast it to next hop */
-            } else if (get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
+            } else if (get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
                 set_uint_field(p, RREQ_METRIC, METRIC_LEN, get_uint_field(p, RREQ_METRIC, METRIC_LEN));
                 linklayer_send_packet_update_ttl(p);
             }
@@ -466,13 +466,13 @@ static const char* routerequest_packet_format(const packet_t* p)
 }
 
 /*
- * A RouteError is returned to the source for any packet that cannot be delivered.
+ * A RouteError is returned to the origin for any packet that cannot be delivered.
  */
-static packet_t* routeerror_packet_create(int target, int address, int sequence, const char* reason)
+static packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason)
 {
-    packet_t* p = create_generic_packet(target, RERR_PROTOCOL, RERR_LEN);
+    packet_t* p = create_generic_packet(dest, RERR_PROTOCOL, RERR_LEN);
     if (p != NULL) {
-        set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_uint_field(p, RERR_ADDRESS, ADDRESS_LEN, address);
         set_uint_field(p, RERR_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
         set_str_field(p, RERR_REASON, REASON_LEN, reason);
@@ -488,11 +488,11 @@ static void routeerror_packet_process(packet_t* p)
         if (os_acquire_recursive_mutex(linklayer_lock)) {
             const char* reason = get_str_field(p, RERR_REASON, REASON_LEN);
 
-            ESP_LOGD(TAG, "RouteError: target %d source %d nexthop %d previous %d ttl %d address %d sequence %d reason '%s'",
-                     get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN),
-                     get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN),
-                     get_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN),
-                     get_uint_field(p, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN),
+            ESP_LOGD(TAG, "RouteError: dest %d origin %d routeto %d sender %d ttl %d address %d sequence %d reason '%s'",
+                     get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
                      get_int_field(p, HEADER_TTL, TTL_LEN),
                      get_uint_field(p, RERR_ADDRESS, ADDRESS_LEN),
                      get_uint_field(p, RERR_SEQUENCE, SEQUENCE_NUMBER_LEN), reason);
@@ -525,11 +525,11 @@ static const char* routeerror_packet_format(const packet_t* p)
 /*
  * Ping packet create
  */
-packet_t* ping_packet_create(int target)
+packet_t* ping_packet_create(int dest)
 {
     packet_t* p;
 
-    p = create_generic_packet(target, PING_PROTOCOL, PING_LEN);
+    p = create_generic_packet(dest, PING_PROTOCOL, PING_LEN);
 
     if (p != NULL) {
         /* Generate sequence number */
@@ -558,11 +558,11 @@ linklayer_print_packet("PING RECEIVE", p);
 
 
             /* If for us, turn packet into PING_REPLY */
-            if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+            if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                 set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, PINGREPLY_PROTOCOL);
                 /* And reroute back to sender */
-                set_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN, get_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN));
-                set_uint_field(p, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
+                set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
+                set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, node_address);
                 /* Rewind TTL */
                 set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
 
@@ -570,8 +570,8 @@ linklayer_print_packet("PING REPLY", p);
 
                 linklayer_send_packet(ref_packet(p));
             } else {
-                /* Relable nexthop so it forwards it on */
-                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                /* Relable routeto so it forwards it on */
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                 linklayer_send_packet_update_ttl(ref_packet(p));
             }
 
@@ -642,7 +642,7 @@ static void pingreply_packet_process(packet_t* p)
         if (os_acquire_recursive_mutex(linklayer_lock)) {
 
             /* If reply is for us, we do not add our address - but deliver it */
-            if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+            if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                 /* Deliver packet to process queue */
                 put_received_packet(ref_packet(p));
             } else {
@@ -671,12 +671,12 @@ static void pingreply_packet_process(packet_t* p)
  * A Data packet is used to convey any data between nodes.  This packet
  * will be overloaded for any purpose that is needed.
  */
-packet_t* data_packet_create(int target, int protocol, uint8_t* data, int length)
+packet_t* data_packet_create(int dest, int protocol, uint8_t* data, int length)
 {
     packet_t* p;
 
     if (DATA_PAYLOAD + length <= DATA_LEN) {
-        p = create_generic_packet(target, protocol, length);
+        p = create_generic_packet(dest, protocol, length);
 
         if (p != NULL) {
             /* Move the data and set the final packet length */
@@ -696,10 +696,10 @@ static void data_packet_process(packet_t* p)
 {
     if (p != NULL) {
         if (os_acquire_recursive_mutex(linklayer_lock)) {
-            if (get_uint_field(p, HEADER_TARGET_ADDRESS, ADDRESS_LEN) == node_address) {
+            if (get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == node_address) {
                 put_received_packet(ref_packet(p));
             } else {
-                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                 linklayer_send_packet_update_ttl(ref_packet(p));
             }
 
@@ -792,7 +792,7 @@ bool linklayer_init(int address, int flags, int announce)
 {
     bool ok = false;
 
-    ESP_LOGI(TAG, "%s: adddress %d flags 0x%02x announce %d", __func__, address, flags, announce);
+    ESP_LOGI(TAG, "%s: address %d flags 0x%02x announce %d", __func__, address, flags, announce);
 
     linklayer_lock = os_create_recursive_mutex();
     node_address = address;
@@ -1123,37 +1123,37 @@ void linklayer_send_packet(packet_t* packet)
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
     } else {
         /*
-         * A packet with a source and destination is ready to transmit.
+         * A packet with a origin and destination is ready to transmit.
          * Label the from address and if no to address, attempt to route
          */
 
         /* Indicate coming from us */
-        set_uint_field(packet, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN, node_address);
+        set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, node_address);
     
-        /* If source is NULL address, set it to us */
-        if (get_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
-            set_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN, node_address);
+        /* If origin is NULL address, set it to us */
+        if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
+            set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, node_address);
         }
     
         /*
-         * If the nexthop is NULL, then we compute next hop based on route table.
+         * If the routeto is NULL, then we compute next hop based on route table.
          * If no route table, create pending NULL route and cache packet for later retransmission.
          */
-        unsigned int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
+        unsigned int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
         
         radio_t* radio = NULL;  /* Gets the target radio device address */
     
-        if (nexthop == NULL_ADDRESS) {
+        if (routeto == NULL_ADDRESS) {
         
-            unsigned int target = get_uint_field(packet, HEADER_TARGET_ADDRESS, ADDRESS_LEN);
+            unsigned int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
         
             route_table_lock(&route_table);
         
-            route_t* route = route_find(&route_table, target);
+            route_t* route = route_find(&route_table, dest);
         
             /* If no route, create a dummy and make a request */
             if (route == NULL) {
-                route = route_update(&route_table, packet->radio_num, target, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
+                route = route_update(&route_table, packet->radio_num, dest, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
         
                 /* Queue with it's pending ownership */
                 route_put_pending_packet(route, packet);
@@ -1163,18 +1163,18 @@ void linklayer_send_packet(packet_t* packet)
                 }
         
                 /* Create a route request to be sent instead */
-                packet = routerequest_packet_create(target);
+                packet = routerequest_packet_create(dest);
                 route_set_pending_request(route, packet, ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
         
-            } else if (route->nexthop == NULL_ADDRESS) {
+            } else if (route->routeto == NULL_ADDRESS) {
                 /* Still have pending route, add packet to queue */
                 route_put_pending_packet(route, packet);
                 /* And drop it */
                 packet = NULL;
 
             } else {
-                /* We have a route so select nexthop and radio */
-                set_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, route->nexthop);
+                /* We have a route so select routeto and radio */
+                set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
                 if (route->radio_num != UNKNOWN_RADIO) {
         ESP_LOGI(TAG, "%s: routing to radio %d", __func__, route->radio_num);
                     radio = radio_table[route->radio_num];
@@ -1342,9 +1342,9 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 
         if (packet->crc_ok) {
 
-            int nexthop = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
+            int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
 
-            if (nexthop == BROADCAST_ADDRESS || nexthop == node_address) {
+            if (routeto == BROADCAST_ADDRESS || routeto == node_address) {
                 if (packet->crc_ok) {
                     ++packet_processed;
 
@@ -1357,6 +1357,20 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                         os_put_queue(promiscuous_queue, duplicate_packet(packet));
                     }
 
+#ifdef CONFIG_LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
+                    /* We have received a packet from someone.  We can add a provisional
+                     * route to the ORIGIN via the SENDER and give it a high metric
+                     * and unused sequence number.  (note: SEQ 0 is never used for real
+                     * messages.)
+                     */
+                    route_update(&route_table,
+                                 packet->radio_num,
+                                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
+                                 NON_EXISTANT_SEQUENCE_NUMBER,
+                                 IMPOSSIBLY_HIGH_METRIC,
+                                 NO_HOST_FLAGS);
+#endif
                     int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
 
                     if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
@@ -1414,18 +1428,18 @@ ESP_LOGI(TAG, "%s: returning next packet %p", __func__, packet);
 void linklayer_print_packet(const char* reason, packet_t* packet)
 {
     if (packet != NULL) {
-        int target   = get_uint_field(packet, HEADER_TARGET_ADDRESS, ADDRESS_LEN);
-        int source   = get_uint_field(packet, HEADER_SOURCE_ADDRESS, ADDRESS_LEN);
-        int nexthop  = get_uint_field(packet, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN);
-        int previous = get_uint_field(packet, HEADER_PREVIOUS_ADDRESS, ADDRESS_LEN);
+        int dest   = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+        int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+        int routeto  = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+        int sender = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
         int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
         int ttl      = get_uint_field(packet, HEADER_TTL, TTL_LEN);
 
-        //ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Len=%d Ref=%d Radio=%d", reason, target, source, nexthop, previous, ttl, protocol, packet->length, packet->ref, packet->radio_num);
+        //ESP_LOGI(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Len=%d Ref=%d Radio=%d", reason, dest, origin, routeto, sender, ttl, protocol, packet->length, packet->ref, packet->radio_num);
 
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGI(TAG, "%s: T=%04x S=%04x N=%04x P=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, target, source, nexthop, previous, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
+        ESP_LOGI(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, dest, origin, routeto, sender, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
     } else {

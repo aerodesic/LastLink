@@ -71,7 +71,7 @@ bool route_table_deinit(route_table_t* rt)
     return rt->lock == NULL;
 }
     
-route_t* route_create(route_table_t* rt, int radio_num, int target, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -80,10 +80,10 @@ route_t* route_create(route_table_t* rt, int radio_num, int target, int nexthop,
 
             r = (route_t*) malloc(sizeof(route_t));
             if (r != NULL) {
-                r->target = target;
+                r->dest = dest;
 	            r->sequence = sequence;
 	            r->metric = metric;
-	            r->nexthop = nexthop;
+	            r->routeto = routeto;
 	            r->flags = flags;
                 r->table = rt;
 
@@ -93,7 +93,7 @@ route_t* route_create(route_table_t* rt, int radio_num, int target, int nexthop,
 	            r->pending_request = NULL;
 	            r->pending_timer = NULL;
 	            r->pending_retries = 0;
-	            r->pending_packets = os_create_queue(ROUTE_MAX_QUEUED_PACKETS, sizeof(packet_t*));
+	            r->pending_packets = NULL;  /* No queue yet.  created when needed */
 
 	            /* Add to end of route list */
 	            if (route_table_lock(rt)) {
@@ -197,29 +197,29 @@ void route_update_lifetime(route_t* r, int lifetime)
  * If a new route is created or the sequence number is different or the metric improves,
  * return the route_t* otherwise return NULL
  */
-route_t* route_update(route_table_t* rt, int radio_num, int target, int nexthop, int sequence, int metric, uint8_t flags)
+route_t* route_update(route_table_t* rt, int radio_num, int dest, int routeto, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
     if (route_table_lock(rt->lock)) {
 
-        r = route_find(rt, target);
+        r = route_find(rt, dest);
         if (r == NULL) {
             /* No route, so create a new one and return it */
-            r = route_create(rt, radio_num, target, nexthop, sequence, metric, flags);
-ESP_LOGI(TAG, "%s: creating route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
+            r = route_create(rt, radio_num, dest, routeto, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: creating route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
         } else if (r != NULL && r->sequence == sequence && r->metric <= metric) {
             /* Ignore it - it's no better */
-ESP_LOGI(TAG, "%s: ingored route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: ingored route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
             r = NULL;
         } else {
-ESP_LOGI(TAG, "%s: updating route T=%04x Radio %d N=%04x Sequence %d Metric %d Flags %02x", __func__, target, radio_num, nexthop, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: updating route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
             r->sequence = sequence;
             r->metric = metric;
             r->flags = flags;
-            r->nexthop = nexthop;
+            r->routeto = routeto;
             r->radio_num = radio_num;
-            r->target = target;
+            r->dest = dest;
             route_update_lifetime(r, ROUTE_LIFETIME);
         }
 
@@ -238,7 +238,14 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
 
 	    if (route_table_lock(rt)) {
             /* Add to packet queue */
-	        ok = os_put_queue(r->pending_packets, p);
+            if (r->pending_packets == NULL) {
+	            r->pending_packets = os_create_queue(ROUTE_MAX_QUEUED_PACKETS, sizeof(packet_t*));
+            }
+            if (r->pending_packets == NULL) {
+                ESP_LOGE(TAG, "%s: Unable to create pending packet queue", __func__);
+            } else {
+	            ok = os_put_queue(r->pending_packets, p);
+            }
 	        route_table_unlock(rt);
         }
     }
@@ -311,11 +318,11 @@ void route_release_packets(route_t* r)
 	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
 
                 if (r->radio_num == UNKNOWN_RADIO) {
-                    ESP_LOGE(TAG, "send on route without a radio: target %d nexthop %d sequence %d", r->target, r->nexthop, r->sequence);
+                    ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d sequence %d", r->dest, r->routeto, r->sequence);
                 }
 
                 /* Assign the delivery route */
-                set_uint_field(p, HEADER_NEXTHOP_ADDRESS, ADDRESS_LEN, r->nexthop);
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, r->routeto);
                 /* Direct it to specific radio */
                 p->radio_num = r->radio_num;
 	            linklayer_send_packet(p);
@@ -349,9 +356,9 @@ route_t* route_find(route_table_t* rt, int address)
 
         if (start != NULL) {
             do {
-ESP_LOGI(TAG, "%s: looking for %d at %d", __func__, address, route->target);
-                if (route->target == address) {
-ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->target);
+ESP_LOGI(TAG, "%s: looking for %d at %d", __func__, address, route->dest);
+                if (route->dest == address) {
+ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
                     found = route;
                 }
                 route = route->next;
