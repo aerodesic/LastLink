@@ -121,13 +121,20 @@ void app_main(void)
 
   #if CONFIG_LASTLINK_PING_ADDRESS
             if (button_interrupts != last_button_interrupts) {
-                packet_t* packet = ping_packet_create(CONFIG_LASTLINK_PING_ADDRESS);
-                linklayer_print_packet("created", packet);
-                if (packet != NULL) {
-                    ESP_LOGI(TAG, "Sending ping");
-                    linklayer_send_packet(packet);
+                int paths[100];
+                ESP_LOGI(TAG, "Sending ping");
+                int path_len = ping(CONFIG_LASTLINK_PING_ADDRESS, paths, 100, 10000);
+                if (path_len < 0) {
+                    ESP_LOGI(TAG, "Ping error %d", path_len);
+                } else {
+                    print("Path:");
+                    for (int path = 0; path < path_len; ++path) {
+                        printf(" %d", paths[path]);
+                    }
+                    printf("\n");
                 }
                 last_button_interrupts = button_interrupts;
+                last_packet_count = -1; /* Force display of available packets */
             }
   #endif
 

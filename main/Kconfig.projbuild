@@ -278,12 +278,14 @@ menu "LastLink Configuration"
 
         config LASTLINK_NUMBER_OF_SOCKETS
         int "Number of available sockets"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
         default 10
         help
              Sets the maximum number of active listening or connected sockets.
 
         config LASTLINK_MAX_OUTSTANDING_PINGS
         int "Number of simultaneous pings allowed"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
         default 5
         help
             Defines the table controlling the maximum pings outstanding

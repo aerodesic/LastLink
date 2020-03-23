@@ -55,7 +55,7 @@
 
 #ifdef CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
 #include "os_freertos.h"
-#include "lsocket.h"
+#include "lsocket_internal.h"
 #include "packets.h"
 #include "linklayer.h"
 
@@ -110,7 +110,7 @@ static bool ping_packet_process(packet_t* p)
     bool processed = false;
 
     if (p != NULL) {
-linklayer_print_packet("PING RECEIVE", p);
+linklayer_print_packet("PING RECEIVED", p);
 
         if (linklayer_lock()) {
             /* Sanity check - reuse last entry if full */
@@ -131,6 +131,7 @@ linklayer_print_packet("PING RECEIVE", p);
                 /* Turn the packet around */
                 set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
                 set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);   /* Force packet to be routed */
 
                 /* Rewind TTL */
                 set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
@@ -140,12 +141,6 @@ linklayer_print_packet("SEND PING REPLY", p);
                 linklayer_send_packet(ref_packet(p));
 
                 processed = true;
-#if 0
-            } else {
-                /* Relable routeto so forward it on */
-                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-                linklayer_send_packet_update_ttl(ref_packet(p));
-#endif
             }
 
             linklayer_unlock();
@@ -216,10 +211,11 @@ static bool pingreply_packet_process(packet_t* p)
     if (p != NULL) {
         if (linklayer_lock()) {
 
+linklayer_print_packet("PING REPLY RECEIVED", p);
+
             /* If reply is for us, we do not add our address - but deliver it */
             if (linklayer_packet_is_for_this_node(p)) {
-                /* Deliver packet to process queue */
-   
+                /* Look for ping request and deliver packet to process queue */
                 int slot = find_ping_table_entry(get_uint_field(p, PING_SEQUENCE, SEQUENCE_NUMBER_LEN));
                 if (slot >= 0) {
                     os_put_queue(ping_table[slot].queue, ref_packet(p));
@@ -233,9 +229,9 @@ static bool pingreply_packet_process(packet_t* p)
 
                 p->length += ADDRESS_LEN;
                 set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
-            }
 
-            linklayer_send_packet_update_ttl(ref_packet(p));
+                linklayer_send_packet_update_ttl(ref_packet(p));
+            }
 
             processed = true;
 
@@ -314,7 +310,9 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 
                 for (int route = 0; pathlistlen > 0 && route < num_routes; ++route) {
                     pathlist[route] = get_uint_field(packet, PING_ROUTE_TABLE + ADDRESS_LEN * route, ADDRESS_LEN);
+                    pathlistlen--;
                 }
+
                 ret = num_routes;
             } else {
                 ret = LSE_TIMEOUT;
@@ -457,6 +455,25 @@ ls_error_t ls_socket_init(void)
 
 ls_error_t ls_socket_deinit(void)
 {
+    /* Purge all waiting pings */
+    /* Purge all sockets */
+
+    /* De-register protocols */
+    ls_error_t err = 0;
+
+    /* Register stream and datagram protocols */
+    if (linklayer_unregister_protocol(PING_PROTOCOL)        &&
+        linklayer_unregister_protocol(PINGREPLY_PROTOCOL)   &&
+        linklayer_unregister_protocol(STREAM_PROTOCOL)      &&
+        linklayer_unregister_protocol(DATAGRAM_PROTOCOL)) {
+
+        /* OK */
+
+    } else {
+        err = LSE_CANNOT_REGISTER;
+    }
+      
+    return err;
     return -1;
 }
 

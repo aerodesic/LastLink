@@ -31,6 +31,10 @@
 #include "linklayer.h"
 #include "linklayer_io.h"
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
+#include "lsocket.h"
+#endif
+
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
 #include "sx126x_driver.h"
 #endif
@@ -734,6 +738,12 @@ bool linklayer_init(int address, int flags, int announce)
     }
 /*END DEBUG*/
 #endif
+
+#if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
+    if (ok) {
+        ok = ls_socket_init() == LSE_NO_ERROR;
+    }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
 
     return ok;
 }
