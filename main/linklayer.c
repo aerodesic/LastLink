@@ -61,7 +61,6 @@ static bool ping_packet_process(packet_t* p);
 static bool pingreply_packet_process(packet_t* p);
 
 static char tohex(int v);
-static const char* escape_raw_data(const uint8_t* data, size_t length);
 static const char* default_packet_format(const packet_t* p);
 static bool put_received_packet(packet_t* p);
 
@@ -750,7 +749,7 @@ static char tohex(int v)
     }
 }
 
-static const char* escape_raw_data(const uint8_t* data, size_t length)
+const char* linklayer_escape_raw_data(const uint8_t* data, size_t length)
 {
     /* Determine length of output data field */
     int outlen = 0;
@@ -806,7 +805,7 @@ static const char* default_packet_format(const packet_t* p)
 //ESP_LOGI(TAG, "%s: packet %p length %u", __func__, p, p->length);
 
     /* Extract from end of header to end of packet */
-    const char* data = escape_raw_data(p->buffer + HEADER_LEN, p->length - HEADER_LEN);
+    const char* data = linklayer_escape_raw_data(p->buffer + HEADER_LEN, p->length - HEADER_LEN);
 
     asprintf(&info, "Data: \"%s\"", data);
 

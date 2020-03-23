@@ -58,13 +58,76 @@
 
 static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len, bool eor);
 static bool validate_socket(ls_socket_t* socket);
+static bool stream_packet_process(packet_t* packet);
+static const char* stream_packet_format(const packet_t* packet);
+static bool datagram_packet_process(packet_t* packet);
+static const char* datagram_packet_format(const packet_t* packet);
+
+static bool datagram_packet_process(packet_t* packet)
+{
+    return false;
+}
+
+static const char* datagram_packet_format(const packet_t* packet)
+{
+    char* info;
+
+    const char* data = linklayer_escape_raw_data(packet->buffer + DATAGRAM_PAYLOAD, packet->length - DATAGRAM_PAYLOAD);
+
+    asprintf(&info, "Datagram: Src Port %d Dest Port %d \"%s\"",
+            get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN),
+            data);
+
+     free((void*) data);
+
+     return info;
+}
+
+static bool stream_packet_process(packet_t* packet)
+{
+    return false;
+}
+
+static const char* stream_packet_format(const packet_t* packet)
+{
+    char* info;
+
+    const char* data = linklayer_escape_raw_data(packet->buffer + STREAM_PAYLOAD, packet->length - STREAM_PAYLOAD);
+
+    asprintf(&info, "Stream: Src Port %d Dest Port %d Ack %d Seq %d \"%s\"",
+            get_uint_field(packet, STREAM_DESTPORT, PORT_NUM_LEN),
+            get_uint_field(packet, STREAM_SRCPORT, PORT_NUM_LEN),
+            get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
+            get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN),
+            data);
+
+     free((void*) data);
+
+     return info;
+}
+
+
 
 /*
  * Initialize ls_socket layer.
  */
 ls_error_t ls_socket_init(void)
 {
-    return -1;
+    ls_error_t err = 0;
+
+    /* Register stream and datagram protocols */
+    if (linklayer_register_protocol(STREAM_PROTOCOL, stream_packet_process, stream_packet_format) &&
+        linklayer_register_protocol(DATAGRAM_PROTOCOL, datagram_packet_process, datagram_packet_format)) {
+
+        
+        /* Initialize queues and such */
+
+    } else {
+        err = LS_CANNOT_REGISTER;
+    }
+      
+    return err;
 }
 
 ls_error_t ls_socket_deinit(void)
