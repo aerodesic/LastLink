@@ -37,6 +37,37 @@ bool route_table_unlock(route_table_t *rt)
     return ok;
 }
 
+
+static void route_expire_thread(void* param)
+{
+    route_table_t* rt = (route_table_t*) param;
+
+    while (true) {
+        if (route_table_lock(rt)) {
+            route_t* start = rt->routes;
+            route_t* route = start;
+
+            if (start != NULL) {
+                do {
+                    if (route_is_expired(route)) {
+ESP_LOGI(TAG, "%s: expiring route for address %d", __func__, route->dest);
+                        route_delete(route);
+
+                        /* Stop now, only do one release per cycle */
+                        route = start = NULL;
+                    } else {
+                        route = route->next;
+                    }
+                } while (route != start);
+            }
+            route_table_unlock(rt);
+        }
+
+        /* one second wait */
+        os_delay(1000);
+    }
+}
+
 route_table_t* route_table_init(route_table_t* rt)
 {
     /* Do not recreate a table if it exists */
@@ -45,6 +76,11 @@ route_table_t* route_table_init(route_table_t* rt)
         rt->lock = os_create_recursive_mutex();
         rt->routes = NULL;
         rt->num_routes = 0;
+    }
+
+    /* Start a thread to expire routes when they get too old */
+    if (rt->expire_thread == NULL) {
+        rt->expire_thread = os_create_thread(route_expire_thread, "route_expire", 8192, 0, rt);
     }
 
     return rt;
@@ -56,6 +92,11 @@ bool route_table_deinit(route_table_t* rt)
         if (rt->lock != NULL) {
 
             route_table_lock(rt);
+
+            if (rt->expire_thread != NULL) {
+                os_delete_thread(rt->expire_thread);
+                rt->expire_thread = NULL;
+            }
 
 	        /* Remove all routes */
             while (rt->routes != NULL) {
@@ -180,11 +221,15 @@ bool route_delete(route_t* r)
                 r->pending_request = NULL;
             }
 
-            /* Discard the packets waiting */
-	        packet_t* p;
-	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
-                linklayer_print_packet("PENDING PACKETS", p);
-                release_packet(p);
+            if (r->pending_packets != NULL) {
+                /* Discard the packets waiting */
+	            packet_t* p;
+	            while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+                    linklayer_print_packet("PENDING PACKETS", p);
+                    release_packet(p);
+                }
+                os_delete_queue(r->pending_packets);
+                r->pending_packets = NULL;
             }
 
     	    free((void*) r);
@@ -379,10 +424,12 @@ route_t* route_find(route_table_t* rt, int address)
 
         if (start != NULL) {
             do {
-ESP_LOGI(TAG, "%s: looking for %d at %d", __func__, address, route->dest);
                 if (route->dest == address) {
 ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
                     found = route;
+
+                    /* Update the expire time */
+	                route_update_lifetime(route, ROUTE_LIFETIME);
                 }
                 route = route->next;
             } while (!found && route != start);
