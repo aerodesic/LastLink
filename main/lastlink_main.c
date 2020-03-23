@@ -36,12 +36,9 @@ const uint8_t *xyz = server_root_cert_pem_end;
 
 const char* TAG = "lastlink";
 
-#if 1
-static char cTaskListBuf[4000];
-#endif
-
 static const char* default_config[] = DEFAULT_CONFIG;
 
+#if CONFIG_LASTLINK_PING_ADDRESS
 static int button_interrupts;
 
 static void test_button_handler(void* param)
@@ -49,6 +46,7 @@ static void test_button_handler(void* param)
     /* Create a ping packet to broadcast */
     ++button_interrupts;
 }
+#endif
 
 void app_main(void)
 {
@@ -96,7 +94,7 @@ void app_main(void)
     linklayer_set_debug(true);
 #endif
 
-#if 1
+#if CONFIG_LASTLINK_PING_ADDRESS
     if (os_attach_gpio_interrupt(0, GPIO_PIN_INTR_NEGEDGE, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0)) {
         ESP_LOGI(TAG, "Button interrupt attached");
     } else {

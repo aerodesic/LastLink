@@ -256,10 +256,10 @@ menu "LastLink Configuration"
                 Enter the name of the spiffs partition as used in the parition table.
 
         config LASTLINK_PING_ADDRESS
-            int "Produce pings periodically to this address (0 disables)"
+            int "Produce pings to this address when button is pressed."
             default 0
             help
-                Select to enable sending PING packets periodically
+                Select to enable sending PING packets when button pressed.
 
         config LASTLINK_ADDRESS_OVERRIDE
             int "Select address to override config (0 defaults to config)"
