@@ -196,6 +196,13 @@ CONFIG_SPIFFS_PARTITION_NAME="storage"
 CONFIG_LASTLINK_PING_ADDRESS=1
 CONFIG_LASTLINK_ADDRESS_OVERRIDE=2
 # end of Other Configuration
+
+#
+# Socket layer
+#
+CONFIG_LASTLINK_ENABLE_SOCKET_LAYER=y
+CONFIG_LASTLINK_NUMBER_OF_SOCKETS=10
+# end of Socket layer
 # end of LastLink Configuration
 
 #

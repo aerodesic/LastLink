@@ -269,4 +269,19 @@ menu "LastLink Configuration"
 
     endmenu
 
+    menu "Socket layer"
+        config LASTLINK_ENABLE_SOCKET_LAYER
+        bool "Select to enable socket manager"
+        default true
+        help
+             Enables primitive datagram streaming sockets between nodes.
+
+        config LASTLINK_NUMBER_OF_SOCKETS
+        int "Number of available sockets"
+        default 10
+        help
+             Sets the maximum number of active listening or connected sockets.
+
+    endmenu
+
 endmenu

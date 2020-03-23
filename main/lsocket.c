@@ -51,6 +51,9 @@
 
 #include <string.h>
 
+#include "sdkconfig.h"
+
+#ifdef CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
 #include "os_freertos.h"
 #include "lsocket.h"
 #include "packets.h"
@@ -63,9 +66,50 @@ static const char* stream_packet_format(const packet_t* packet);
 static bool datagram_packet_process(packet_t* packet);
 static const char* datagram_packet_format(const packet_t* packet);
 
+static ls_socket_t  sockets[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
+
+static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type);
+
+/* Look in socket table for socket matching the connection and type */
+static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type)
+{
+    ls_socket_t* socket = NULL;
+
+    ls_port_t destport = get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN);
+    ls_port_t srcport  = get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN);
+    int destaddr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+
+    for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
+        if (sockets[index].socket_type == type && sockets[index].destaddr == destaddr &&
+            sockets[index].localport == destport && sockets[index].destport == srcport) {
+
+            socket = &sockets[index];
+        }
+    }
+
+    /* Return socket if we found it */
+    return socket;
+}
+
+
 static bool datagram_packet_process(packet_t* packet)
 {
-    return false;
+    bool processed = false;
+
+    ls_socket_t* socket = find_socket_from_packet(packet, LS_DATAGRAM);
+
+    if (socket != NULL) {
+        /* Send the packet to the datagram input queue */
+        if (!os_put_queue(socket->received_packets, (os_queue_item_t) ref_packet(packet))) {
+            /* Not able to queue, so just log and drop it */
+            linklayer_print_packet("Unable to queue", packet);
+            release_packet(packet);  /* Release the ref above */
+        }
+
+        processed = true;
+    }
+
+    return processed;
 }
 
 static const char* datagram_packet_format(const packet_t* packet)
@@ -86,7 +130,24 @@ static const char* datagram_packet_format(const packet_t* packet)
 
 static bool stream_packet_process(packet_t* packet)
 {
-    return false;
+    bool processed = false;
+
+    ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
+
+    if (socket != NULL) {
+        /* Place packets into assembly buffer by sequence number.
+         * Packets that are consecutive are placed into the receive buffer and
+         * removed from the assembly buffer.
+         *
+         * The user 'read' process removes packets from the receive queue
+         * and returns the data to the user.  record marks stop a read
+         * with two record marks indicating end of data (packet closed)
+         */
+
+        processed = true;
+    }
+
+    return processed;
 }
 
 static const char* stream_packet_format(const packet_t* packet)
@@ -96,8 +157,8 @@ static const char* stream_packet_format(const packet_t* packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + STREAM_PAYLOAD, packet->length - STREAM_PAYLOAD);
 
     asprintf(&info, "Stream: Src Port %d Dest Port %d Ack %d Seq %d \"%s\"",
-            get_uint_field(packet, STREAM_DESTPORT, PORT_NUM_LEN),
-            get_uint_field(packet, STREAM_SRCPORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN),
             get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
             get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN),
             data);
@@ -124,7 +185,7 @@ ls_error_t ls_socket_init(void)
         /* Initialize queues and such */
 
     } else {
-        err = LS_CANNOT_REGISTER;
+        err = LSE_CANNOT_REGISTER;
     }
       
     return err;
@@ -156,12 +217,7 @@ ls_socket_t* ls_socket(ls_socket_type_t socket_type)
 
         if (socket != NULL) {
              memset(socket, 0, sizeof(ls_socket_t));
-             socket->socket_type = socket_type;
-             if (socket_type == LS_STREAM) {
-                 /* Create queues for stream */
-                 socket->transmit_results = os_create_queue(0,0);
-             }
-             socket->receive_queue = os_create_queue(0,0);
+             socket->input_queue = NULL;
         }
     }
 #endif
@@ -180,7 +236,6 @@ ls_error_t ls_bind(ls_socket_t* socket, ls_port_t local_port)
 
     if (validate_socket(socket)) {
         socket->localport = local_port;
-        socket->localaddress = linklayer_get_node_address();
         ok = true;
     }
 
@@ -214,7 +269,7 @@ ls_socket_t* ls_listen(ls_socket_t* socket, int max_queue, int timeout)
 
         /* Wait for something to arrive at connection queue */
         packet_t* connection;
-        if (os_get_queue_with_timeout(socket->connection_queue, (os_queue_item_t*) &connection, timeout)) {
+        if (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &connection, timeout)) {
             /* A new connection packet */
         }
     }
@@ -231,11 +286,11 @@ ls_socket_t* ls_listen(ls_socket_t* socket, int max_queue, int timeout)
  *      port                Target port on node
  *
  * Returns:
- *      ls_error_t          LS_NO_ERROR (0) if successful otherwise error code.
+ *      ls_error_t          LSE_NO_ERROR (0) if successful otherwise error code.
  */
 ls_error_t ls_connect(ls_socket_t* socket, ls_address_t address, ls_port_t port)
 {
-    return LS_CLOSED;
+    return LSE_CLOSED;
 }
 
 /*
@@ -256,7 +311,7 @@ ls_error_t ls_connect(ls_socket_t* socket, ls_address_t address, ls_port_t port)
  */
 static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len, bool eor)
 {
-    return LS_CLOSED;
+    return LSE_CLOSED;
 }
 
 ls_error_t ls_write(ls_socket_t* socket, const char* buf, int len)
@@ -294,10 +349,31 @@ ls_error_t ls_write_eor(ls_socket_t* socket, const char* buf, int len)
  *      ls_error_t          If >0, number of bytes read.
  *                          If =0, socket has closed.  No more data to follow.
  *                          If <0, error code.
+ *
+ * For datagram sockets, reads one packet from receive queue and copies data to
+ * user buffer.  Returns length read.
+ *
+ * For stream sockets, reads up to the length specified but stops at a record mark,
+ * if one written by the caller.  A 'record mark' is a NULL packet.  Two record
+ * marks signal the socket has closed.
  */
 ls_error_t ls_read(ls_socket_t* socket, char* buf, int maxlen)
 {
-    return LS_CLOSED;
+    ls_error_t ret;
+
+    if (socket->socket_type == LS_DATAGRAM) {
+
+    } else if (socket->socket_type == LS_STREAM) {
+        /* Pend on a packet in the queue */
+        packet_t* packet;
+        if (os_get_queue(socket->received_packets, (os_queue_item_t*) &packet)) {
+        }
+
+    } else {
+        ret = LSE_INVALID_SOCKET;
+    }
+
+    return ret;
 }
 
 /*
@@ -306,7 +382,7 @@ ls_error_t ls_read(ls_socket_t* socket, char* buf, int maxlen)
  */
 ls_error_t ls_close(ls_socket_t* socket)
 {
-    return LS_NO_ERROR;
+    return LSE_NO_ERROR;
 }
 
 /*
@@ -324,7 +400,7 @@ ls_error_t ls_close(ls_socket_t* socket)
 ls_error_t ls_get_last_error(ls_socket_t* socket)
 {
     ls_error_t error = socket->last_error;
-    socket->last_error = LS_NO_ERROR;
+    socket->last_error = LSE_NO_ERROR;
 
     return error;
 }
@@ -339,3 +415,4 @@ static bool validate_socket(ls_socket_t* socket)
 
     return ok;
 }
+#endif /* CONFIG_LASTLINKE_ENABLE_SOCKET_LAYER */
