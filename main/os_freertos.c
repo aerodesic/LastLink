@@ -286,7 +286,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
 
     /* Program the pin */
     if (gpio_config(&io) == ESP_OK) {
-    
+
         /* If attaching vector */
         if (handler != NULL) {
             if (num_isrs_installed == 0) {

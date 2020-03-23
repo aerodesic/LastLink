@@ -199,6 +199,7 @@ static void rx_handle_interrupt(radio_t* radio)
             packet->length = length;
             packet->crc_ok = (data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) == 0;
             packet->rssi = get_packet_rssi(radio);
+            packet->snr = get_packet_snr(radio);
             packet->radio_num = radio->radio_num;
 
 ESP_LOGI(TAG, "%s: packet len %d crc_ok %s rssi %d radio %d", __func__, packet->length, packet->crc_ok ? "OK" : "BAD", packet->rssi, packet->radio_num);
@@ -509,12 +510,13 @@ static int get_packet_rssi(radio_t* radio)
     return rssi;
 }
 
+/* Returns SNR in .1 db units (e.g. 1 db SNR would return 10 */
 static int get_packet_snr(radio_t* radio)
 {
     int snr = -9999;
 
     if (acquire_lock(radio)) {
-        snr = radio->read_register(radio, SX127x_REG_PACKET_SNR) / 4.0;
+        snr = (int) ((radio->read_register(radio, SX127x_REG_PACKET_SNR) * 10.0) / 4.0);
         release_lock(radio);
     }
 
@@ -784,7 +786,7 @@ ESP_LOGI(TAG, "%s: sf %d", __func__, spreading_factor);
 
             sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-            data->spreading_factor = spreading_factor;            
+            data->spreading_factor = spreading_factor;
 
             /* Set 'low data rate' flag if long symbol time otherwise clear it */
             int config3 = radio->read_register(radio, SX127x_REG_MODEM_CONFIG_3);

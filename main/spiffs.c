@@ -33,7 +33,7 @@ static esp_vfs_spiffs_conf_t spiffs_conf = {
    .max_files = 5,
    .format_if_mount_failed = true
 };
-    
+
 const char* get_spiffs_partition(void)
 {
     return spiffs_conf.partition_label ? spiffs_conf.partition_label : "Unknown";
@@ -44,7 +44,7 @@ esp_err_t init_spiffs(void)
     esp_err_t ret;
 
     ESP_LOGI(TAG, "Initializing SPIFFS");
-    
+
     // Use settings defined above to initialize and mount SPIFFS filesystem.
     // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
     ret = esp_vfs_spiffs_register(&spiffs_conf);
@@ -70,7 +70,7 @@ esp_err_t init_spiffs(void)
     return ret;
 }
 
-    
+
 esp_err_t deinit_spiffs(void)
 {
     // All done, unmount partition and disable SPIFFS

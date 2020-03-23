@@ -153,7 +153,7 @@ ls_socket_t* ls_listen(ls_socket_t* socket, int max_queue, int timeout)
         packet_t* connection;
         if (os_get_queue_with_timeout(socket->connection_queue, (os_queue_item_t*) &connection, timeout)) {
             /* A new connection packet */
-        } 
+        }
     }
 
     return new_connection;

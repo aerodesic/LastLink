@@ -249,7 +249,7 @@ static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char*
                         configitem_t* cell = add_config_cell(owner, name);
                         if (cell != NULL) {
                             char* value = strdup(p);
-    
+
                             cell->name = strdup(name);
                             cell->type = CONFIG_VALUE;
                             cell->value = value;

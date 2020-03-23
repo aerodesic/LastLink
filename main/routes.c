@@ -32,11 +32,11 @@ bool route_table_unlock(route_table_t *rt)
     bool ok = false;
 
     if (rt != NULL) {
-        ok = os_release_recursive_mutex(rt->lock); 
+        ok = os_release_recursive_mutex(rt->lock);
     }
     return ok;
 }
-    
+
 route_table_t* route_table_init(route_table_t* rt)
 {
     /* Do not recreate a table if it exists */
@@ -70,7 +70,7 @@ bool route_table_deinit(route_table_t* rt)
 
     return rt->lock == NULL;
 }
-    
+
 route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
@@ -123,6 +123,23 @@ route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, i
     }
 
     return r;
+}
+
+/*
+ * Remove a route from the table by address.  Deletes all pending stuff on the route.
+ */
+bool route_remove(route_table_t* rt, int address)
+{
+    bool ok = false;
+
+    route_table_lock(rt);
+    route_t *route = route_find(rt, address);
+    if (route != NULL) {
+        ok = route_delete(route);
+    }
+    route_table_unlock(rt);
+
+    return ok;
 }
 
 /*
@@ -184,7 +201,7 @@ bool route_delete(route_t* r)
 void route_update_lifetime(route_t* r, int lifetime)
 {
     if (r != NULL) {
-        route_table_t* rt = r->table; 
+        route_table_t* rt = r->table;
     	route_table_lock(rt);
         r->lifetime = get_milliseconds() + lifetime;
 	    route_table_unlock(rt);
@@ -358,7 +375,7 @@ route_t* route_find(route_table_t* rt, int address)
 
     if (rt != NULL && route_table_lock(rt)) {
         route_t* start = rt->routes;
-        route_t* route = start; 
+        route_t* route = start;
 
         if (start != NULL) {
             do {

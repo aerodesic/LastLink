@@ -96,7 +96,7 @@ void app_main(void)
     linklayer_set_debug(true);
 #endif
 
-#if 0
+#if 1
     if (os_attach_gpio_interrupt(0, GPIO_PIN_INTR_NEGEDGE, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0)) {
         ESP_LOGI(TAG, "Button interrupt attached");
     } else {
@@ -108,23 +108,36 @@ void app_main(void)
     /* This becomes the main thread */
     wifi_init_softap();
 #else
-    while(true) {
-       for (int count = 0; count < 20; ++count) {
-           esp_task_wdt_reset();
-
-           os_delay(100);
-       }
-
-       ESP_LOGI(TAG, "%d free packets", available_packets());
+    int last_packet_count = -99;
 
   #if CONFIG_LASTLINK_PING_ADDRESS
-       packet_t* packet = ping_packet_create(CONFIG_LASTLINK_PING_ADDRESS);
-       linklayer_print_packet("created", packet);
-       if (packet != NULL) {
-           ESP_LOGI(TAG, "Sending ping");
-           linklayer_send_packet(packet);
-       }
+    int last_button_interrupts = button_interrupts;
   #endif
+
+    while(true) {
+        for (int count = 0; count < 20; ++count) {
+            esp_task_wdt_reset();
+
+            os_delay(100);
+
+  #if CONFIG_LASTLINK_PING_ADDRESS
+            if (button_interrupts != last_button_interrupts) {
+                packet_t* packet = ping_packet_create(CONFIG_LASTLINK_PING_ADDRESS);
+                linklayer_print_packet("created", packet);
+                if (packet != NULL) {
+                    ESP_LOGI(TAG, "Sending ping");
+                    linklayer_send_packet(packet);
+                }
+                last_button_interrupts = button_interrupts;
+            }
+  #endif
+
+            int packet_count = available_packets();
+            if (packet_count != last_packet_count) {
+                ESP_LOGI(TAG, "%d free packets", available_packets());
+                last_packet_count = packet_count;
+            }
+        }
     }
 #endif
 }

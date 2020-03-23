@@ -221,7 +221,7 @@ bool release_packet(packet_t *p)
     // ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
 
     bool ok = false;
-    
+
     /* We don't need to lock on mutex - just make sure it's there.  The queue
      * function is atomic.
      */
@@ -327,7 +327,7 @@ const char* get_str_field(const packet_t *p, size_t from, size_t length)
 
     if (validate_field(p, from, length)) {
         /* Determine length of field to copy */
-        length = strnlen((char*) p->buffer + from, length); 
+        length = strnlen((char*) p->buffer + from, length);
         value = (char*) malloc(length + 1);
         strncpy((char*) value, (char*) p->buffer + from, length);
         value[length] = '\0';

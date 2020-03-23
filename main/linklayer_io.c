@@ -57,7 +57,7 @@ static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
         }
 
         printf("\n");
- 
+
         addr += todump;
         len -= todump;
     }
@@ -109,7 +109,7 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
 
     ESP_LOGV(TAG, "%s: clk speed %d mode %d cs %d", __func__, devcfg.clock_speed_hz, devcfg.mode, devcfg.spics_io_num);
 
-    
+
     /* Initialize the SPI device */
     esp_err_t ret = spi_bus_initialize(config->spi_host, &buscfg, config->dma_chan);
     if (ret == ESP_OK) {
@@ -122,7 +122,7 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
             radio->read_register = spi_read_register;
             radio->write_register = spi_write_register;
             radio->read_buffer = spi_read_buffer;
-            radio->write_buffer = spi_write_buffer; 
+            radio->write_buffer = spi_write_buffer;
             radio->bus_deinit = spi_deinit;
 
             ESP_LOGI(TAG, "%s spi is %p", __func__, spi);
