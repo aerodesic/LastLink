@@ -717,7 +717,7 @@ bool linklayer_init(int address, int flags, int announce)
         if (linklayer_register_protocol(BEACON_PROTOCOL,         beacon_packet_process,        beacon_packet_format)        &&
             linklayer_register_protocol(ROUTEREQUEST_PROTOCOL,   routerequest_packet_process,  routerequest_packet_format)  &&
             linklayer_register_protocol(ROUTEANNOUNCE_PROTOCOL,  routeannounce_packet_process, routeannounce_packet_format) &&
-            linklayer_register_protocol(ROUTEERROR_PROTOCOL,     routeerror_packet_process,    routeerror_packet_format)) { 
+            linklayer_register_protocol(ROUTEERROR_PROTOCOL,     routeerror_packet_process,    routeerror_packet_format)) {
 
             for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
                 ok = ok && linklayer_add_radio(radio_num, &radio_config[radio_num]);
@@ -954,6 +954,10 @@ bool linklayer_deinit(void)
 {
     if (linklayer_lock()) {
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
+        ls_socket_deinit();
+#endif
+
         if (announce_thread != NULL) {
             os_delete_thread(announce_thread);
             announce_thread = NULL;
@@ -1027,38 +1031,38 @@ void linklayer_send_packet(packet_t* packet)
              * If no route table, create pending NULL route and cache packet for later retransmission.
              */
             unsigned int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-    
+
             radio_t* radio = NULL;  /* Gets the target radio device address */
-    
+
             if (routeto == NULL_ADDRESS) {
-    
+
                 unsigned int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
-    
+
                 route_table_lock(&route_table);
-    
+
                 route_t* route = route_find(&route_table, dest);
-    
+
                 /* If no route, create a dummy and make a request */
                 if (route == NULL) {
                     route = route_update(&route_table, packet->radio_num, dest, NULL_ADDRESS, linklayer_allocate_sequence(), 1, 0);
-    
+
                     /* Queue with it's pending ownership */
                     route_put_pending_packet(route, packet);
-    
+
                     if (debug_flag) {
                         linklayer_print_packet("Routing", packet);
                     }
-    
+
                     /* Create a route request to be sent instead */
                     packet = routerequest_packet_create(dest);
                     route_set_pending_request(route, packet, ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
-    
+
                 } else if (route->routeto == NULL_ADDRESS) {
                     /* Still have pending route, add packet to queue */
                     route_put_pending_packet(route, packet);
                     /* And drop it */
                     packet = NULL;
-    
+
                 } else {
                     /* We have a route so select routeto and radio */
                     set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
@@ -1071,10 +1075,10 @@ void linklayer_send_packet(packet_t* packet)
                         packet = NULL;
                     }
                 }
-    
+
                 route_table_unlock(&route_table);
             }
-    
+
             /*
              * TODO: we may need another method to restart transmit queue other than looking
              * and transmit queue length.  A 'transmitting' flag (protected by meshlock) that
@@ -1084,7 +1088,7 @@ void linklayer_send_packet(packet_t* packet)
              * This may need to be implemented to allow stalling transmission for windows of
              * reception.  A timer will then restart the queue if items remain within it.
              */
-    
+
             /* If radio is NULL, packet will be sent through all radios */
             if (packet != NULL) {
                 linklayer_transmit_packet(radio, ref_packet(packet));

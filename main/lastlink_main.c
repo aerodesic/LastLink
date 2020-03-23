@@ -127,7 +127,7 @@ void app_main(void)
                 if (path_len < 0) {
                     ESP_LOGI(TAG, "Ping error %d", path_len);
                 } else {
-                    print("Path:");
+                    printf("Path:");
                     for (int path = 0; path < path_len; ++path) {
                         printf(" %d", paths[path]);
                     }

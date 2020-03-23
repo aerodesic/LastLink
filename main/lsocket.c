@@ -5,7 +5,7 @@
  *
  * Example DATAGRAM:
  *      // Create socket
- *      ls_socket_t* socket = ls_socket(LS_DATAGRAM);
+ *      int socket = ls_socket(LS_DATAGRAM);
  *      // Bind port
  *      ls_bind(socket, 1234)
  *      ls_connect(socket, <destination address>, <destination port>)
@@ -18,7 +18,7 @@
  *
  * Example OUTBOUND STREAM:
  *      // Create socket
- *      ls_socket_t* socket = ls_socket(LS_STREAM);
+ *      int socket = ls_socket(LS_STREAM);
  *      // Bind port
  *      ls_bind(socket, 1234)
  *      int rc = ls_connect(socket, <destination address>, <destination port>)
@@ -32,15 +32,15 @@
  *
  * Example OUTBOUND STREAM:
  *      // Create socket
- *      ls_socket_t* listen_socket = ls_socket(LS_STREAM);
+ *      int listen_socket = ls_socket(LS_STREAM);
  *      // Bind port
  *      ls_bind(socket, 1234)
- *      ls_socket_t* new_connection = ls_listen(socket, 5, 0);
+ *      int new_connection = ls_listen(socket, 5, 0);
  *         ( when connection arrives, ls_listen returns with allocated socket )
- *      if (new_connection != NULL) {
- *         int len = ls_read(socket, buf, buflen);
+ *      if (new_connection >= 0) {
+ *          int len = ls_read(new_connection, buf, buflen);
  *              -or-
- *          int len = ls_write(socket, buf, buflen);
+ *          int len = ls_write(new_connection, buf, buflen);
  *          ... more activity ...
  *          ls_close(new_connection);
  *      }
@@ -67,7 +67,8 @@ static bool pingreply_packet_process(packet_t* p);
 static int find_ping_table_entry(int sequence);
 
 static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len, bool eor);
-static bool validate_socket(ls_socket_t* socket);
+static ls_socket_t*  validate_socket(int socket);
+
 static bool stream_packet_process(packet_t* packet);
 static const char* stream_packet_format(const packet_t* packet);
 static bool datagram_packet_process(packet_t* packet);
@@ -83,7 +84,7 @@ typedef struct ping_table_entry {
 
 ping_table_entry_t   ping_table[CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS];
 
-static ls_socket_t  sockets[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
+static ls_socket_t  socket_table[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 
 /*
  * Ping packet create
@@ -293,7 +294,7 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 {
     ls_error_t ret = 0;
 
-    packet_t* packet = ping_packet_create(address);  
+    packet_t* packet = ping_packet_create(address);
 
     if (packet != NULL) {
         int slot = register_ping(packet);
@@ -303,7 +304,7 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
             linklayer_send_packet(packet);
 
             packet = wait_for_ping_reply(slot, timeout);
- 
+
             if (packet != NULL) {
                 /* Pass information back to caller */
                 int num_routes = (packet->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
@@ -317,11 +318,11 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
             } else {
                 ret = LSE_TIMEOUT;
             }
-                
+
         } else {
             ret = LSE_NO_MEM;
         }
-           
+
         release_packet(packet);
     } else {
         ret = LSE_NO_MEM;
@@ -330,6 +331,19 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
     return ret;
 }
 
+
+static ls_socket_t* find_free_socket(void)
+{
+    ls_socket_t* socket = NULL;
+
+    for (int index = 0; socket == NULL && index < ELEMENTS_OF(socket_table); ++index) {
+        if (socket_table[index].socket_type == LS_UNUSED) {
+            socket = &socket_table[index];
+        }
+    }
+
+    return socket;
+}
 
 /* Look in socket table for socket matching the connection and type */
 static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type)
@@ -341,10 +355,10 @@ static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_ty
     int destaddr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
-        if (sockets[index].socket_type == type && sockets[index].destaddr == destaddr &&
-            sockets[index].localport == destport && sockets[index].destport == srcport) {
+        if (socket_table[index].socket_type == type && socket_table[index].destaddr == destaddr &&
+            socket_table[index].localport == destport && socket_table[index].destport == srcport) {
 
-            socket = &sockets[index];
+            socket = &socket_table[index];
         }
     }
 
@@ -449,14 +463,29 @@ ls_error_t ls_socket_init(void)
     } else {
         err = LSE_CANNOT_REGISTER;
     }
-      
+
     return err;
 }
 
 ls_error_t ls_socket_deinit(void)
 {
+    linklayer_lock();
+
     /* Purge all waiting pings */
-    /* Purge all sockets */
+    for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
+        if (ping_table[ping].sequence != 0) {
+            ping_table[ping].sequence = 0;
+            if (ping_table[ping].queue != NULL) {
+                os_delete_queue(ping_table[ping].queue);
+                ping_table[ping].queue = NULL;
+            }
+        }
+    }
+
+    /* Close all sockets */
+    for (int socket = 0; socket < ELEMENTS_OF(socket_table); ++socket) {
+        ls_close(socket);
+    }
 
     /* De-register protocols */
     ls_error_t err = 0;
@@ -472,9 +501,10 @@ ls_error_t ls_socket_deinit(void)
     } else {
         err = LSE_CANNOT_REGISTER;
     }
-      
+
+    linklayer_unlock();
+
     return err;
-    return -1;
 }
 
 /*
@@ -484,26 +514,33 @@ ls_error_t ls_socket_deinit(void)
  *      socket_type         LS_DATAGRAM or LS_STREAM
  *
  * Returns:
- *      ls_socket_t*        If successful, otherwise NULL (Out of memory probably)
+ *      ls_error_t          if < 0 an error, otherwise socket number.
  */
-ls_socket_t* ls_socket(ls_socket_type_t socket_type)
+ls_error_t ls_socket(ls_socket_type_t socket_type)
 {
-    ls_socket_t* socket = NULL;
+    ls_error_t  ret;
 
-#ifdef NOTUSED
-    /* Validate parameters */
-    if (socket_type == LS_DATAGRAM || socket_type == LS_STREAM) {
-
-        socket = (ls_socket_t*) malloc(sizeof(ls_socket_t));
+    if (linklayer_lock()) {
+        ls_socket_t* socket = find_free_socket();
 
         if (socket != NULL) {
-             memset(socket, 0, sizeof(ls_socket_t));
-             socket->input_queue = NULL;
-        }
-    }
-#endif
 
-    return socket;
+            /* Validate parameters */
+            if (socket_type == LS_DATAGRAM || socket_type == LS_STREAM) {
+                socket->socket_type = socket_type;
+
+                ret = socket - socket_table;
+            } else {
+                ret = LSE_BAD_TYPE;
+            }
+        } else {
+            ret = LSE_NO_MEM;
+        }
+    } else {
+        ret = LSE_SYSTEM_ERROR;
+    }
+
+    return ret;
 }
 
 /*
@@ -511,16 +548,18 @@ ls_socket_t* ls_socket(ls_socket_type_t socket_type)
  *
  * Bind an port to the local port.
  */
-ls_error_t ls_bind(ls_socket_t* socket, ls_port_t local_port)
+ls_error_t ls_bind(int socket, ls_port_t local_port)
 {
-    bool ok;
+    ls_error_t ret = LSE_INVALID_SOCKET;
 
-    if (validate_socket(socket)) {
-        socket->localport = local_port;
-        ok = true;
+    ls_socket_t* s = validate_socket(socket);
+
+    if (s != NULL) {
+        s->localport = local_port;
+        ret = LSE_NO_ERROR;
     }
 
-    return ok;
+    return ret;
 }
 
 /*
@@ -532,30 +571,50 @@ ls_error_t ls_bind(ls_socket_t* socket, ls_port_t local_port)
  *      timeout             How many mS to wait for a connection (0 is infinite)
  *
  * Returns:
- *      NULL                If timeout or error
- *      ls_socket_t*        If a connection arrives
+ *      socket number if >= 0 else ls_error_t
  *
  */
-ls_socket_t* ls_listen(ls_socket_t* socket, int max_queue, int timeout)
+ls_error_t ls_listen(int socket, int max_queue, int timeout)
 {
-    ls_socket_t* new_connection = NULL;
+    ls_error_t ret;
+
+    ls_socket_t* s = validate_socket(socket);
 
     /* Validate paramters */
-    if (validate_socket(socket) && socket->socket_type == LS_STREAM && max_queue > 0 && max_queue < MAX_SOCKET_CONNECTIONS) {
+    if (s != NULL && s->socket_type == LS_STREAM) {
+        if (max_queue > 0 && max_queue < MAX_SOCKET_CONNECTIONS) {
 
-        /* Only valid for STREAMS */
-        /* Place socket in listen mode */
-        socket->listen = true;
-        socket->max_queue = max_queue;
+            /* Only valid for STREAMS */
+            /* Place socket in listen mode */
 
-        /* Wait for something to arrive at connection queue */
-        packet_t* connection;
-        if (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &connection, timeout)) {
-            /* A new connection packet */
+            if (linklayer_lock()) {
+                if (s->connections == NULL) {
+                    /* Create queue for connections */
+                    s->connections = os_create_queue(max_queue, sizeof(ls_socket_t*));
+
+                    s->listen = true;
+                }
+                linklayer_unlock();
+
+                /* Wait for something to arrive at connection queue */
+                ls_socket_t *connection;
+                if (os_get_queue_with_timeout(s->connections, (os_queue_item_t*) &connection, timeout)) {
+                    /* A new connection */
+                    ret = connection - socket_table;
+                } else {
+                    ret = LSE_TIMEOUT;
+                }
+            } else {
+                ret = LSE_SYSTEM_ERROR;
+            }
+        } else {
+            ret = LSE_INVALID_MAXQUEUE;
         }
+    } else {
+        ret = LSE_INVALID_SOCKET;
     }
 
-    return new_connection;
+    return ret;
 }
 
 /*
@@ -569,7 +628,7 @@ ls_socket_t* ls_listen(ls_socket_t* socket, int max_queue, int timeout)
  * Returns:
  *      ls_error_t          LSE_NO_ERROR (0) if successful otherwise error code.
  */
-ls_error_t ls_connect(ls_socket_t* socket, ls_address_t address, ls_port_t port)
+ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port)
 {
     return LSE_CLOSED;
 }
@@ -595,18 +654,18 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len,
     return LSE_CLOSED;
 }
 
-ls_error_t ls_write(ls_socket_t* socket, const char* buf, int len)
+ls_error_t ls_write(int socket, const char* buf, int len)
 {
-    return ls_write_helper(socket, buf, len, false);
+    return ls_write_helper(validate_socket(socket), buf, len, false);
 }
 
 /*
  * Same as ls_write, but delivers an 'end of record' mark at end of data.
  * End of record write does nothing special for datagram sockets.
  */
-ls_error_t ls_write_eor(ls_socket_t* socket, const char* buf, int len)
+ls_error_t ls_write_eor(int socket, const char* buf, int len)
 {
-    return ls_write_helper(socket, buf, len, true);
+    return ls_write_helper(validate_socket(socket), buf, len, true);
 }
 
 /*
@@ -638,20 +697,28 @@ ls_error_t ls_write_eor(ls_socket_t* socket, const char* buf, int len)
  * if one written by the caller.  A 'record mark' is a NULL packet.  Two record
  * marks signal the socket has closed.
  */
-ls_error_t ls_read(ls_socket_t* socket, char* buf, int maxlen)
+ls_error_t ls_read(int socket, char* buf, int maxlen)
 {
     ls_error_t ret;
 
-    if (socket->socket_type == LS_DATAGRAM) {
+    ls_socket_t* s = validate_socket(socket);
 
-    } else if (socket->socket_type == LS_STREAM) {
+    if (s == NULL) {
+        ret = LSE_INVALID_SOCKET;
+    } else if (s->socket_type == LS_DATAGRAM) {
+
+    } else if (s->socket_type == LS_STREAM) {
         /* Pend on a packet in the queue */
         packet_t* packet;
-        if (os_get_queue(socket->received_packets, (os_queue_item_t*) &packet)) {
+        if (os_get_queue(s->received_packets, (os_queue_item_t*) &packet)) {
         }
 
     } else {
         ret = LSE_INVALID_SOCKET;
+    }
+
+    if (ret != LSE_INVALID_SOCKET) {
+        s->last_error = ret;
     }
 
     return ret;
@@ -661,9 +728,48 @@ ls_error_t ls_read(ls_socket_t* socket, char* buf, int maxlen)
  * Close a socket.  All internal information is deleted.
  * Returns status code.  0 is success.
  */
-ls_error_t ls_close(ls_socket_t* socket)
+ls_error_t ls_close(int socket)
 {
-    return LSE_NO_ERROR;
+    ls_error_t ret = LSE_NO_ERROR;
+
+    ls_socket_t* s = validate_socket(socket);
+    if (s != NULL) {
+        if (linklayer_lock()) {
+            switch (s->socket_type) {
+                case LS_UNUSED:
+                    ret = LSE_NOT_OPENED;
+                    break;
+
+                case LS_LISTEN:
+                    /* Close listener queue */
+                    os_delete_queue(s->connections);
+                    s->connections = NULL;
+                    s->socket_type = LS_UNUSED;
+                    break;
+
+                case LS_STREAM:
+                    /* Clear asssemnly buffer */
+                    /* Clear outbound queue */
+                    /* Fall through and clear received packets */
+
+                case LS_DATAGRAM:
+                    /* Close packet receive queue */
+                    os_delete_queue(s->received_packets);
+                    s->received_packets = NULL;
+                    s->socket_type = LS_UNUSED;
+                    break;
+
+                default:
+                    ret = LSE_INVALID_SOCKET;
+                    break;
+            }
+            linklayer_unlock();
+        }
+    } else {
+        ret = LSE_INVALID_SOCKET;
+    }
+
+    return ret;
 }
 
 /*
@@ -686,14 +792,16 @@ ls_error_t ls_get_last_error(ls_socket_t* socket)
     return error;
 }
 
-static bool validate_socket(ls_socket_t* socket)
+static ls_socket_t* validate_socket(int socket)
 {
-    bool ok = false;
+    ls_socket_t* ret = NULL;
 
-    if (socket != NULL && (socket->socket_type == LS_DATAGRAM || socket->socket_type == LS_STREAM)) {
-        ok = true;
+    if (socket >= 0 && socket < ELEMENTS_OF(socket_table)) {
+       if (socket_table[socket].socket_type == LS_DATAGRAM || socket_table[socket].socket_type == LS_STREAM) {
+           ret = &socket_table[socket];
+       }
     }
 
-    return ok;
+    return ret;
 }
 #endif /* CONFIG_LASTLINKE_ENABLE_SOCKET_LAYER */
