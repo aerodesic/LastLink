@@ -22,6 +22,7 @@
 #include "nvs_support.h"
 
 #include "linklayer.h"
+#include "lsocket.h"
 #include "configdata.h"
 #include "default_config.h"
 #include "os_freertos.h"

@@ -59,6 +59,13 @@
 #include "packets.h"
 #include "linklayer.h"
 
+/* PING support */
+static const char* ping_packet_format(const packet_t* p);
+static const char* pingreply_packet_format(const packet_t* p);
+static bool ping_packet_process(packet_t* p);
+static bool pingreply_packet_process(packet_t* p);
+static int find_ping_table_entry(int sequence);
+
 static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len, bool eor);
 static bool validate_socket(ls_socket_t* socket);
 static bool stream_packet_process(packet_t* packet);
@@ -66,9 +73,265 @@ static const char* stream_packet_format(const packet_t* packet);
 static bool datagram_packet_process(packet_t* packet);
 static const char* datagram_packet_format(const packet_t* packet);
 
-static ls_socket_t  sockets[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 
 static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type);
+
+typedef struct ping_table_entry {
+    os_queue_t   queue;
+    int          sequence;
+} ping_table_entry_t;
+
+ping_table_entry_t   ping_table[CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS];
+
+static ls_socket_t  sockets[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
+
+/*
+ * Ping packet create
+ */
+packet_t* ping_packet_create(int dest)
+{
+    packet_t* p;
+
+    p = linklayer_create_generic_packet(dest, PING_PROTOCOL, PING_LEN);
+
+    if (p != NULL) {
+        /* Generate sequence number */
+        set_uint_field(p, PING_SEQUENCE, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+
+        /* Put starting address in the table */
+        set_uint_field(p, PING_ROUTE_TABLE, ADDRESS_LEN, linklayer_node_address);
+    }
+
+    return p;
+}
+
+static bool ping_packet_process(packet_t* p)
+{
+    bool processed = false;
+
+    if (p != NULL) {
+linklayer_print_packet("PING RECEIVE", p);
+
+        if (linklayer_lock()) {
+            /* Sanity check - reuse last entry if full */
+            if (p->length >= MAX_PACKET_LEN) {
+                p->length = MAX_PACKET_LEN - ADDRESS_LEN;
+            }
+
+            /* Add our address to the chain of addresses */
+            p->length += ADDRESS_LEN;
+            set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
+
+            /* If for us, turn packet into PING_REPLY */
+            if (linklayer_packet_is_for_this_node(p)) {
+
+                /* Alter the protocol */
+                set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, PINGREPLY_PROTOCOL);
+
+                /* Turn the packet around */
+                set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
+                set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+
+                /* Rewind TTL */
+                set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
+
+linklayer_print_packet("SEND PING REPLY", p);
+
+                linklayer_send_packet(ref_packet(p));
+
+                processed = true;
+#if 0
+            } else {
+                /* Relable routeto so forward it on */
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                linklayer_send_packet_update_ttl(ref_packet(p));
+#endif
+            }
+
+            linklayer_unlock();
+
+        } else {
+            /* Cannot get mutex */
+        }
+    }
+
+    return processed;
+}
+
+static const char* ping_format_routes(const packet_t* p)
+{
+    int num_routes = (p->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
+
+//ESP_LOGI(TAG, "%s: num_routes %d", __func__, num_routes);
+
+    /* Allocate worst case length */
+    char *routes = (char*) malloc(2 + (8 + 1) * num_routes + 2);
+    char *routep = routes;
+
+    *routep++ = '[';
+    *routep++ = ' ';
+
+    for (int route = 0; route < num_routes; ++route) {
+        int len = sprintf(routep, "%X ", get_uint_field(p, PING_ROUTE_TABLE + ADDRESS_LEN * route, ADDRESS_LEN));
+        routep += len;
+    }
+    *routep++ = ']';
+    *routep++ = '\0';
+
+    return routes;
+}
+
+static const char* ping_packet_format(const packet_t* p)
+{
+    char* info;
+
+    int sequence = get_uint_field(p, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    const char* routes = ping_format_routes(p);
+
+    asprintf(&info, "Ping: Seq: %d Routes %s", sequence, routes);
+
+    free((void*) routes);
+
+    return info;
+}
+
+static const char* pingreply_packet_format(const packet_t* p)
+{
+    char* info;
+
+    int sequence = get_uint_field(p, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    const char* routes = ping_format_routes(p);
+
+    asprintf(&info, "Ping Reply: Seq: %d Routes %s", sequence, routes);
+
+    free((void*) routes);
+
+    return info;
+}
+
+static bool pingreply_packet_process(packet_t* p)
+{
+    bool processed = false;
+
+    if (p != NULL) {
+        if (linklayer_lock()) {
+
+            /* If reply is for us, we do not add our address - but deliver it */
+            if (linklayer_packet_is_for_this_node(p)) {
+                /* Deliver packet to process queue */
+   
+                int slot = find_ping_table_entry(get_uint_field(p, PING_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                if (slot >= 0) {
+                    os_put_queue(ping_table[slot].queue, ref_packet(p));
+                }
+
+            } else {
+                /* Sanity check - reuse last entry if full */
+                if (p->length >= MAX_PACKET_LEN) {
+                    p->length = MAX_PACKET_LEN - ADDRESS_LEN;
+                }
+
+                p->length += ADDRESS_LEN;
+                set_uint_field(p, p->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
+            }
+
+            linklayer_send_packet_update_ttl(ref_packet(p));
+
+            processed = true;
+
+            linklayer_unlock();
+
+        } else {
+            /* Cannot get mutex */
+        }
+    }
+
+    return processed;
+}
+
+static int find_ping_table_entry(int sequence)
+{
+    int slot = -1;
+
+    for (int index = 0; slot < 0 && index < ELEMENTS_OF(ping_table); ++index) {
+        if (ping_table[index].sequence == sequence) {
+            slot = index;
+        }
+    }
+
+    return slot;
+}
+
+static int register_ping(const packet_t* packet)
+{
+    int slot = find_ping_table_entry(0);
+    if (slot >= 0) {
+        /* Remember we are waiting on this sequence return */
+        ping_table[slot].queue = os_create_queue(1, sizeof(packet_t*));
+        ping_table[slot].sequence = get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    }
+
+    return slot;
+}
+
+static packet_t* wait_for_ping_reply(int slot, int timeout)
+{
+    packet_t* packet = NULL;
+
+    if (slot >= 0 && slot < ELEMENTS_OF(ping_table)) {
+        if (! os_get_queue_with_timeout(ping_table[slot].queue, (os_queue_item_t*) &packet, timeout)) {
+            /* No reply - make sure empty return */
+            packet = NULL;
+        }
+        ping_table[slot].sequence = 0;
+        os_delete_queue(ping_table[slot].queue);
+    }
+
+    return packet;
+}
+
+/*
+ * Ping an address and return it's pathlist
+ */
+ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
+{
+    ls_error_t ret = 0;
+
+    packet_t* packet = ping_packet_create(address);  
+
+    if (packet != NULL) {
+        int slot = register_ping(packet);
+
+        if (slot >= 0) {
+
+            linklayer_send_packet(packet);
+
+            packet = wait_for_ping_reply(slot, timeout);
+ 
+            if (packet != NULL) {
+                /* Pass information back to caller */
+                int num_routes = (packet->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
+
+                for (int route = 0; pathlistlen > 0 && route < num_routes; ++route) {
+                    pathlist[route] = get_uint_field(packet, PING_ROUTE_TABLE + ADDRESS_LEN * route, ADDRESS_LEN);
+                }
+                ret = num_routes;
+            } else {
+                ret = LSE_TIMEOUT;
+            }
+                
+        } else {
+            ret = LSE_NO_MEM;
+        }
+           
+        release_packet(packet);
+    } else {
+        ret = LSE_NO_MEM;
+    }
+
+    return ret;
+}
+
 
 /* Look in socket table for socket matching the connection and type */
 static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type)
@@ -178,10 +441,11 @@ ls_error_t ls_socket_init(void)
     ls_error_t err = 0;
 
     /* Register stream and datagram protocols */
-    if (linklayer_register_protocol(STREAM_PROTOCOL, stream_packet_process, stream_packet_format) &&
-        linklayer_register_protocol(DATAGRAM_PROTOCOL, datagram_packet_process, datagram_packet_format)) {
+    if (linklayer_register_protocol(PING_PROTOCOL,           ping_packet_process,          ping_packet_format)        &&
+        linklayer_register_protocol(PINGREPLY_PROTOCOL,      pingreply_packet_process,     pingreply_packet_format)   &&
+        linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
+        linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
 
-        
         /* Initialize queues and such */
 
     } else {

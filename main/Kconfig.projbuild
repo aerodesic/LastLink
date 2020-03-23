@@ -282,6 +282,13 @@ menu "LastLink Configuration"
         help
              Sets the maximum number of active listening or connected sockets.
 
+        config LASTLINK_MAX_OUTSTANDING_PINGS
+        int "Number of simultaneous pings allowed"
+        default 5
+        help
+            Defines the table controlling the maximum pings outstanding
+            at one time.
+
     endmenu
 
 endmenu
