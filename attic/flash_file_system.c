@@ -6,7 +6,7 @@
    CONDITIONS OF ANY KIND, either express or implied.
 
    This sample shows how to store files inside a FAT filesystem.
-   FAT filesystem is stored in a partition inside SPI flash, using the 
+   FAT filesystem is stored in a partition inside SPI flash, using the
    flash wear levelling library.
 */
 
@@ -65,7 +65,7 @@ bool init_flash_file_system(void)
                 fprintf(f, "Written using ESP-IDF %s\n", esp_get_idf_version());
                 fclose(f);
                 ESP_LOGI(TAG, "File written");
-        
+
                 // Open file for reading
                 ESP_LOGI(TAG, "Reading file");
                 f = fopen("/extflash/hello.txt", "rb");

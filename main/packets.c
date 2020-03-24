@@ -218,18 +218,20 @@ packet_t *duplicate_packet(packet_t* packet)
  */
 bool release_packet(packet_t *p)
 {
-    // ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
+    bool ok = true;
 
-    bool ok = false;
+    if (p != NULL) {
+        // ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
 
-    /* We don't need to lock on mutex - just make sure it's there.  The queue
-     * function is atomic.
-     */
-    if (free_packets_queue != NULL) {
-        ok = true;
-
-        if (p != NULL && --(p->ref) == 0) {
-            ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
+        /* We don't need to lock on mutex - just make sure it's there.  The queue
+         * function is atomic.
+         */
+        if (free_packets_queue != NULL) {
+            if (p != NULL && --(p->ref) == 0) {
+                ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
+            }
+        } else {
+            ok = false;
         }
     }
 
@@ -378,11 +380,16 @@ int set_str_field(packet_t *p, size_t from, size_t length, const char* value)
     return moved;
 }
 
+#ifdef NOTUSED
+/* Moved inline */
 packet_t* ref_packet(packet_t* p)
 {
-    p->ref++;
+    if (p != NULL) {
+        p->ref++;
+    }
     return p;
 }
+#endif
 
 bool packet_lock(void)
 {

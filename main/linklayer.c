@@ -530,6 +530,7 @@ static bool routeerror_packet_process(packet_t* p)
 
                 /* If not for us, redirect it on to dest */
                 if (! linklayer_packet_is_for_this_node(p)) {
+                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                     linklayer_send_packet(p);
                 }
             }
@@ -1272,7 +1273,16 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                     set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
                                     linklayer_send_packet_update_ttl(ref_packet(packet));
                                 } else {
-                                    /* No route, so  packet is dropped on the floor */
+                                    /* No route, so report route error */
+                                    packet_t *error = routeerror_packet_create(
+                                        get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN), /* who sent it to us */
+                                        get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),   /* Offending address */
+                                        linklayer_allocate_sequence(),
+                                        "no route");
+
+                                    if (error != NULL) {
+                                        linklayer_send_packet(error);
+                                    }
                                 }
                             }
                         } else {
