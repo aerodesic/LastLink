@@ -79,7 +79,7 @@ static os_mutex_t                 linklayer_mutex;
 static int                        node_flags;
 static os_queue_t                 receive_queue;
 static os_queue_t                 promiscuous_queue;
-static int                        sequence_number;
+static uint16_t                   sequence_number;
 static bool                       debug_flag;
 static os_thread_t                announce_thread;
 static int                        announce_interval;
@@ -1357,5 +1357,14 @@ static const char* linklayer_packet_format(const packet_t* packet, int protocol)
     }
 
     return text;
+}
+
+void linklayer_release_packets_in_queue(os_queue_t queue) {
+    if (queue != NULL) {
+        packet_t* packet;
+        while (os_get_queue_with_timeout(queue, (os_queue_item_t*) &packet, 0)) {
+            release_packet(packet);
+        }
+    }
 }
 

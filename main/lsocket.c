@@ -71,9 +71,14 @@ static ls_socket_t*  validate_socket(int socket);
 
 static bool stream_packet_process(packet_t* packet);
 static const char* stream_packet_format(const packet_t* packet);
+static packet_t* assemble_socket_data(packet_t* packet_to_send, packet_t* packet);
+
 static bool datagram_packet_process(packet_t* packet);
 static const char* datagram_packet_format(const packet_t* packet);
 
+static packet_t* datagram_packet_create_from_socket(ls_socket_t* socket);
+
+static packet_t* stream_packet_create_from_socket(ls_socket_t* stream, uint8_t flags);
 
 static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type);
 
@@ -345,18 +350,53 @@ static ls_socket_t* find_free_socket(void)
     return socket;
 }
 
+static int next_local_port = 5000;
+
+static int find_free_local_port(void) {
+
+    int found = -1;
+
+    if (linklayer_lock()) {
+        bool collision;
+
+        do {
+            collision = false;
+
+            /* Increment local port number pool */
+            if (++next_local_port >= 65536) {
+                next_local_port = 5000;
+            }
+
+            /* Go through all sockets to see if we have used this port */
+            for (int socket = 0; !collision && socket < ELEMENTS_OF(socket_table); ++socket) {
+                if (next_local_port == socket_table[socket].local_port) {
+                    collision = true;
+                }
+            }
+        } while (collision);
+
+        /* We will use this one */
+        found = next_local_port;
+
+        linklayer_unlock();
+    }
+
+    return found;
+}
+            
+
 /* Look in socket table for socket matching the connection and type */
 static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type)
 {
     ls_socket_t* socket = NULL;
 
-    ls_port_t destport = get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN);
-    ls_port_t srcport  = get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN);
-    int destaddr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+    ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
+    ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
+    int dest_addr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
-        if (socket_table[index].socket_type == type && socket_table[index].destaddr == destaddr &&
-            socket_table[index].localport == destport && socket_table[index].destport == srcport) {
+        if (socket_table[index].socket_type == type && socket_table[index].dest_addr == dest_addr &&
+            socket_table[index].local_port == dest_port && socket_table[index].dest_port == src_port) {
 
             socket = &socket_table[index];
         }
@@ -366,6 +406,17 @@ static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_ty
     return socket;
 }
 
+static packet_t* datagram_packet_create_from_socket(ls_socket_t* socket)
+{
+    packet_t* packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
+
+    if (packet != NULL) {
+        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, socket->local_port);
+    }
+
+    return packet;
+}
 
 static bool datagram_packet_process(packet_t* packet)
 {
@@ -394,8 +445,8 @@ static const char* datagram_packet_format(const packet_t* packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + DATAGRAM_PAYLOAD, packet->length - DATAGRAM_PAYLOAD);
 
     asprintf(&info, "Datagram: Src Port %d Dest Port %d \"%s\"",
-            get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN),
-            get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN),
             data);
 
      free((void*) data);
@@ -403,21 +454,99 @@ static const char* datagram_packet_format(const packet_t* packet)
      return info;
 }
 
+static packet_t* stream_packet_create_from_socket(ls_socket_t* socket, uint8_t flags)
+{
+    packet_t* packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_PAYLOAD);
+
+    if (packet != NULL) {
+        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, socket->local_port);
+        set_uint_field(packet, STREAM_FLAGS, FLAGS_LEN, flags);
+    }
+
+    return packet;
+}
+
+static packet_t* assemble_socket_data(packet_t* packet_to_send, packet_t* packet)
+{
+    return packet_to_send;
+}
+
 static bool stream_packet_process(packet_t* packet)
 {
     bool processed = false;
 
+    /* Read the flags field for later use */
+    uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
+
     ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
 
     if (socket != NULL) {
-        /* Place packets into assembly buffer by sequence number.
-         * Packets that are consecutive are placed into the receive buffer and
-         * removed from the assembly buffer.
-         *
-         * The user 'read' process removes packets from the receive queue
-         * and returns the data to the user.  record marks stop a read
-         * with two record marks indicating end of data (packet closed)
+        /* Release current control packet */
+        release_packet(socket->control_packet);
+        socket->control_packet = NULL;
+
+        switch (flags & STREAM_FLAGS_CMD) {
+            default: {
+                /* Ignore noise */
+                break;
+            }
+            case STREAM_FLAGS_CMD_NOP: {
+                /* If we are connected, process the data packet */
+                break;
+            }
+
+            case STREAM_FLAGS_CMD_CONNECT: {
+                /* If we are connecting or connected, respond with connect ack */
+                if (socket->state == LS_STATE_IDLE || socket->state == LS_STATE_INBOUND_CONNECT) {
+                    socket->control_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK);
+                    socket->state = LS_STATE_INBOUND_CONNECT;
+                }
+                break;
+            }
+
+            case STREAM_FLAGS_CMD_CONNECT_ACK: {
+                /* If are in connecting, respond with connect ack */
+                if (socket->state == LS_STATE_OUTBOUND_CONNECT) {
+                    socket->state = LS_STATE_CONNECTED;
+                    socket->control_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK);
+                } else if (socket->state == LS_STATE_INBOUND_CONNECT) {
+                    socket->state = LS_STATE_CONNECTED;
+                }
+                break;
+            }
+
+            case STREAM_FLAGS_CMD_DISCONNECT: {
+                /* In any state, start a disconnect */
+                socket->state = LS_STATE_DISCONNECTING;
+                socket->control_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED);
+                break;
+            }
+
+            case STREAM_FLAGS_CMD_DISCONNECTED: {
+                socket->state = LS_STATE_DISCONNECTED;
+                break;
+            }
+
+            case STREAM_FLAGS_CMD_REJECT: {
+                /* An error so tear down the connection */
+                socket->state = LS_STATE_DISCONNECTED;
+                socket->control_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED);
+                break;
+            }
+        }
+
+        /*
+         * Pass the data through the assembly phase.  This might require modifying the current outbound packet
+         * to update ack seqeuence numbers, etc.  In some cases a brand new packet will be generated.
          */
+        if ((flags & STREAM_FLAGS_DATA) != 0) {
+            socket->control_packet = assemble_socket_data(socket->control_packet, ref_packet(packet));
+        }
+
+        if (socket->control_packet != NULL) {
+            linklayer_send_packet(socket->control_packet);
+        }
 
         processed = true;
     }
@@ -432,8 +561,8 @@ static const char* stream_packet_format(const packet_t* packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + STREAM_PAYLOAD, packet->length - STREAM_PAYLOAD);
 
     asprintf(&info, "Stream: Src Port %d Dest Port %d Ack %d Seq %d \"%s\"",
-            get_uint_field(packet, DATAGRAM_DESTPORT, PORT_NUM_LEN),
-            get_uint_field(packet, DATAGRAM_SRCPORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN),
             get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
             get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN),
             data);
@@ -536,6 +665,8 @@ ls_error_t ls_socket(ls_socket_type_t socket_type)
         } else {
             ret = LSE_NO_MEM;
         }
+
+        linklayer_unlock();
     } else {
         ret = LSE_SYSTEM_ERROR;
     }
@@ -555,7 +686,9 @@ ls_error_t ls_bind(int socket, ls_port_t local_port)
     ls_socket_t* s = validate_socket(socket);
 
     if (s != NULL) {
-        s->localport = local_port;
+        /* Assign local port from free pool if not specified by user */
+        s->local_port = local_port ? local_port : find_free_local_port();
+
         ret = LSE_NO_ERROR;
     }
 
@@ -617,6 +750,24 @@ ls_error_t ls_listen(int socket, int max_queue, int timeout)
     return ret;
 }
 
+static void stream_connect_timeout(void* param)
+{
+    ls_socket_t* socket = (ls_socket_t*) param;
+
+    if (--(socket->retries) > 0) {
+        
+        /* Timed out so retry by sending connect packet again (if still present) */
+        if (socket->control_packet != NULL) {
+            linklayer_send_packet(ref_packet(socket->control_packet));
+        }
+    } else {
+        /* Send error code to connect response queue */
+        os_put_queue(socket->connect_response, (os_queue_item_t) LSE_CONNECT_FAILED);
+        os_delete_timer(socket->connect_timer);
+        socket->connect_timer = NULL;
+    }
+}
+
 /*
  * Connect to a remote port.
  *
@@ -630,7 +781,51 @@ ls_error_t ls_listen(int socket, int max_queue, int timeout)
  */
 ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port)
 {
-    return LSE_CLOSED;
+    ls_error_t ret = LSE_NO_ERROR;
+
+    ls_socket_t* s = validate_socket(socket);
+
+    if (s != NULL) {
+        s->dest_port = port;
+        s->dest_addr = address;
+        s->serial_number = linklayer_allocate_sequence();  /* Unique serial number for this connection */
+
+        if (s->socket_type == LS_DATAGRAM) {
+            /* Datagram connection is easy - we just say it's connected */
+            s->state = LS_STATE_CONNECTED;
+        } else {
+            /* set as 'connecting' and send request */
+            s->connect_response = os_create_queue(1, sizeof(ls_error_t));
+            s->control_packet = stream_packet_create_from_socket(s, STREAM_FLAGS_CMD_CONNECT);
+
+            /* Set a timer to check on results after no answer */
+            s->connect_timer = os_create_timer("connecting", STREAM_CONNECT_TIMEOUT, false, (void*) s, stream_connect_timeout);
+
+            s->state = LS_STATE_OUTBOUND_CONNECT;
+
+            /* Send packet and wait for statemachine to finish the job */
+            linklayer_send_packet(s->control_packet);
+
+            /* Wait for first response indicating connection or failure */
+            int response;
+            if (!os_get_queue(s->connect_response, (os_queue_item_t*) &response)) {
+                ret = LSE_TIMEOUT;
+            } else {
+                ret = response;
+            }
+
+            os_delete_queue(s->connect_response);
+            s->connect_response = NULL;
+        }
+    } else {
+        ret = LSE_INVALID_SOCKET;
+    }
+
+    if (ret != LSE_INVALID_SOCKET) {
+        s->last_error = ret;
+    }
+    
+    return ret;
 }
 
 /*
@@ -696,23 +891,90 @@ ls_error_t ls_write_eor(int socket, const char* buf, int len)
  * For stream sockets, reads up to the length specified but stops at a record mark,
  * if one written by the caller.  A 'record mark' is a NULL packet.  Two record
  * marks signal the socket has closed.
+ *
+ * If the <address> and <port> parameters are present, record the source address and
+ * port for the user.
  */
-ls_error_t ls_read(int socket, char* buf, int maxlen)
+ls_error_t ls_read_with_address(int socket, char* buf, int maxlen, int* address, int* port)
 {
-    ls_error_t ret;
+    ls_error_t ret = LSE_NO_ERROR;
 
     ls_socket_t* s = validate_socket(socket);
 
     if (s == NULL) {
         ret = LSE_INVALID_SOCKET;
     } else if (s->socket_type == LS_DATAGRAM) {
-
-    } else if (s->socket_type == LS_STREAM) {
         /* Pend on a packet in the queue */
         packet_t* packet;
         if (os_get_queue(s->received_packets, (os_queue_item_t*) &packet)) {
+            /* A packet with data */
+            int packet_data_length = packet->length - DATAGRAM_PAYLOAD;
+            if (packet_data_length > maxlen) {
+                packet_data_length = maxlen;
+            }
+            memcpy(buf, packet->buffer + DATAGRAM_PAYLOAD, packet_data_length);
+            if (address != NULL) {
+                *address = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+            }
+            if (port != NULL) {
+                *port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
+            }
+            ret = packet_data_length;
+            release_packet(packet);
+        }
+    } else if (s->socket_type == LS_STREAM) {
+        /* STREAM packets arrive on the socket stream_packet_queue after being sorted and acked as necessary */
+        packet_t* packet;
+        bool eor = false;
+        int total_len = 0;
+
+        /* Go until length satisfied or end of record */
+        while (!eor && maxlen != 0) {
+            int offset = 0;
+
+            if (s->residue_packet != NULL) {
+                packet = s->residue_packet;
+                s->residue_packet = NULL;
+                offset = s->residue_offset;
+                s->residue_offset = 0;
+            } else if (os_get_queue(s->stream_packet_queue, (os_queue_item_t*) &packet)) {
+                offset = 0;
+            } else {
+                packet = NULL;
+            }
+
+            if (packet != NULL) {
+                int available = packet->length - STREAM_PAYLOAD - offset;
+
+                /* Limit to maximum user will accept */
+                if (available > maxlen) {
+                    available = maxlen;
+                }
+ 
+                memcpy(buf, packet->buffer + STREAM_PAYLOAD + offset, available);
+
+                buf += available;
+                maxlen -= available;
+                total_len += available;
+                offset += available;
+
+                eor = (get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN) & STREAM_FLAGS_EOR) != 0;
+
+                /* If this was end of record or we consumed all the data in the packet, release it */
+                if (eor ||  offset == packet->length - STREAM_PAYLOAD) {
+                    release_packet(packet);
+                } else {
+                    /* Otherwise save the packet and offset */
+                    s->residue_packet = packet;
+                    s->residue_offset = offset;
+                }
+            } else {
+                eor = true;
+            }
         }
 
+        /* If residue bytes in the last packet and it was NOT an eor, remember the packet and the offset */
+     
     } else {
         ret = LSE_INVALID_SOCKET;
     }
@@ -723,6 +985,12 @@ ls_error_t ls_read(int socket, char* buf, int maxlen)
 
     return ret;
 }
+
+ls_error_t ls_read(int socket, char* buf, int maxlen)
+{
+    return ls_read_with_address(socket, buf, maxlen, NULL, NULL);
+}
+
 
 /*
  * Close a socket.  All internal information is deleted.
@@ -736,32 +1004,44 @@ ls_error_t ls_close(int socket)
     if (s != NULL) {
         if (linklayer_lock()) {
             switch (s->socket_type) {
-                case LS_UNUSED:
+                case LS_UNUSED: {
                     ret = LSE_NOT_OPENED;
                     break;
+                }
 
-                case LS_LISTEN:
-                    /* Close listener queue */
-                    os_delete_queue(s->connections);
-                    s->connections = NULL;
-                    s->socket_type = LS_UNUSED;
+                case LS_STREAM: {
+                    if (s->listen) {
+                        /* Close listener queue */
+                        ls_socket_t* c;
+                        while (os_get_queue_with_timeout(s->connections, (os_queue_item_t*) &c, 0)) {
+                            if (c != NULL) {
+                                ls_close(c - socket_table);
+                            }
+                        }
+                        os_delete_queue(s->connections);
+                        s->connections = NULL;
+                        s->socket_type = LS_UNUSED;
+                    } else {
+                        /* Clear asssemnly buffer */
+                        /* Clear outbound queue */
+                        /* Fall through and clear received packets */
+                    }
                     break;
+                }
 
-                case LS_STREAM:
-                    /* Clear asssemnly buffer */
-                    /* Clear outbound queue */
-                    /* Fall through and clear received packets */
-
-                case LS_DATAGRAM:
+                case LS_DATAGRAM: {
                     /* Close packet receive queue */
+                    linklayer_release_packets_in_queue(s->received_packets);
                     os_delete_queue(s->received_packets);
                     s->received_packets = NULL;
                     s->socket_type = LS_UNUSED;
                     break;
+                }
 
-                default:
+                default: {
                     ret = LSE_INVALID_SOCKET;
                     break;
+                }
             }
             linklayer_unlock();
         }
