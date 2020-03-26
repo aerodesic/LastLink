@@ -549,9 +549,9 @@ static bool stream_packet_process(packet_t* packet)
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
         /* Read the flags field for later use */
         uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
+
         /* Get the socket for this packet if there is one */
         ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
-
 
         switch (flags & STREAM_FLAGS_CMD) {
             default: {
@@ -559,14 +559,19 @@ static bool stream_packet_process(packet_t* packet)
                 /* Ignore noise */
                 break;
             }
-            case STREAM_FLAGS_CMD_NOP: {
-                /* If we are connected, process the data packet */
+            case STREAM_FLAGS_CMD_DATA: {
+                /*
+                 * Pass the data through the assembly phase.  This might require modifying the current outbound packet
+                 * to update ack seqeuence numbers, etc.  In some cases a brand new packet will be generated.
+                 *
+                 * If there is no data in this packet, it will be ignored if the first packet in the queue.
+                 */
+                put_packet_into_window(socket->input_window, packet);
                 break;
             }
 
             case STREAM_FLAGS_CMD_CONNECT: {
-
-                /* If we are listening, create new connection to receive the packets */
+                /* First see if this is a connect on a socket that is already connecting */
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -587,10 +592,10 @@ static bool stream_packet_process(packet_t* packet)
                         if (new_connection != NULL) {
                             /* Create a new connection that achievs a local endpoint for the new socket */
                             new_connection->state = LS_STATE_INBOUND_CONNECT;
-                            new_connection->local_port = socket->local_port;
+                            new_connection->local_port = listen_socket->local_port;
                             new_connection->dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
                             new_connection->dest_addr = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
-                            new_connection->parent = socket;
+                            new_connection->parent = listen_socket;
 
                             /* Send a CONNECT ACK and go to INBOUND CONNECT state waiting for full acks */
                             start_state_machine(new_connection, LS_STATE_INBOUND_CONNECT,
@@ -682,14 +687,6 @@ static bool stream_packet_process(packet_t* packet)
             if (reject) {
                 linklayer_send_packet(stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_REJECT));
             } else {
-                /*
-                 * Pass the data through the assembly phase.  This might require modifying the current outbound packet
-                 * to update ack seqeuence numbers, etc.  In some cases a brand new packet will be generated.
-                 *
-                 * If there is no data in this packet, it will be ignored if the first packet in the queue.
-                 */
-                put_packet_into_window(socket->input_window, packet);
-
                 /* Process any data ack */
                 release_packets_in_window(socket->output_window,
                                           get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
@@ -1091,7 +1088,7 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len,
                  */
                 while (len != NULL) {
                     if (socket->current_write_packet == NULL) {
-                        socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_NOP);
+                        socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DATA);
                     }
 
                     /* room available in  the packet buffer */
