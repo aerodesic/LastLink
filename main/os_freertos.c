@@ -85,6 +85,34 @@ bool os_release_mutex_from_isr(os_mutex_t mutex, bool* awakened)
     return true;
 }
 
+os_semaphore_t os_create_counting_semaphore(int max_count, int initial_count)
+{
+    return (os_semaphore_t) xSemaphoreCreateCounting(max_count, initial_count);
+}
+
+bool os_release_counting_semaphore(os_semaphore_t sem, int count)
+{
+    bool ok = false;
+
+    while ((count != 0) && (ok = os_release_mutex(sem))) {
+        --count;
+    }
+
+    return ok;
+}
+
+bool os_acquire_counting_semaphore(os_semaphore_t sem)
+{
+    return os_acquire_mutex(sem);
+}
+
+bool os_delete_counting_semaphore(os_semaphore_t sem)
+{
+    vSemaphoreDelete(sem);
+    return true;
+}
+
+
 os_queue_t os_create_queue(int depth, size_t size)
 {
     ESP_LOGI(TAG, "%s: depth %d size %u", __func__, depth, size);

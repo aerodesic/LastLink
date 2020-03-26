@@ -98,6 +98,14 @@ static ls_error_t get_state_machine_response(ls_socket_t* socket);
 static ls_error_t ls_close_helper(int socket, bool immediate);
 static ls_error_t ls_close_immediate(int socket);
 
+/* Put a packet into the relative window of queue.  Returns true if success */
+static bool put_packet_into_window(packet_window_t* queue, packet_t* packet);
+static packet_t* get_packet_from_window(packet_window_t* queue);
+static bool write_packet_to_window(packet_window_t* queue, packet_t* packet);
+static void release_packets_in_window(packet_window_t* queue, int sequence, unsigned int window);
+static packet_window_t* allocate_packet_window(int length, int available);
+static bool release_packet_window(packet_window_t* queue);
+
 typedef struct ping_table_entry {
     os_queue_t   queue;
     int          sequence;
@@ -474,12 +482,23 @@ static bool datagram_packet_process(packet_t* packet)
 
         if (socket != NULL) {
             /* Send the packet to the datagram input queue */
-            if (!os_put_queue(socket->received_packets, (os_queue_item_t) ref_packet(packet))) {
-                /* Not able to queue, so just log and drop it */
-                linklayer_print_packet("Unable to queue", packet);
-                release_packet(packet);  /* Release the ref above */
+            switch (socket->socket_type) {
+                case LS_STREAM: {
+                    put_packet_into_window(socket->input_window, packet);
+                    break;
+                }
+                case LS_DATAGRAM: {
+                    if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) ref_packet(packet))) {
+                        release_packet(packet);
+                    }
+                    break;
+                }
+                default: {
+                    linklayer_print_packet("Useless Packet", packet);
+                    break;
+                }
             }
-
+ 
             processed = true;
         }
     }
@@ -543,6 +562,8 @@ static bool stream_packet_process(packet_t* packet)
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
         /* Read the flags field for later use */
         uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
+        /* Get the socket for this packet if there is one */
+        ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
 
 
         switch (flags & STREAM_FLAGS_CMD) {
@@ -559,7 +580,6 @@ static bool stream_packet_process(packet_t* packet)
             case STREAM_FLAGS_CMD_CONNECT: {
 
                 /* If we are listening, create new connection to receive the packets */
-                ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -572,9 +592,9 @@ static bool stream_packet_process(packet_t* packet)
                     }
                 } else {
                     /* Didn't find actual socket, so see if this is a new listen */
-                    socket = find_listening_socket_from_packet(packet);
+                    ls_socket_t* listen_socket = find_listening_socket_from_packet(packet);
 
-                    if (socket != NULL) {
+                    if (listen_socket != NULL) {
                         ls_socket_t* new_connection = find_free_socket();
 
                         if (new_connection != NULL) {
@@ -603,7 +623,6 @@ static bool stream_packet_process(packet_t* packet)
 
             case STREAM_FLAGS_CMD_CONNECT_ACK: {
                 /* If are in connecting, respond with connect ack */
-                ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -635,7 +654,6 @@ static bool stream_packet_process(packet_t* packet)
 
             case STREAM_FLAGS_CMD_DISCONNECT: {
                 /* If are in connecting, respond with connect ack */
-                ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -650,7 +668,6 @@ static bool stream_packet_process(packet_t* packet)
 
             case STREAM_FLAGS_CMD_DISCONNECTED: {
                 /* If are in connecting, respond with connect ack */
-                ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -663,7 +680,6 @@ static bool stream_packet_process(packet_t* packet)
 
             case STREAM_FLAGS_CMD_REJECT: {
                 /* If are in connecting, respond with connect ack */
-                ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -686,6 +702,11 @@ static bool stream_packet_process(packet_t* packet)
                 if ((flags & STREAM_FLAGS_DATA) != 0) {
                     /* Process any data if present */
                 }
+
+                /* Process any data ack */
+                release_packets_in_window(socket->output_window,
+                                          get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                                          get_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN));
             }
 
             processed = true;
@@ -1015,6 +1036,9 @@ ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port)
             /* Datagram connection is easy - we just say it's connected */
             s->state = LS_STATE_CONNECTED;
         } else {
+            s->input_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, 0);
+            s->output_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, CONFIG_LASTLINK_STREAM_WINDOW_SIZE);
+
             /* Start sending connect packet and wait for complete */
             start_state_machine(s, LS_STATE_OUTBOUND_CONNECT,
                                 stream_packet_create_from_socket(s, STREAM_FLAGS_CMD_CONNECT),
@@ -1052,7 +1076,37 @@ ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port)
  */
 static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len, bool eor)
 {
-    return LSE_CLOSED;
+    ls_error_t ret;
+
+    switch (socket->socket_type) {
+        case LS_DATAGRAM: {
+            packet_t* packet = datagram_packet_create_from_socket(socket);
+            if (packet != NULL) {
+                int tomove = len;
+                if (tomove > MAX_PACKET_LEN - DATAGRAM_PAYLOAD) {
+                    tomove = MAX_PACKET_LEN - DATAGRAM_PAYLOAD;
+                }
+                memcpy(packet->buffer, buf, tomove);
+                linklayer_send_packet(packet);
+                ret = tomove;
+            } else {
+                ret = LSE_NO_MEM;
+            }
+            break;
+        }
+
+        case LS_STREAM: {
+            ret = LSE_NOT_IMPLEMENTED;
+            break;
+        }
+
+        default: {
+            ret = LSE_NOT_WRITABLE;
+            break;
+       }
+   }
+
+   return ret;
 }
 
 ls_error_t ls_write(int socket, const char* buf, int len)
@@ -1112,7 +1166,7 @@ ls_error_t ls_read_with_address(int socket, char* buf, int maxlen, int* address,
     } else if (s->socket_type == LS_DATAGRAM) {
         /* Pend on a packet in the queue */
         packet_t* packet;
-        if (os_get_queue(s->received_packets, (os_queue_item_t*) &packet)) {
+        if (os_get_queue(s->datagram_packets, (os_queue_item_t*) &packet)) {
             /* A packet with data */
             int packet_data_length = packet->length - DATAGRAM_PAYLOAD;
             if (packet_data_length > maxlen) {
@@ -1143,10 +1197,9 @@ ls_error_t ls_read_with_address(int socket, char* buf, int maxlen, int* address,
                 s->residue_packet = NULL;
                 offset = s->residue_offset;
                 s->residue_offset = 0;
-            } else if (os_get_queue(s->stream_packet_queue, (os_queue_item_t*) &packet)) {
-                offset = 0;
             } else {
-                packet = NULL;
+                packet = get_packet_from_window(s->input_window);
+                offset = 0;
             }
 
             if (packet != NULL) {
@@ -1227,6 +1280,10 @@ static ls_error_t ls_close_helper(int socket, bool immediate)
                         os_delete_queue(s->connections);
                         s->connections = NULL;
                         s->socket_type = LS_UNUSED;
+
+                        /* We may want to old off deleting the out window until close received */
+                        release_packet_window(s->input_window);
+                        release_packet_window(s->output_window);
                     } else {
                         /* Clear asssemnly buffer */
                         /* Clear outbound queue */
@@ -1245,9 +1302,9 @@ static ls_error_t ls_close_helper(int socket, bool immediate)
 
                 case LS_DATAGRAM: {
                     /* Close packet receive queue */
-                    linklayer_release_packets_in_queue(s->received_packets);
-                    os_delete_queue(s->received_packets);
-                    s->received_packets = NULL;
+                    linklayer_release_packets_in_queue(s->datagram_packets);
+                    os_delete_queue(s->datagram_packets);
+                    s->datagram_packets = NULL;
                     s->socket_type = LS_UNUSED;
                     break;
                 }
@@ -1309,4 +1366,205 @@ static ls_socket_t* validate_socket(int socket)
 
     return ret;
 }
+
+/*
+ * Put a packet into the queue at the expected sequence number entry.
+ * Rejects action if outside of window.
+ *
+ * Entry:
+ *      queue               Queue holding packets
+ *      packet              Packet to add to queue
+ *
+ * Returns true if success.
+ *
+ */
+static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
+{
+    bool ok = false;
+
+
+    int relative_sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN) - queue->sequence;
+
+    if (relative_sequence >= 0 && relative_sequence < queue->length) {
+        if (os_acquire_mutex(queue->lock)) {
+            /* Ignore packet if already installed */
+            if (queue->slots[relative_sequence] == NULL) {
+                queue->slots[relative_sequence] = ref_packet(packet);
+                queue->window |= 1 << relative_sequence;
+
+                /* Move 'in' forward to release contiguous packets from beginning of sequence */
+                while (queue->in < queue->length && queue->slots[queue->in] != NULL) {
+                    os_release_counting_semaphore(queue->available, 1);
+                    queue->in++;
+                }
+            }
+            os_release_mutex(queue->lock);
+            ok = true;
+        }
+    }
+
+    return ok;
+}
+
+/*
+ * Get a stream packet from window for delivery to user.
+ */
+static packet_t* get_packet_from_window(packet_window_t* queue)
+{
+    packet_t* packet = NULL;
+
+    if (os_acquire_counting_semaphore(queue->available)) {
+        /* Remove first entry */
+        if (os_acquire_mutex(queue->lock)) {
+
+            /* Take the top of the queue */
+            packet = queue->slots[0];
+            if (queue->in > 1) {
+                memcpy(queue->slots + 0, queue->slots + 1, (queue->in - 1) * sizeof(queue->slots[0]));
+            }
+            queue->in--;
+            queue->slots[queue->in] = NULL;
+            queue->window >>= 1;
+            queue->sequence++;
+
+            os_release_mutex(queue->lock);
+        }
+    }
+
+    return packet;
+}
+
+            
+
+/*
+ * Write a new sequential packet to the window.  Labels the packet with the correct sequence number
+ * and places it into the appropriate slot.  Requires acquiring counting semaphore to approve
+ * allocation of the slot.
+ *
+ * This is the user side of the write-packet-to-network functionality;
+ *
+ * Entry:
+ *        queue             Queue to receive packets.
+ *        packet            Packet to place in queue.  Will be ref'd if accepted.
+ *
+ * Returns true on success.
+ */
+static bool write_packet_to_window(packet_window_t* queue, packet_t* packet)
+{
+    bool ok = false;
+
+    if (os_acquire_counting_semaphore(queue->available)) {
+        /* Room to put the packet.  Lock the queue */
+        if (os_acquire_mutex(queue->lock)) {
+            
+            /* Sanity check */
+            if (queue->in < queue->length) {
+                /* Insert sequence number into packet */
+                set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, queue->sequence + queue->in);
+                queue->slots[queue->in++] = ref_packet(packet);
+                ok = true;
+            }
+            os_release_mutex(queue->lock);
+        }
+    }
+    return ok;
+}
+
+            
+/*
+ * Called when a sequence ACK and window are received.
+ *
+ * The sequence number is the NEXT expected sequence to be received by the caller.
+ * The window gives hints as to any out-of-sequence packets that have been received.
+ * 
+ * This function releases the packets, rolls up the queue and release the appropriate
+ * count to the semaphore describing the room available.
+ *
+ * Entry:
+ *      queue           - queue containing the packets being processed.
+ *      sequence        - sequence number being acked.
+ *      window          - additional packets (bit field relative to sequence) that are acked.
+ *
+ */
+static void release_packets_in_window(packet_window_t* queue, int sequence, unsigned int window)
+{
+    if (os_acquire_mutex(queue->lock)) {
+        /* Ack the head of the queue, if any */
+        while (queue->slots[0] != NULL &&  (sequence < get_uint_field(queue->slots[0], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN))) {
+            release_packet(queue->slots[0]);
+            /* Remove from table */
+            if (queue->in > 1) {
+                memcpy(queue->slots + 0, queue->slots + 1, (queue->in - 1) * sizeof(queue->slots[0]));
+            }
+            queue->in--;
+            queue->slots[queue->in] = NULL;
+             
+            /* Immediate release when queue is squished */
+            os_release_counting_semaphore(queue->available, 1);
+        }
+
+        /* Release the other packets defined by the window */
+        int residue = 1;
+        while (window != 0) {
+            if (((window & 1) != 0) && (queue->slots[residue] != NULL)) {
+                release_packet(queue->slots[residue]);
+                queue->slots[residue] = NULL;
+                queue->released++;
+            }
+            window >>= 1;
+            residue++;
+        }
+
+        /* When queue goes empty, release all pending releases */
+        if (queue->in == 0) {
+            /* Queue went from non-empty to empty so give space back to the caller */
+            os_release_counting_semaphore(queue->available, queue->released);
+            queue->released = 0;
+        }
+    }
+}
+
+             
+/*
+ * Allocate and initialize the packet window.
+ *
+ * Entry:
+ *        length           Total window size of queue
+ *        available        Initial available slots (0 for read side; length for write side)
+ */
+static packet_window_t* allocate_packet_window(int length, int available)
+{
+     packet_window_t* queue = (packet_window_t*) malloc(sizeof(packet_window_t) + sizeof(packet_t*) * (length - 1));
+
+     if (queue != NULL) {
+         memset(queue, 0, sizeof(packet_window_t) + sizeof(packet_t*) * (length - 1));
+         queue->available = os_create_counting_semaphore(length, available);
+         queue->lock = os_create_mutex();
+         queue->length = length;
+     }
+
+     return queue;
+}
+
+static bool release_packet_window(packet_window_t* queue)
+{
+    if (os_acquire_mutex(queue->lock)) {
+        os_delete_counting_semaphore(queue->available);
+
+        /* Release packets in queue */
+        for (int index = 0; index < queue->length; ++index) {
+            if (queue->slots[index] != NULL) {
+                release_packet(queue->slots[index]);
+                queue->slots[index] = NULL;
+            }
+        }
+        os_delete_mutex(queue->lock);
+    }
+
+    free((void*) queue);
+
+    return true;
+}
+
+    
 #endif /* CONFIG_LASTLINKE_ENABLE_SOCKET_LAYER */
