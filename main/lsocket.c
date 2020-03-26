@@ -482,21 +482,8 @@ static bool datagram_packet_process(packet_t* packet)
 
         if (socket != NULL) {
             /* Send the packet to the datagram input queue */
-            switch (socket->socket_type) {
-                case LS_STREAM: {
-                    put_packet_into_window(socket->input_window, packet);
-                    break;
-                }
-                case LS_DATAGRAM: {
-                    if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) ref_packet(packet))) {
-                        release_packet(packet);
-                    }
-                    break;
-                }
-                default: {
-                    linklayer_print_packet("Useless Packet", packet);
-                    break;
-                }
+            if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) ref_packet(packet))) {
+                release_packet(packet);
             }
  
             processed = true;
@@ -698,10 +685,10 @@ static bool stream_packet_process(packet_t* packet)
                 /*
                  * Pass the data through the assembly phase.  This might require modifying the current outbound packet
                  * to update ack seqeuence numbers, etc.  In some cases a brand new packet will be generated.
+                 *
+                 * If there is no data in this packet, it will be ignored if the first packet in the queue.
                  */
-                if ((flags & STREAM_FLAGS_DATA) != 0) {
-                    /* Process any data if present */
-                }
+                put_packet_into_window(socket->input_window, packet);
 
                 /* Process any data ack */
                 release_packets_in_window(socket->output_window,
@@ -1096,7 +1083,54 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len,
         }
 
         case LS_STREAM: {
-            ret = LSE_NOT_IMPLEMENTED;
+            int written = 0;
+
+            if (len != 0 || eor) { 
+                /*
+                 * Kill the timer set with LASTLINK_STREAM_TRANSMIT_DELAY
+                 */
+                while (len != NULL) {
+                    if (socket->current_write_packet == NULL) {
+                        socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_NOP);
+                    }
+
+                    /* room available in  the packet buffer */
+                    int towrite =  MAX_PACKET_LEN - socket->current_write_packet->length;
+
+                    /* Limit output to the amount available */
+                    if (towrite > len) {
+                        towrite = len;
+                    }
+
+                    /* Copy data to packet */
+                    memcpy(socket->current_write_packet->buffer + socket->current_write_packet->length, buf, towrite);
+                    socket->current_write_packet->length += towrite;
+                    len -= towrite;
+                    buf += towrite;
+                    written += towrite;
+
+                    /* If more data to send and we've run out of room, send it now. */
+                    if (len != 0 && socket->current_write_packet->length == MAX_PACKET_LEN) {
+                        write_packet_to_window(socket->output_window, socket->current_write_packet);
+                        socket->current_write_packet = NULL;
+                    }
+                }
+
+                /*
+                 * Last packet generated.  If eor, set the EOR flag and send it, otherwise if packet is full, write it.
+                 */
+                if (eor || socket->current_write_packet->length == MAX_PACKET_LEN) {
+                    if (eor) {
+                        int flags = get_uint_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN);
+                        flags |= STREAM_FLAGS_EOR;
+                    }
+                    write_packet_to_window(socket->output_window, socket->current_write_packet);
+                    socket->current_write_packet = NULL;
+                } else {
+                    /* Set a timer with LASTLINK_STREAM_TRANSMIT_DELAY to force transmission if nothing else is stored in packet. */
+                }
+            }
+            ret = written;
             break;
         }
 
@@ -1382,7 +1416,6 @@ static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
 {
     bool ok = false;
 
-
     int relative_sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN) - queue->sequence;
 
     if (relative_sequence >= 0 && relative_sequence < queue->length) {
@@ -1391,12 +1424,12 @@ static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
             if (queue->slots[relative_sequence] == NULL) {
                 queue->slots[relative_sequence] = ref_packet(packet);
                 queue->window |= 1 << relative_sequence;
+            }
 
-                /* Move 'in' forward to release contiguous packets from beginning of sequence */
-                while (queue->in < queue->length && queue->slots[queue->in] != NULL) {
-                    os_release_counting_semaphore(queue->available, 1);
-                    queue->in++;
-                }
+            /* Move 'in' forward to release contiguous packets from beginning of sequence */
+            while (queue->in < queue->length && queue->slots[queue->in] != NULL) {
+                os_release_counting_semaphore(queue->available, 1);
+                queue->in++;
             }
             os_release_mutex(queue->lock);
             ok = true;
