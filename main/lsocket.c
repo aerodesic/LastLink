@@ -1086,7 +1086,7 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, int len,
                 /*
                  * Kill the timer set with LASTLINK_STREAM_TRANSMIT_DELAY
                  */
-                while (len != NULL) {
+                while (len != 0) {
                     if (socket->current_write_packet == NULL) {
                         socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DATA);
                     }
@@ -1259,12 +1259,12 @@ ls_error_t ls_read_with_address(int socket, char* buf, int maxlen, int* address,
                     s->residue_offset = offset;
                 }
             } else {
+                /* Socket remotely closed.  Return residue for last read. */
                 eor = true;
+                /* Shutdown socket */
+                ls_close_immediate(socket);
             }
         }
-
-        /* If residue bytes in the last packet and it was NOT an eor, remember the packet and the offset */
-
     } else {
         ret = LSE_INVALID_SOCKET;
     }
@@ -1308,24 +1308,45 @@ static ls_error_t ls_close_helper(int socket, bool immediate)
                                 ls_close_helper(c - socket_table, immediate);
                             }
                         }
+
                         os_delete_queue(s->connections);
                         s->connections = NULL;
                         s->socket_type = LS_UNUSED;
 
-                        /* We may want to old off deleting the out window until close received */
-                        release_packet_window(s->input_window);
-                        release_packet_window(s->output_window);
                     } else {
-                        /* Clear asssemnly buffer */
-                        /* Clear outbound queue */
-                        /* Fall through and clear received packets */
                         if (!immediate) {
-                            /* Start a close  */
+                            /*
+                             * Start a close by sending disconnected to remote end.
+                             * Socket will no longer be writable by can be read until end of data.
+                             * When reaching end data, local socket will also close.
+                             */
                             start_state_machine(s, LS_STATE_DISCONNECTING,
                                                 stream_packet_create_from_socket(s, STREAM_FLAGS_CMD_DISCONNECTED),
                                                 STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
 
                             ret = get_state_machine_response(s);
+                        } else {
+                            /* Otherwise forcibly shut everything down */
+                            release_packet_window(s->input_window);
+                            s->input_window = NULL;
+                            release_packet_window(s->output_window);
+                            s->output_window = NULL;
+
+                            if (s->retry_timer != NULL) {
+                                os_delete_timer(s->retry_timer);
+                                s->retry_timer = NULL;
+                                release_packet(s->retry_packet);
+                                s->retry_packet = NULL;
+                            }
+                            if (s->response_queue != NULL) {
+                                os_delete_queue(s->response_queue);
+                                s->response_queue = NULL;
+                            }
+                            release_packet(s->residue_packet);
+                            s->residue_packet = NULL;
+
+                            release_packet(s->current_write_packet);
+                            s->current_write_packet = NULL;
                         }
                     }
                     break;
@@ -1438,6 +1459,8 @@ static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
 
 /*
  * Get a stream packet from window for delivery to user.
+ *
+ * When NULL is returned, the socket was closed remotely.
  */
 static packet_t* get_packet_from_window(packet_window_t* queue)
 {
@@ -1449,14 +1472,18 @@ static packet_t* get_packet_from_window(packet_window_t* queue)
 
             /* Take the top of the queue */
             packet = queue->slots[0];
-            if (queue->in > 1) {
-                memcpy(queue->slots + 0, queue->slots + 1, (queue->in - 1) * sizeof(queue->slots[0]));
-            }
-            queue->in--;
-            queue->slots[queue->in] = NULL;
-            queue->window >>= 1;
-            queue->sequence++;
 
+            /* If nothing in queue, we are closing */
+            if (packet != NULL) {
+                if (queue->in > 1) {
+                    memcpy(queue->slots + 0, queue->slots + 1, (queue->in - 1) * sizeof(queue->slots[0]));
+                }
+                queue->in--;
+                queue->slots[queue->in] = NULL;
+                queue->window >>= 1;
+                queue->sequence++;
+
+            }
             os_release_mutex(queue->lock);
         }
     }
