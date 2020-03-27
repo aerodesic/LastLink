@@ -544,7 +544,7 @@ static bool stream_packet_process(packet_t* packet)
 {
     bool processed = false;
 
-    bool reject = false;
+    bool reject = true;
 
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
         /* Read the flags field for later use */
@@ -567,6 +567,7 @@ static bool stream_packet_process(packet_t* packet)
                  * If there is no data in this packet, it will be ignored if the first packet in the queue.
                  */
                 put_packet_into_window(socket->input_window, packet);
+                reject = false;
                 break;
             }
 
@@ -578,9 +579,7 @@ static bool stream_packet_process(packet_t* packet)
                     if (socket->state == LS_STATE_INBOUND_CONNECT) {
                         /* Redundant CONNECT gets a CONNECT_ACK */
                         linklayer_send_packet(stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_CONNECT_ACK));
-                    } else {
-                        /* All others get a reject and shutdown */
-                        reject = true;
+                        reject = false;
                     }
                 } else {
                     /* Didn't find actual socket, so see if this is a new listen */
@@ -601,12 +600,8 @@ static bool stream_packet_process(packet_t* packet)
                             start_state_machine(new_connection, LS_STATE_INBOUND_CONNECT,
                                                 stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_CONNECT_ACK),
                                                 STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
-                        } else {
-                            /* Send a reject */
-                            reject = true;
+                            reject = false;
                         }
-                    } else {
-                        reject = true;
                     }
                 }
 
@@ -627,16 +622,17 @@ static bool stream_packet_process(packet_t* packet)
 
                         /* Deliver success to caller */
                         send_state_machine_response(socket, LSE_NO_ERROR);
+                        reject = false;
                     } else if (socket->state == LS_STATE_INBOUND_CONNECT) {
                         socket->state = LS_STATE_CONNECTED;
                         /* Send the socket number to the waiting listener */
                         if (socket->parent != NULL) {
                             /* Put in the connection queue but if overflowed, reject the connection */
-                            if(! os_put_queue_with_timeout(socket->parent->connections, socket, 0)) {
-                                reject = true;
+                            if(os_put_queue_with_timeout(socket->parent->connections, socket, 0)) {
+                                reject = false;
                             }
                         } else {
-                            /* ERROR connection has no parent.  Just release the socket */
+                            /* ERROR connection has no parent.  Just release the socket and reject connection attempt. */
                             memset(socket, 0, sizeof(*socket));
                         }
                     }
@@ -645,7 +641,7 @@ static bool stream_packet_process(packet_t* packet)
             }
 
             case STREAM_FLAGS_CMD_DISCONNECT: {
-                /* If are in connecting, respond with connect ack */
+                /* If still in connecting, respond with connect ack */
                 if (socket != NULL) {
                     /* Cancel current state machine retry */
                     cancel_state_machine(socket);
@@ -654,6 +650,7 @@ static bool stream_packet_process(packet_t* packet)
                     start_state_machine(socket, LS_STATE_DISCONNECTING,
                                         stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_DISCONNECTED),
                                         STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
+                    reject = false;
                 }
                 break;
             }
@@ -666,6 +663,7 @@ static bool stream_packet_process(packet_t* packet)
 
                     socket->state = LS_STATE_DISCONNECTED;
                     send_state_machine_response(socket, LSE_NO_ERROR);
+                    reject = false;
                 }
                 break;
             }
@@ -680,6 +678,7 @@ static bool stream_packet_process(packet_t* packet)
                     start_state_machine(socket, LS_STATE_DISCONNECTED,
                                         stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_DISCONNECTED),
                                         STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
+                    reject = false;
                 }
                 break;
             }
@@ -836,7 +835,7 @@ ls_error_t ls_bind(int socket, ls_port_t local_port)
 
     if (s != NULL) {
         /* Assign local port from free pool if not specified by user */
-        s->local_port = local_port ? local_port : find_free_local_port();
+        s->local_port = local_port;
 
         ret = LSE_NO_ERROR;
     }
@@ -1015,6 +1014,11 @@ ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port)
         s->dest_port = port;
         s->dest_addr = address;
         s->serial_number = linklayer_allocate_sequence();  /* Unique serial number for this connection */
+
+        /* If localport is 0, bind an unused local port to this socket */
+        if (s->local_port == 0) {
+            s->local_port = find_free_local_port();
+        }
 
         if (s->socket_type == LS_DATAGRAM) {
             /* Datagram connection is easy - we just say it's connected */
@@ -1301,6 +1305,13 @@ static ls_error_t ls_close_helper(int socket, bool immediate)
 
                 case LS_STREAM: {
                     if (s->listen) {
+                        /* Go through all sockets and bust the parent link to this listener */
+                        for (int socknum = 0; socknum < ELEMENTS_OF(socket_table); ++socknum) {
+                            if (socket_table[socknum].socket_type == LS_STREAM && socket_table[socknum].parent == s) {
+                                socket_table[socknum].parent = NULL;
+                            }
+                        }
+
                         /* Close listener queue */
                         ls_socket_t* c;
                         while (os_get_queue_with_timeout(s->connections, (os_queue_item_t*) &c, 0)) {
