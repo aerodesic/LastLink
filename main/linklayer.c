@@ -260,9 +260,10 @@ packet_t* linklayer_create_generic_packet(int dest, int protocol, int length)
 
          /* Set to header length plus payload required */
          p->length = HEADER_LEN + length;
-         set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
-         set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
          set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+         set_uint_field(p, HEADER_FLAGS, FLAGS_LEN, 0);
+         set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+         set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
          set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
          set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, protocol);
          set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
@@ -1319,16 +1320,17 @@ ESP_LOGD(TAG, "%s: returning next packet %p", __func__, packet);
 void linklayer_print_packet(const char* reason, packet_t* packet)
 {
     if (packet != NULL) {
-        int dest   = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
-        int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
         int routeto  = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-        int sender = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+        int flags    = get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN);
+        int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+        int dest     = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+        int sender   = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
         int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
         int ttl      = get_uint_field(packet, HEADER_TTL, TTL_LEN);
 
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGD(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, dest, origin, routeto, sender, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
+        ESP_LOGD(TAG, "%s: R=%04x O=%04x D=%04x S=%04x F=%02x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, routeto, origin, dest, sender, flags, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
     } else {

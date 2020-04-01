@@ -207,9 +207,9 @@ bool route_delete(route_t* r)
 	            rt->routes = r->next;
     	    }
 
-            ESP_LOGI(TAG, "%s: cancelling pending route request", __func__);
 	        /* Cancel timer */
             if (r->pending_timer) {
+                ESP_LOGI(TAG, "%s: canceling pending route request", __func__);
                 os_stop_timer(r->pending_timer);
                 os_delete_timer(r->pending_timer);
                 r->pending_timer = NULL;

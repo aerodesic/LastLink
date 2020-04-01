@@ -1,6 +1,5 @@
 /*
- * A simple command processor called with an I/O channel (e.g. stream) for testing
- * network, etc.
+ * A simple command processor called with a pair of file descriptors for communication.
  */
 #include <stdio.h>
 #include <stdbool.h>
@@ -14,6 +13,40 @@
 #include "lsocket.h"
 #include "commands.h"
 #include "linklayer.h"
+
+/*
+ * Go through buffer and tokenize into argv/argc structure.
+ */
+static int tokenize(char *buffer, const char**args, int maxargs)
+{
+    int argc = 0;
+
+    while (*buffer != '\0' && maxargs > 1) {
+        /* Look for first non-space */
+        while (isspace(*buffer)) {
+            ++buffer;
+        }
+        /* If a quote or apostrophe, take the whole field */
+        if (*buffer == '"' || *buffer == '\'') {
+            args[argc++] = buffer + 1;
+            int delim = *buffer++;
+            while (*buffer != delim && *buffer != '\0') {
+                ++buffer;
+            }
+        } else if (*buffer != '\0') {
+            args[argc++] = buffer++;
+            while (!isspace(*buffer) && *buffer != '\0') {
+                ++buffer;
+            }
+        }
+        if (*buffer != '\0') {
+            *buffer++ = '\0';
+        }
+    }
+    args[argc] = NULL;
+
+    return argc;
+}
 
 static int readline(char *buffer, size_t len)
 {
@@ -203,16 +236,18 @@ void CommandProcessor(void* params)
         if (len >= 1) {
 
             const char* args[MAX_ARGS];
-            int argc = 0;
+             int argc = tokenize(buffer, args, MAX_ARGS);
 
+#if 0
             char *savep;
 
             args[argc++] = strtok_r(buffer, " ", &savep);
             
-            while ((argc < MAX_ARGS) && ((args[argc] = strtok_r(NULL, " ", &savep)) != NULL)) {
+            while ((argc < MAX_ARGS) && ((args[argc] = strtok_r(NULL, "\"\' ", &savep)) != NULL)) {
                 ++argc;
             }
             args[argc] = NULL;
+#endif
 
             command_entry_t* command = NULL;
 

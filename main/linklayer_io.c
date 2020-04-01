@@ -50,7 +50,7 @@ static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
             pos += sprintf(outbuf + pos, " %02x", buffer[addr + b]);
         }
 
-        pos += sprintf(outbuf + pos, "  %*.*s", NUM_PER_LINE - todump, NUM_PER_LINE - todump, "");
+        pos += sprintf(outbuf + pos, "  %*.*s", (NUM_PER_LINE - todump)*3, (NUM_PER_LINE - todump)*3, "");
 
         for (int b = 0; b < todump; ++b) {
             pos += sprintf(outbuf + pos, "%c", isprint(buffer[addr + b]) ? buffer[addr + b] : '.');

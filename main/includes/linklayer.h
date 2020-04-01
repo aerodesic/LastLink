@@ -52,10 +52,11 @@
  *  A Header common to all packet types.                                                   *
  *                                                                                         *
  *******************************************************************************************/
-#define HEADER_DEST_ADDRESS            0
-#define HEADER_ORIGIN_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)
-#define HEADER_ROUTETO_ADDRESS         (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)
-#define HEADER_SENDER_ADDRESS          (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)
+#define HEADER_ROUTETO_ADDRESS         0
+#define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)
+#define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)
+#define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)
+#define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)
 #define HEADER_PROTOCOL                (HEADER_SENDER_ADDRESS + ADDRESS_LEN)
 #define HEADER_TTL                     (HEADER_PROTOCOL + PROTOCOL_LEN)
 #define HEADER_LEN                     (HEADER_TTL + TTL_LEN)
