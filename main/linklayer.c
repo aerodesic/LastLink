@@ -99,9 +99,6 @@ typedef struct protocol_entry {
 static protocol_entry_t           protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NUMBER + 1];
 
 
-#ifdef NOTUSED
-static void test_button_handler(void*);
-#endif
 
 /*
  * Configuration
@@ -259,6 +256,8 @@ packet_t* linklayer_create_generic_packet(int dest, int protocol, int length)
 {
     packet_t* p = allocate_packet();
     if (p != NULL) {
+         p->crc_ok = true;
+
          /* Set to header length plus payload required */
          p->length = HEADER_LEN + length;
          set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
@@ -603,8 +602,6 @@ const char* linklayer_escape_raw_data(const uint8_t* data, size_t length)
     /* Determine length of output data field */
     int outlen = 0;
 
-//ESP_LOGI(TAG, "%s: data at %p length %u", __func__, data, length);
-
     for (int index = 0; index < length; ++index) {
         if (isprint(data[index])) {
             outlen += 1;
@@ -651,8 +648,6 @@ static const char* default_packet_format(const packet_t* p)
 {
     char* info;
 
-//ESP_LOGI(TAG, "%s: packet %p length %u", __func__, p, p->length);
-
     /* Extract from end of header to end of packet */
     const char* data = linklayer_escape_raw_data(p->buffer + HEADER_LEN, p->length - HEADER_LEN);
 
@@ -668,7 +663,7 @@ bool linklayer_init(int address, int flags, int announce)
 {
     bool ok = false;
 
-    ESP_LOGI(TAG, "%s: address %d flags 0x%02x announce %d", __func__, address, flags, announce);
+    ESP_LOGD(TAG, "%s: address %d flags 0x%02x announce %d", __func__, address, flags, announce);
 
     linklayer_mutex = os_create_recursive_mutex();
     linklayer_node_address = address;
@@ -728,18 +723,6 @@ bool linklayer_init(int address, int flags, int announce)
         }
     }
 
-#ifdef NOTUSED
-    if (ok) {
-        ok = os_attach_gpio_interrupt(0, GPIO_INT_PULLDOWN, GPIO_PULLUP_DISABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0);
-        if (ok) {
-            ESP_LOGI(TAG, "Button interrupt attached");
-        } else {
-            ESP_LOGI(TAG, "Button interrupt attach failed");
-        }
-    }
-/*END DEBUG*/
-#endif
-
 #if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
     if (ok) {
         ok = ls_socket_init() == LSE_NO_ERROR;
@@ -794,7 +777,8 @@ bool linklayer_add_radio(int radio_num, const radio_config_t* config)
 
     /* Allocate radio structure */
     radio_t* radio = (radio_t*) malloc(sizeof(radio_t));
-ESP_LOGI(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, radio);
+
+ESP_LOGD(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, radio);
 
     if (radio != NULL) {
         memset(radio, 0, sizeof(radio_t));
@@ -831,7 +815,7 @@ ESP_LOGI(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
                         /* Create radio table */
                         radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
 
-ESP_LOGI(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
+ESP_LOGD(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
                         if (radio_table != NULL) {
                             memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
                         }
@@ -1068,7 +1052,7 @@ void linklayer_send_packet(packet_t* packet)
                     /* We have a route so select routeto and radio */
                     set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
                     if (route->radio_num != UNKNOWN_RADIO) {
-            ESP_LOGI(TAG, "%s: routing to radio %d", __func__, route->radio_num);
+            ESP_LOGD(TAG, "%s: routing to radio %d", __func__, route->radio_num);
                         radio = radio_table[route->radio_num];
                     } else {
             ESP_LOGE(TAG, "%s: no radio for route", __func__);
@@ -1140,8 +1124,6 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         asprintf(&info, "To Radio %d", radio->radio_num);
         linklayer_print_packet(info, packet);
         free((void*) info);
-
-    // ESP_LOGI(TAG, "%s: sending packet to radio %d", __func__, radio->radio_num);
 
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
@@ -1317,10 +1299,10 @@ static packet_t* linklayer_on_transmit(radio_t* radio)
     /* Pull packet from transmit queue and discard */
     packet_t* packet = NULL;
 
-ESP_LOGI(TAG, "%s: getting last packet", __func__);
+ESP_LOGD(TAG, "%s: getting last packet", __func__);
 
     if (os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &packet, 0)) {
-ESP_LOGI(TAG, "%s: releasing packet %p", __func__, packet);
+ESP_LOGD(TAG, "%s: releasing packet %p", __func__, packet);
         release_packet(packet);
 
         /* Peek next packet to send */
@@ -1329,7 +1311,7 @@ ESP_LOGI(TAG, "%s: releasing packet %p", __func__, packet);
         }
     }
 
-ESP_LOGI(TAG, "%s: returning next packet %p", __func__, packet);
+ESP_LOGD(TAG, "%s: returning next packet %p", __func__, packet);
     /* Return next packet to send or NULL if no more. */
     return packet;
 }
@@ -1344,15 +1326,13 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
         int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
         int ttl      = get_uint_field(packet, HEADER_TTL, TTL_LEN);
 
-        //ESP_LOGI(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Len=%d Ref=%d Radio=%d", reason, dest, origin, routeto, sender, ttl, protocol, packet->length, packet->ref, packet->radio_num);
-
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGI(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, dest, origin, routeto, sender, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
+        ESP_LOGD(TAG, "%s: D=%04x O=%04x R=%04x S=%04x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, dest, origin, routeto, sender, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
     } else {
-        ESP_LOGI(TAG, "%s: NULL packet", __func__);
+        ESP_LOGE(TAG, "%s: NULL packet", __func__);
     }
 }
 

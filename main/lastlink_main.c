@@ -1,6 +1,7 @@
 /*
  * LastLink main
  */
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -28,6 +29,10 @@
 #include "os_freertos.h"
 #include "packets.h"
 
+#include "commands.h"
+
+#include "sdkconfig.h"
+
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
 extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
@@ -39,15 +44,44 @@ const char* TAG = "lastlink";
 
 static const char* default_config[] = DEFAULT_CONFIG;
 
-#if CONFIG_LASTLINK_PING_ADDRESS
-static int button_interrupts;
-
-static void test_button_handler(void* param)
+#ifdef NOTUSED
+static int readline(char *buffer, size_t len)
 {
-    /* Create a ping packet to broadcast */
-    ++button_interrupts;
+    int index = 0;
+
+    bool reading = true;
+
+    while (reading) {
+        int ch = getchar();
+
+        if (ch < 0) {
+            os_delay(5);
+        } else {
+            if (ch == '\n') {
+                buffer[index] = '\0';
+                reading = false;
+                putchar('\n');
+            } else if (ch == '\b') {
+                if (index > 0) {
+                    putchar('\b');
+                    putchar(' ');
+                    putchar('\b');
+                    --index;
+                }
+            } else if (isprint(ch)) {
+                if (index < len-1) {
+                    putchar(ch);
+                    buffer[index++] = ch;
+                }
+            }
+        }
+    }
+
+printf("readline returning '%s'\n", buffer);
+    return index;
 }
 #endif
+
 
 void app_main(void)
 {
@@ -56,9 +90,7 @@ void app_main(void)
     if (init_nvs() == ESP_OK) {
         /* pass */
     }
-#endif
 
-#if 1
     if (init_spiffs() == ESP_OK) {
 	/* Try to open .config and if not found, format the spiffs */
 	FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
@@ -69,6 +101,7 @@ void app_main(void)
             fclose(fp);
         }
     }
+#endif
 
 
     ESP_LOGD(TAG, "About to load configuration");
@@ -76,6 +109,7 @@ void app_main(void)
     /* load config file */
     init_configuration(CONFIG_LASTLINK_CONFIG_FILE, default_config);
 
+#if 0
     ESP_LOGD(TAG, "zap = '%s'", get_config_str("zip", "not found"));
     ESP_LOGD(TAG, "section1.this = '%s'", get_config_str("section1.this", "not found"));
     ESP_LOGD(TAG, "section1.section2.blot = '%s'", get_config_str("section1.section2.blot", "not found"));
@@ -93,58 +127,17 @@ void app_main(void)
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
     linklayer_set_debug(true);
+
+   #if 1
+    start_commands(0, 1);
+   #endif
+
+    printf("FIRST_LASTLINK_FD %d LAST_LASTLINK_FD %d LWIP_SOCKET_OFFSET %d\n", FIRST_LASTLINK_FD, LAST_LASTLINK_FD, LWIP_SOCKET_OFFSET);
 #endif
 
-#if CONFIG_LASTLINK_PING_ADDRESS
-    if (os_attach_gpio_interrupt(0, GPIO_PIN_INTR_NEGEDGE, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, test_button_handler, (void*) 0)) {
-        ESP_LOGI(TAG, "Button interrupt attached");
-    } else {
-        ESP_LOGI(TAG, "Button interrupt attach failed");
-    }
-#endif
-
-#if 0
+#if 1
     /* This becomes the main thread */
     wifi_init_softap();
-#else
-    int last_packet_count = -99;
-
-  #if CONFIG_LASTLINK_PING_ADDRESS
-    int last_button_interrupts = button_interrupts;
-  #endif
-
-    while(true) {
-        for (int count = 0; count < 20; ++count) {
-            esp_task_wdt_reset();
-
-            os_delay(100);
-
-  #if CONFIG_LASTLINK_PING_ADDRESS
-            if (button_interrupts != last_button_interrupts) {
-                int paths[100];
-                ESP_LOGI(TAG, "Sending ping");
-                int path_len = ping(CONFIG_LASTLINK_PING_ADDRESS, paths, 100, 10000);
-                if (path_len < 0) {
-                    ESP_LOGI(TAG, "Ping error %d", path_len);
-                } else {
-                    printf("Path:");
-                    for (int path = 0; path < path_len; ++path) {
-                        printf(" %d", paths[path]);
-                    }
-                    printf("\n");
-                }
-                last_button_interrupts = button_interrupts;
-                last_packet_count = -1; /* Force display of available packets */
-            }
-  #endif
-
-            int packet_count = available_packets();
-            if (packet_count != last_packet_count) {
-                ESP_LOGI(TAG, "%d free packets", available_packets());
-                last_packet_count = packet_count;
-            }
-        }
-    }
 #endif
 }
 

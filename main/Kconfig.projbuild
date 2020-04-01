@@ -255,18 +255,6 @@ menu "LastLink Configuration"
             help
                 Enter the name of the spiffs partition as used in the parition table.
 
-        config LASTLINK_PING_ADDRESS
-            int "Produce pings to this address when button is pressed"
-            default 0
-            help
-                Select to enable sending PING packets when button pressed.
-
-        config LASTLINK_ADDRESS_OVERRIDE
-            int "Select address to override config (0 defaults to config)"
-            default 0
-            help
-                 Use to override config address for testing.
-
     endmenu
 
     menu "Socket layer"

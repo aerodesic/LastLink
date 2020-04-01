@@ -36,10 +36,10 @@ static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
 {
     int addr = 0;
 
-    printf("%s: ", ident);
+    char outbuf[120];
 
     while (len != 0) {
-        printf("%04x:", addr);
+        int pos = sprintf(outbuf, "%s: %04x:", ident, addr);
 
         int todump = NUM_PER_LINE;
         if (todump > len) {
@@ -47,16 +47,16 @@ static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
         }
 
         for (int b = 0; b < todump; ++b) {
-            printf(" %02x", buffer[addr + b]);
+            pos += sprintf(outbuf + pos, " %02x", buffer[addr + b]);
         }
 
-        printf("  %*.*s", NUM_PER_LINE - todump, NUM_PER_LINE - todump, "");
+        pos += sprintf(outbuf + pos, "  %*.*s", NUM_PER_LINE - todump, NUM_PER_LINE - todump, "");
 
         for (int b = 0; b < todump; ++b) {
-            printf("%c", isprint(buffer[addr + b]) ? buffer[addr + b] : '.');
+            pos += sprintf(outbuf + pos, "%c", isprint(buffer[addr + b]) ? buffer[addr + b] : '.');
         }
 
-        printf("\n");
+        ESP_LOGD(TAG, "%s: %s", __func__, outbuf);
 
         addr += todump;
         len -= todump;

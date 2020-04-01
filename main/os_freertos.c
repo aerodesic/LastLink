@@ -4,12 +4,60 @@
  * Provides an overlay of functions of the FreeRTOS using a common
  * naming condition and return codes.
  */
+#include <pthread.h>
 #include "esp_system.h"
 #include "esp_log.h"
 
 #include "os_freertos.h"
 
 #define TAG "os_freertos"
+
+static pthread_key_t sys_thread_sem_key;
+
+static void sys_thread_sem_free(void* data)
+{
+    os_semaphore_t *psem = (os_semaphore_t*) data;
+
+    if (psem != NULL && *psem != NULL) {
+        os_delete_semaphore(*psem);
+        free(psem);
+    }
+}
+
+void os_init(void)
+{
+    pthread_key_create(&sys_thread_sem_key, &sys_thread_sem_free);
+}
+
+
+os_semaphore_t* os_thread_sem_get(void)
+{
+    os_semaphore_t *psem = pthread_getspecific(sys_thread_sem_key);
+    if (psem == NULL) {
+       psem = os_thread_sem_init();
+    }
+    return psem;
+}
+
+os_semaphore_t* os_thread_sem_init(void)
+{
+    os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t*));
+    if (psem) {
+        *psem = os_create_binary_semaphore();
+        pthread_setspecific(sys_thread_sem_key, psem);
+    }
+
+    return psem;
+}
+
+void os_thread_sem_deinit(void)
+{
+    os_semaphore_t *psem = pthread_getspecific(sys_thread_sem_key);
+    if (psem != NULL) {
+        sys_thread_sem_free(psem);
+        pthread_setspecific(sys_thread_sem_key, NULL);
+    }
+}
 
 os_mutex_t os_create_mutex(void)
 {
@@ -85,11 +133,33 @@ bool os_release_mutex_from_isr(os_mutex_t mutex, bool* awakened)
     return true;
 }
 
+/* Semaphore */
+os_semaphore_t os_create_binary_semaphore(void)
+{
+    return (os_semaphore_t) xSemaphoreCreateBinary();
+}
+
 os_semaphore_t os_create_counting_semaphore(int max_count, int initial_count)
 {
     return (os_semaphore_t) xSemaphoreCreateCounting(max_count, initial_count);
 }
 
+bool os_acquire_semaphore(os_semaphore_t sem)
+{
+    return xSemaphoreTake(sem, portMAX_DELAY) == pdTRUE;
+}
+   
+bool os_release_semaphore(os_semaphore_t sem)
+{
+    xSemaphoreGive(sem);
+    return true;
+}
+   
+bool os_release_semaphore_from_isr(os_semaphore_t sem, bool *awakened)
+{
+    return os_release_mutex_from_isr((os_mutex_t) sem, awakened);
+}
+   
 bool os_release_counting_semaphore(os_semaphore_t sem, int count)
 {
     bool ok = false;
@@ -106,13 +176,13 @@ bool os_acquire_counting_semaphore(os_semaphore_t sem)
     return os_acquire_mutex(sem);
 }
 
-bool os_delete_counting_semaphore(os_semaphore_t sem)
+bool os_delete_semaphore(os_semaphore_t sem)
 {
     vSemaphoreDelete(sem);
     return true;
 }
 
-
+/* Queue */
 os_queue_t os_create_queue(int depth, size_t size)
 {
     ESP_LOGI(TAG, "%s: depth %d size %u", __func__, depth, size);
@@ -357,4 +427,3 @@ void* os_alloc_dma_memory(size_t size)
 {
     return heap_caps_malloc(size, MALLOC_CAP_DMA);
 }
-
