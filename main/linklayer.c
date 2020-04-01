@@ -74,7 +74,6 @@ static packet_t* linklayer_on_transmit(radio_t* radio);
 static void reset_device(radio_t* radio);
 
 int                               linklayer_node_address;
-
 static os_mutex_t                 linklayer_mutex;
 static int                        node_flags;
 static os_queue_t                 receive_queue;
@@ -97,8 +96,6 @@ typedef struct protocol_entry {
 } protocol_entry_t;
 
 static protocol_entry_t           protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NUMBER + 1];
-
-
 
 /*
  * Configuration
@@ -376,7 +373,7 @@ static bool routeannounce_packet_process(packet_t* p)
                     set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                     /* Update the metric */
                     set_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN, get_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN));
-                    linklayer_send_packet_update_ttl(p);
+                    linklayer_send_packet_update_ttl(ref_packet(p));
                 }
 
                 processed = true;
@@ -460,8 +457,7 @@ static bool routerequest_packet_process(packet_t* p)
 
                 /* Label it as going to specific radio of origin */
                 ra->radio_num = p->radio_num;
-                linklayer_send_packet(ref_packet(ra));
-                release_packet(ra);
+                linklayer_send_packet(ra);
 
                 processed = true;
 
@@ -531,7 +527,7 @@ static bool routeerror_packet_process(packet_t* p)
                 /* If not for us, redirect it on to dest */
                 if (! linklayer_packet_is_for_this_node(p)) {
                     set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-                    linklayer_send_packet(p);
+                    linklayer_send_packet(ref_packet(p));
                 }
             }
 
@@ -666,8 +662,8 @@ bool linklayer_init(int address, int flags, int announce)
 
     ESP_LOGD(TAG, "%s: address %d flags 0x%02x announce %d", __func__, address, flags, announce);
 
-    linklayer_mutex = os_create_recursive_mutex();
     linklayer_node_address = address;
+    linklayer_mutex = os_create_recursive_mutex();
     node_flags = flags;
 
     /* Allocate packets */
@@ -998,6 +994,7 @@ void linklayer_send_packet(packet_t* packet)
          * Label the from address and if no to address, attempt to route
          */
 
+
         /* Indicate coming from us */
         set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
 
@@ -1041,7 +1038,7 @@ void linklayer_send_packet(packet_t* packet)
 
                     /* Create a route request to be sent instead */
                     packet = routerequest_packet_create(dest);
-                    route_set_pending_request(route, packet, ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
+                    route_set_pending_request(route, ref_packet(packet), ROUTE_REQUEST_RETRIES, ROUTE_REQUEST_TIMEOUT);
 
                 } else if (route->routeto == NULL_ADDRESS) {
                     /* Still have pending route, add packet to queue */
@@ -1078,7 +1075,6 @@ void linklayer_send_packet(packet_t* packet)
             /* If radio is NULL, packet will be sent through all radios */
             if (packet != NULL) {
                 linklayer_transmit_packet(radio, ref_packet(packet));
-                release_packet(packet);
             }
         }
     }
@@ -1118,8 +1114,10 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
 {
     if (radio == NULL) {
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
+        release_packet(packet);
     } else {
         char *info;
         asprintf(&info, "To Radio %d", radio->radio_num);
@@ -1134,8 +1132,6 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             }
         }
     }
-
-    release_packet(packet);
 }
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
@@ -1247,7 +1243,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 
                     if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
                         if (protocol_table[protocol].process != NULL) {
-                            bool processed = protocol_table[protocol].process(ref_packet(packet));
+                            bool processed = protocol_table[protocol].process(packet);
                             if (! processed) {
                                 /* Look for a route for forward */
                                 route_t* route = route_find(&route_table, get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN));
@@ -1273,7 +1269,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                         }
                     } else {
                         ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
-                   }
+                    }
                 }
             } else {
                 /* It is not processed */
@@ -1330,7 +1326,7 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
 
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGD(TAG, "%s: R=%04x O=%04x D=%04x S=%04x F=%02x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, routeto, origin, dest, sender, flags, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
+        ESP_LOGD(TAG, "%s: (%p) R=%04x O=%04x D=%04x S=%04x F=%02x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, packet, routeto, origin, dest, sender, flags, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
     } else {

@@ -31,12 +31,12 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
 static int spi_read_register(radio_t* radio, int reg);
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* bufer, int len);
 
-#define NUM_PER_LINE 16
+#define NUM_PER_LINE 32
 static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
 {
     int addr = 0;
 
-    char outbuf[120];
+    char outbuf[20+NUM_PER_LINE*4+10];
 
     while (len != 0) {
         int pos = sprintf(outbuf, "%s: %04x:", ident, addr);

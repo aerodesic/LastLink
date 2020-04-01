@@ -25,17 +25,17 @@ typedef int ls_error_t;
 
 typedef enum {
     LSE_NO_ERROR         = 0,
-    LSE_CLOSED           = 1000,
-    LSE_NOT_OPENED       = 1002,
-    LSE_CANNOT_REGISTER  = 1003,
-    LSE_INVALID_SOCKET   = 1004,
-    LSE_NO_MEM           = 1005,
-    LSE_TIMEOUT          = 1006,
-    LSE_BAD_TYPE         = 1007,
-    LSE_SYSTEM_ERROR     = 1008,
-    LSE_INVALID_MAXQUEUE = 1009,
-    LSE_CONNECT_FAILED   = 1010,
-    LSE_NOT_WRITABLE     = 1011,
+    LSE_CLOSED           = -1000,
+    LSE_NOT_OPENED       = -1002,
+    LSE_CANNOT_REGISTER  = -1003,
+    LSE_INVALID_SOCKET   = -1004,
+    LSE_NO_MEM           = -1005,
+    LSE_TIMEOUT          = -1006,
+    LSE_BAD_TYPE         = -1007,
+    LSE_SYSTEM_ERROR     = -1008,
+    LSE_INVALID_MAXQUEUE = -1009,
+    LSE_CONNECT_FAILED   = -1010,
+    LSE_NOT_WRITABLE     = -1011,
 
     LSE_NOT_IMPLEMENTED  = 1999,
 } ls_errors_t;
@@ -101,6 +101,11 @@ ssize_t ls_write_eor(int s, const void* buf, size_t len);
  */
 ssize_t ls_read(int s, void* buf, size_t maxlen);
 
+ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout);
+
+/* Add params to return address, port and provide timeout. */
+ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout);
+
 /*
  * Close a socket.  All internal information is deleted.
  * Returns status code.  0 is success.
@@ -136,5 +141,10 @@ ls_error_t ls_get_last_error(int socket);
  * Ping a node and return route list.
  */
 ls_error_t ping(int address, int* routelist, int routelistlen, int timeout);
+
+/*
+ * debug
+ */
+ls_error_t ls_dump_socket(const char* msg, int socket);
 
 #endif /* __lsocket_h_include */

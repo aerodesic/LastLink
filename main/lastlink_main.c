@@ -135,7 +135,7 @@ void app_main(void)
     printf("FIRST_LASTLINK_FD %d LAST_LASTLINK_FD %d LWIP_SOCKET_OFFSET %d\n", FIRST_LASTLINK_FD, LAST_LASTLINK_FD, LWIP_SOCKET_OFFSET);
 #endif
 
-#if 1
+#if 0
     /* This becomes the main thread */
     wifi_init_softap();
 #endif

@@ -14,6 +14,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "linklayer.h" /*DEBUG*/
 #include "packets.h"
 
 /* Where freed packets go - where we look first */
@@ -216,17 +217,22 @@ packet_t *duplicate_packet(packet_t* packet)
 /*
  * Decrement packet ref count and if 0, free it.
  */
-bool release_packet(packet_t *p)
+bool release_packet_x(const char *filename, int lineno, packet_t *p)
 {
     bool ok = true;
 
     if (p != NULL) {
-        // ESP_LOGD(TAG, "%s: %p ref %d", __func__, p, p->ref);
+ESP_LOGD(TAG, "%s: %p ref %d in %s/%d", __func__, p, p->ref-1 , filename, lineno);
 
         /* We don't need to lock on mutex - just make sure it's there.  The queue
          * function is atomic.
          */
         if (free_packets_queue != NULL) {
+if (p != NULL && p->ref == 0) {
+   ESP_LOGE(TAG, "%s", "*********************************************************");
+   linklayer_print_packet("Already free", p);
+   ESP_LOGE(TAG, "%s", "*********************************************************");
+}
             if (p != NULL && --(p->ref) == 0) {
                 ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
             }

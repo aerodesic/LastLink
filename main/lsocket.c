@@ -92,6 +92,9 @@ static packet_t* assemble_socket_data(packet_t* packet_to_send, packet_t* packet
 
 static int ls_ioctl_r_wrapper(int fd, int cmd, va_list args);
 
+static const char* socket_type_of(const ls_socket_t* socket);
+static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t* socket);
+
 static bool datagram_packet_process(packet_t* packet);
 static const char* datagram_packet_format(const packet_t* packet);
 
@@ -346,29 +349,30 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 
             linklayer_send_packet(packet);
 
-            packet = wait_for_ping_reply(slot, timeout);
+            packet_t* reply = wait_for_ping_reply(slot, timeout);
 
-            if (packet != NULL) {
+            if (reply != NULL) {
                 /* Pass information back to caller */
-                int num_routes = (packet->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
+                int num_routes = (reply->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
 
                 for (int route = 0; pathlistlen > 0 && route < num_routes; ++route) {
-                    pathlist[route] = get_uint_field(packet, PING_ROUTE_TABLE + ADDRESS_LEN * route, ADDRESS_LEN);
+                    pathlist[route] = get_uint_field(reply, PING_ROUTE_TABLE + ADDRESS_LEN * route, ADDRESS_LEN);
                     pathlistlen--;
                 }
 
                 err = num_routes;
+
+                release_packet(reply);
             } else {
-                err = -LSE_TIMEOUT;
+                err = LSE_TIMEOUT;
             }
 
         } else {
-            err = -LSE_NO_MEM;
+            err = LSE_NO_MEM;
         }
 
-        release_packet(packet);
     } else {
-        err = -LSE_NO_MEM;
+        err = LSE_NO_MEM;
     }
 
     return err;
@@ -433,9 +437,13 @@ static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_ty
     int dest_addr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
-        if (! socket->listen &&
-            socket_table[index].socket_type == type && socket_table[index].dest_addr == dest_addr &&
-            socket_table[index].local_port == dest_port && socket_table[index].dest_port == src_port) {
+ls_dump_socket_ptr("testing", socket_table + index);
+        if (socket_table[index].socket_type != LS_UNUSED &&
+            !socket_table[index].listen &&
+            socket_table[index].socket_type == type &&
+            (socket_table[index].dest_addr == 0 || socket_table[index].dest_addr == dest_addr) &&
+            socket_table[index].local_port == dest_port &&
+            (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port)) {
 
             socket = &socket_table[index];
         }
@@ -492,9 +500,13 @@ static bool datagram_packet_process(packet_t* packet)
     bool processed = false;
 
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
+ESP_LOGD(TAG, "%s: finding socket for this packet", __func__);
         ls_socket_t* socket = find_socket_from_packet(packet, LS_DATAGRAM);
 
+ls_dump_socket_ptr("inbound packet for", socket);
+
         if (socket != NULL) {
+
             /* Send the packet to the datagram input queue */
             if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) ref_packet(packet))) {
                 release_packet(packet);
@@ -514,8 +526,8 @@ static const char* datagram_packet_format(const packet_t* packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + DATAGRAM_PAYLOAD, packet->length - DATAGRAM_PAYLOAD);
 
     asprintf(&info, "Datagram: Src Port %d Dest Port %d \"%s\"",
-            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
             get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
             data);
 
      free((void*) data);
@@ -771,7 +783,7 @@ ls_error_t ls_socket_init(void)
         err = esp_vfs_register_fd_range(&vfs, NULL, FIRST_LASTLINK_FD, LAST_LASTLINK_FD);
 
     } else {
-        err = -LSE_CANNOT_REGISTER;
+        err = LSE_CANNOT_REGISTER;
     }
 
     return err;
@@ -809,7 +821,7 @@ ls_error_t ls_socket_deinit(void)
         /* OK */
 
     } else {
-        err = -LSE_CANNOT_REGISTER;
+        err = LSE_CANNOT_REGISTER;
     }
 
     linklayer_unlock();
@@ -841,17 +853,17 @@ int ls_socket(ls_socket_type_t socket_type)
                 /* Return the socket index in the table plus the offset */
                 ret = socket - socket_table + FIRST_LASTLINK_FD;
             } else {
-                ret = -LSE_NO_MEM;
+                ret = LSE_NO_MEM;
             }
 
             linklayer_unlock();
 
         } else {
-            ret = -LSE_SYSTEM_ERROR;
+            ret = LSE_SYSTEM_ERROR;
         }
 
     } else {
-        ret = -LSE_BAD_TYPE;
+        ret = LSE_BAD_TYPE;
     }
 
     return ret;
@@ -864,7 +876,7 @@ int ls_socket(ls_socket_type_t socket_type)
  */
 ls_error_t ls_bind(int s, ls_port_t local_port)
 {
-    ls_error_t err = -LSE_INVALID_SOCKET;
+    ls_error_t err = LSE_INVALID_SOCKET;
 
     ls_socket_t* socket = validate_socket(s);
 
@@ -918,16 +930,16 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
                     /* A new connection */
                     err = connection - socket_table;
                 } else {
-                    err = -LSE_TIMEOUT;
+                    err = LSE_TIMEOUT;
                 }
             } else {
-                err = -LSE_SYSTEM_ERROR;
+                err = LSE_SYSTEM_ERROR;
             }
         } else {
-            err = -LSE_INVALID_MAXQUEUE;
+            err = LSE_INVALID_MAXQUEUE;
         }
     } else {
-        err = -LSE_INVALID_SOCKET;
+        err = LSE_INVALID_SOCKET;
     }
 
     return err;
@@ -946,7 +958,7 @@ static void state_machine_timeout(void* param)
         }
     } else {
         /* Send error code to connect response queue */
-        send_state_machine_response(socket, -LSE_CONNECT_FAILED);
+        send_state_machine_response(socket, LSE_CONNECT_FAILED);
         /* This only stops the state machine mechanics.  response disappears when read. */
         cancel_state_machine(socket);
     }
@@ -999,7 +1011,7 @@ ls_error_t get_state_machine_response(ls_socket_t* socket)
 {
     int response;
     if (! os_get_queue(socket->response_queue, (os_queue_item_t*) &response)) {
-        response = -LSE_SYSTEM_ERROR;
+        response = LSE_SYSTEM_ERROR;
     }
 
     if (socket->response_queue != NULL) {
@@ -1058,6 +1070,9 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
         if (socket->socket_type == LS_DATAGRAM) {
             /* Datagram connection is easy - we just say it's connected */
             socket->state = LS_STATE_CONNECTED;
+            if (socket->datagram_packets == NULL) {
+                socket->datagram_packets = os_create_queue(5, sizeof(packet_t*));
+            }
         } else {
             socket->input_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, 0);
             socket->output_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, CONFIG_LASTLINK_STREAM_WINDOW_SIZE);
@@ -1071,10 +1086,10 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
             err = get_state_machine_response(socket);
         }
     } else {
-        err = -LSE_INVALID_SOCKET;
+        err = LSE_INVALID_SOCKET;
     }
 
-    if (err != -LSE_INVALID_SOCKET) {
+    if (err != LSE_INVALID_SOCKET) {
         socket->last_error = err;
     }
 
@@ -1106,14 +1121,15 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t l
             packet_t* packet = datagram_packet_create_from_socket(socket);
             if (packet != NULL) {
                 int tomove = len;
-                if (tomove > MAX_PACKET_LEN - DATAGRAM_PAYLOAD) {
-                    tomove = MAX_PACKET_LEN - DATAGRAM_PAYLOAD;
+                if (tomove > DATAGRAM_LEN) {
+                    tomove = DATAGRAM_LEN;
                 }
-                memcpy(packet->buffer, buf, tomove);
+                memcpy(packet->buffer + DATAGRAM_PAYLOAD, buf, tomove);
+                packet->length += tomove;
                 linklayer_send_packet(packet);
                 err = tomove;
             } else {
-                err = -LSE_NO_MEM;
+                err = LSE_NO_MEM;
             }
             break;
         }
@@ -1171,7 +1187,7 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t l
         }
 
         default: {
-            err = -LSE_NOT_WRITABLE;
+            err = LSE_NOT_WRITABLE;
             break;
        }
    }
@@ -1224,19 +1240,22 @@ ssize_t ls_write_eor(int s, const void* buf, size_t len)
  *
  * If the <address> and <port> parameters are present, record the source address and
  * port for the user.
+ *
+ * If timeout == -1, wait forever.
  */
-ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port)
+ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout)
 {
     ls_error_t err = LSE_NO_ERROR;
 
     ls_socket_t* socket = validate_socket(s);
 
     if (socket == NULL) {
-        err = -LSE_INVALID_SOCKET;
+        err = LSE_INVALID_SOCKET;
     } else if (socket->socket_type == LS_DATAGRAM) {
         /* Pend on a packet in the queue */
         packet_t* packet;
-        if (os_get_queue(socket->datagram_packets, (os_queue_item_t*) &packet)) {
+        if (os_get_queue_with_timeout(socket->datagram_packets, (os_queue_item_t*) &packet, timeout)) {
+linklayer_print_packet("ls_read DATAGRAM", packet);
             /* A packet with data */
             int packet_data_length = packet->length - DATAGRAM_PAYLOAD;
             if (packet_data_length > maxlen) {
@@ -1251,6 +1270,8 @@ ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, i
             }
             err = packet_data_length;
             release_packet(packet);
+        } else {
+            err = LSE_TIMEOUT;
         }
     } else if (socket->socket_type == LS_STREAM) {
         /* STREAM packets arrive on the socket stream_packet_queue after being sorted and acked as necessary */
@@ -1305,19 +1326,24 @@ ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, i
             }
         }
     } else {
-        err = -LSE_INVALID_SOCKET;
+        err = LSE_INVALID_SOCKET;
     }
 
-    if (err != -LSE_INVALID_SOCKET) {
+    if (err != LSE_INVALID_SOCKET) {
         socket->last_error = err;
     }
 
     return err;
 }
 
-int ls_read(int s, void* buf, size_t maxlen)
+ssize_t ls_read(int s, void* buf, size_t maxlen)
 {
-    return (int) ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL);
+    return (int) ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, -1);
+}
+
+ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout)
+{
+    return (int) ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, timeout);
 }
 
 
@@ -1334,7 +1360,7 @@ static ls_error_t ls_close_helper(int s, bool immediate)
         if (linklayer_lock()) {
             switch (socket->socket_type) {
                 case LS_UNUSED: {
-                    err = -LSE_NOT_OPENED;
+                    err = LSE_NOT_OPENED;
                     break;
                 }
 
@@ -1401,21 +1427,23 @@ static ls_error_t ls_close_helper(int s, bool immediate)
                 case LS_DATAGRAM: {
                     /* Close packet receive queue */
                     linklayer_release_packets_in_queue(socket->datagram_packets);
-                    os_delete_queue(socket->datagram_packets);
-                    socket->datagram_packets = NULL;
+                    if (socket->datagram_packets != NULL) {
+                        os_delete_queue(socket->datagram_packets);
+                        socket->datagram_packets = NULL;
+                    }
                     socket->socket_type = LS_UNUSED;
                     break;
                 }
 
                 default: {
-                    err = -LSE_INVALID_SOCKET;
+                    err = LSE_INVALID_SOCKET;
                     break;
                 }
             }
             linklayer_unlock();
         }
     } else {
-        err = -LSE_INVALID_SOCKET;
+        err = LSE_INVALID_SOCKET;
     }
 
     return err;
@@ -1452,17 +1480,17 @@ static ls_socket_t* validate_socket(int s)
 
 int ls_fstat(int fd, struct stat *st)
 {
-    return -LSE_NOT_IMPLEMENTED;
+    return LSE_NOT_IMPLEMENTED;
 }
 
 int ls_fcntl(int s, int cmd, int arg)
 {
-    return -LSE_NOT_IMPLEMENTED;
+    return LSE_NOT_IMPLEMENTED;
 }
 
 int ls_ioctl(int s, int cmd, ...)
 {
-    return -LSE_NOT_IMPLEMENTED;
+    return LSE_NOT_IMPLEMENTED;
 }
 
 static int ls_ioctl_r_wrapper(int fd, int cmd, va_list args)
@@ -1612,7 +1640,7 @@ int ls_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
         }
     }
 #else
-    return -LSE_NOT_IMPLEMENTED;
+    return LSE_NOT_IMPLEMENTED;
 #endif
 }
 
@@ -1848,5 +1876,44 @@ static bool release_packet_window(packet_window_t* queue)
     return true;
 }
 
+static const char* socket_type_of(const ls_socket_t* socket)
+{
+    const char* type = "UNDEFINED";
+    if (socket != NULL) {
+        switch (socket->socket_type) {
+            case LS_UNUSED:   type = "Unused";    break;
+            case LS_DATAGRAM: type = "Datagram"; break;
+            case LS_STREAM:   type = "Stream";   break;
+            default:          type = "Unknown";  break;
+        }
+    }
+
+    return type;
+}
+        
+static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t* socket)
+{
+    if (socket != NULL) {
+        printf("%s: %d (%p) state %d listen %s type %s local port %d dest port %d dest addr %d sn %d\n",
+               msg, socket - socket_table + FIRST_LASTLINK_FD,
+               socket,
+               socket->state,
+               socket->listen ? "YES" : "NO",
+               socket_type_of(socket),
+               socket->local_port,
+               socket->dest_port,
+               socket->dest_addr,
+               socket->serial_number);
+    } else {
+        printf("%s: invalid socket\n", msg);
+    }
+
+    return 0; 
+}
+
+ls_error_t ls_dump_socket(const char* msg, int s)
+{
+    return ls_dump_socket_ptr(msg, validate_socket(s));
+}
     
-#endif /* CONFIG_LASTLINKE_ENABLE_SOCKET_LAYER */
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */

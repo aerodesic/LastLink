@@ -54,19 +54,22 @@ int available_packets(void);
 #ifdef NOTUSED
 packet_t *ref_packet(packet_t *p);
 #else
-inline static packet_t* ref_packet(packet_t* packet)
+inline static packet_t* ref_packet_x(const char* filename, int lineno, packet_t* packet)
 {
     if (packet != NULL) {
+printf("Packet %p ref %d in %s:%d\n", packet, packet->ref+1, filename, lineno);
         packet->ref++;
     }
     return packet;
 }
+#define ref_packet(p) ref_packet_x(__FILE__, __LINE__, p)
 #endif
 
 /*
  * Decrement packet use count and if 0, free it.
  */
-bool release_packet(packet_t *p);
+bool release_packet_x(const char* filename, int lineno, packet_t *p);
+#define release_packet(p) release_packet_x(__FILE__, __LINE__, p)
 
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.

@@ -77,22 +77,22 @@ bool os_delete_mutex(os_mutex_t mutex)
 
 bool os_acquire_mutex_with_timeout(os_mutex_t mutex, int timeout)
 {
-    return xSemaphoreTake(mutex, pdMS_TO_TICKS(timeout)) == pdTRUE;
+    return xSemaphoreTake(mutex, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
 }
 
 bool os_acquire_mutex(os_mutex_t mutex)
 {
-    return os_acquire_mutex_with_timeout(mutex, portMAX_DELAY);
+    return os_acquire_mutex_with_timeout(mutex, -1);
 }
 
 bool os_acquire_recursive_mutex_with_timeout(os_mutex_t mutex, int timeout)
 {
-    return xSemaphoreTakeRecursive(mutex, pdMS_TO_TICKS(timeout)) == pdTRUE;
+    return xSemaphoreTakeRecursive(mutex, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
 }
 
 bool os_acquire_recursive_mutex(os_mutex_t mutex)
 {
-    return os_acquire_recursive_mutex_with_timeout(mutex, portMAX_DELAY);
+    return os_acquire_recursive_mutex_with_timeout(mutex, -1);
 }
 
 bool os_acquire_mutex_from_isr(os_mutex_t mutex, bool *awakened)
@@ -202,7 +202,7 @@ bool os_delete_queue(os_queue_t queue)
 
 bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeout)
 {
-    return xQueueSend(queue, &item, pdMS_TO_TICKS(timeout)) == pdTRUE;
+    return xQueueSend(queue, &item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
 }
 
 bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item, bool *awakened)
@@ -237,12 +237,12 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakene
 
 bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout)
 {
-    return (xQueueReceive(queue, item, pdMS_TO_TICKS(timeout)) == pdTRUE);
+    return (xQueueReceive(queue, item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE);
 }
 
 bool os_get_queue(os_queue_t queue, os_queue_item_t* item)
 {
-    return os_get_queue_with_timeout(queue, item, portMAX_DELAY);
+    return os_get_queue_with_timeout(queue, item, -1);
 }
 
 int os_items_in_queue(os_queue_t queue)

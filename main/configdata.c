@@ -13,6 +13,7 @@
 #include "esp_system.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "os_freertos.h"
 
 #include "configdata.h"
 
@@ -42,7 +43,8 @@ typedef struct rdinfo {
     };
 } rdinfo_t;
 
-static int config_locked;
+static os_mutex_t config_lock;
+static int config_locked = 0;
 static int config_changes = 0;
 static const char* config_file_name = NULL;
 static configitem_t* config_table;
@@ -51,7 +53,7 @@ static configitem_t* find_config_entry(const char* name, configitem_t** parent, 
 static char* skip_blanks(char* bufp);
 static esp_err_t delete_config_cell(configitem_t* item);
 static esp_err_t release_config(configitem_t** table);
-static void write_config(FILE* fp, configitem_t* cell, int indent);
+static void write_config_value(FILE* fp, configitem_t* cell, int indent);
 static char* read_from_file(rdinfo_t* rdinfo, char* buffer, size_t length);
 static char* read_from_table(rdinfo_t* rdinfo, char* buffer, size_t length);
 static configitem_t* add_config_cell(configitem_t** owner, const char* info);
@@ -121,33 +123,23 @@ static esp_err_t release_config(configitem_t** table)
     return ret;
 }
 
-static void write_config(FILE* fp, configitem_t* cell, int indent)
+static void write_config_value(FILE* fp, configitem_t* cell, int indent)
 {
-    if (cell != NULL) {
+    if (fp != NULL && cell != NULL) {
 
         configitem_t* start = cell;
 
         do {
             if (cell->type == CONFIG_SECTION) {
-                if (fp == NULL) {
-                    // ESP_LOGI(TAG, "%*.*s[%s] (owned by %p)", indent, indent, "", cell->name, cell->owner);
-                } else {
-                    fprintf(fp, "%*.*s[%s]\n", indent, indent, "", cell->name);
-                }
 
-                write_config(fp, cell->section, indent + 4);
+                fprintf(fp, "%*.*s[%s]\n", indent, indent, "", cell->name);
+                write_config_value(fp, cell->section, indent + 4);
+                fprintf(fp, "%*.*s[end]\n", indent, indent, "");
 
-                if (fp == NULL) {
-                    // ESP_LOGI(TAG, "%*.*s[end] (of '%s' owned by %p)", indent, indent, "", cell->name, cell->owner);
-                } else {
-                    fprintf(fp, "%*.*s[end]\n", indent, indent, "");
-                }
             } else if (cell->type == CONFIG_VALUE) {
-                if (fp == NULL) {
-                    // ESP_LOGI(TAG, "%*.*s%s=%s (owned by %p)", indent, indent, "", cell->name, cell->value, cell->owner);
-                } else {
-                    fprintf(fp, "%*.*s%s=%s\n", indent, indent, "", cell->name, cell->value);
-                }
+
+                fprintf(fp, "%*.*s%s=%s\n", indent, indent, "", cell->name, cell->value);
+
             }
 
             cell = cell->next;
@@ -266,27 +258,29 @@ static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char*
     return ret;
 }
 
+bool write_config(FILE* fp)
+{
+    if (fp != NULL) {
+        write_config_value(fp, config_table, 0);
+    }
+    return fp != NULL;
+}
+
 bool save_config(const char* filename)
 {
     bool ok = true;
 
-    // ESP_LOGI(TAG, "saving config to '%s'", filename);
     FILE* fp;
 
     if (filename != NULL) {
         fp = fopen(filename, "w");
         // ESP_LOGI(TAG, "%s opened on %p", filename, fp);
-    } else {
-        fp = NULL;
-    }
 
-    if (filename == NULL || fp != NULL) {
-        write_config(fp, config_table, 0);
         if (fp != NULL) {
+            write_config_value(fp, config_table, 0);
             fclose(fp);
         }
     } else {
-        // ESP_LOGI(TAG, "unable to save config");
         ok = false;
     }
 
@@ -309,22 +303,27 @@ bool close_config(void)
 
 bool lock_config(void)
 {
-    ++config_locked;
+    if (os_acquire_recursive_mutex(config_lock)) {
+        ++config_locked;
+        return true;
+    }
 
-    return true;
+    return false;
 }
 
 bool unlock_config(void)
 {
-    if (--config_locked == 0)
-    {
-        if (config_changes != 0) {
-            save_config(config_file_name);
-            config_changes = 0;
+    if (os_release_recursive_mutex(config_lock)) {
+        if (--config_locked == 0) {
+            if (config_changes != 0) {
+                save_config(config_file_name);
+                config_changes = 0;
+            }
         }
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 /*
@@ -342,6 +341,8 @@ bool unlock_config(void)
 esp_err_t init_configuration(const char* filename, const char **default_config)
 {
     esp_err_t ret = ESP_OK;
+
+    config_lock = os_create_recursive_mutex();
 
     // ESP_LOGI(TAG, "init_configuration '%s'", filename);
     config_file_name = strdup(filename);
@@ -437,7 +438,7 @@ static configitem_t* find_config_entry(const char* name, configitem_t** parent, 
     while ((table != NULL) && (field = strtok(tokens, delim)) != NULL) {
         str = NULL;
         tokens = NULL;
-	found = NULL;
+        found = NULL;
 
         // ESP_LOGD(TAG, "find_config_item looking for '%s'", field);
 
@@ -521,8 +522,11 @@ bool set_config_str(const char* field, const char* value)
 {
     configitem_t* item = find_config_entry(field, NULL, config_table);
     if (item != NULL) {
-        free((void*) (item->value));
-        item->value = strdup(value);
+        if (strcmp(item->value, value) != 0) {
+            free((void*) (item->value));
+            item->value = strdup(value);
+            config_changes++;
+        }
     }
     return item != NULL;
 }
