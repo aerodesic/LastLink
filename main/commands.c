@@ -53,7 +53,7 @@ static int tokenize(char *buffer, const char**args, int maxargs)
  * Absorb all characters in queue looking for match with testch.
  * Return true if one seen.
  */
-static bool hit_char(int testch)
+static bool hit_test(int testch)
 {
     bool found = false;
     int ch;
@@ -267,7 +267,7 @@ static int dglisten_command(int argc, const char **argv)
                 ret = ls_connect(socket, NULL_ADDRESS, 0);
                 if (ret == LSE_NO_ERROR) {
                     ls_dump_socket("receiving", socket);
-                    while (!hit_char('\x03')) {
+                    while (!hit_test('\x03')) {
                         char buf[200];
                         int address;
 
@@ -331,6 +331,90 @@ static int dgsend_command(int argc, const char **argv)
 }
 
 /**********************************************************************/
+/* stlisten <port>                                                    */
+/**********************************************************************/
+static int stlisten_command(int argc, const char **argv)
+{
+    if (argc > 1) {
+        int port = strtol(argv[1], NULL, 10);
+        int socket = ls_socket(LS_STREAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, port);
+            if (ret >= 0) {
+                /* Accept packets from any */
+                bool done = false;
+                printf("listening socket %d port %d...\n", socket, port);
+                do {
+                    int connection = ls_listen(socket, 5, 50);
+                    if (connection >= 0) {
+                        printf("got connection on %d\n", connection);
+                        char buffer[80];
+                        int len;
+                        while ((len = ls_read(connection, buffer, sizeof(buffer))) > 0) {
+                            fwrite(buffer, len, 1, stdout);
+                        }
+                        printf("--end--\n");
+                        ls_close(connection);
+                        done = hit_test('\x03');
+                    } else if (connection != LSE_TIMEOUT) {
+                        printf("ls_listen returned %d\n", ret);
+                        done = true;
+                    }
+                } while (!done);
+                ls_close(socket);
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
+/* stconnect <address> <port>                                         */
+/**********************************************************************/
+static int stconnect_command(int argc, const char **argv)
+{
+    if (argc >= 4) {
+        int address = strtol(argv[1], NULL, 10);
+        int port = strtol(argv[2], NULL, 10);
+
+        int socket = ls_socket(LS_STREAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, 0);
+            if (ret >= 0) {
+                ret = ls_connect(socket, address, port);
+                ls_dump_socket("sending", socket);
+                if (ret >= 0) {
+                    for (int line = 1; line <= 10; ++line) {
+                        char buffer[80];
+                        sprintf(buffer, "%s: line %d\n", argv[3], line);
+                        ret = ls_write(socket, argv[3], strlen(argv[3]));
+                        printf("ls_write returned %d\n", ret);
+                    }
+                } else {
+                    printf("ls_connect returned %d\n", ret);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
 /* status                                                             */
 /**********************************************************************/
 static int status_command(int argc, const char **argv)
@@ -346,14 +430,16 @@ typedef struct command_entry {
 } command_entry_t;
 
 static command_entry_t  command_table[] = {
-    { .name = "test",     .function = test_command     },
-    { .name = "ping",     .function = ping_command     },
-    { .name = "address",  .function = address_command  },
-    { .name = "loglevel", .function = loglevel_command },
-    { .name = "config",   .function = config_command   },
-    { .name = "dglisten", .function = dglisten_command },
-    { .name = "dgsend",   .function = dgsend_command   },
-    { .name = "status",   .function = status_command   },
+    { .name = "test",       .function = test_command      },
+    { .name = "ping",       .function = ping_command      },
+    { .name = "address",    .function = address_command   },
+    { .name = "loglevel",   .function = loglevel_command  },
+    { .name = "config",     .function = config_command    },
+    { .name = "dglisten",   .function = dglisten_command  },
+    { .name = "dgsend",     .function = dgsend_command    },
+    { .name = "stlisten",   .function = stlisten_command  },
+    { .name = "stconnect",  .function = stconnect_command },
+    { .name = "status",     .function = status_command    },
 };
 
 void CommandProcessor(void* params)

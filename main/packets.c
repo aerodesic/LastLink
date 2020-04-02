@@ -219,7 +219,7 @@ packet_t *duplicate_packet(packet_t* packet)
  */
 bool release_packet_x(const char *filename, int lineno, packet_t *p)
 {
-    bool ok = true;
+    bool ok = false;
 
     if (p != NULL) {
 ESP_LOGD(TAG, "%s: %p ref %d in %s/%d", __func__, p, p->ref-1 , filename, lineno);
@@ -236,8 +236,7 @@ if (p != NULL && p->ref == 0) {
             if (p != NULL && --(p->ref) == 0) {
                 ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
             }
-        } else {
-            ok = false;
+            ok = true;
         }
     }
 

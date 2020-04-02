@@ -397,7 +397,7 @@ static const char* routeannounce_packet_format(const packet_t* p)
     int metric = get_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN);
     int flags = get_uint_field(p, ROUTEANNOUNCE_FLAGS, FLAGS_LEN);
 
-    asprintf(&info, "Route Announce: seq %d mestric %d flags %02x", sequence, metric, flags);
+    asprintf(&info, "Route Announce: seq %d metric %d flags %02x", sequence, metric, flags);
 
     return info;
 }
@@ -487,7 +487,7 @@ static const char* routerequest_packet_format(const packet_t* p)
     int metric = get_uint_field(p, ROUTEREQUEST_METRIC, METRIC_LEN);
     int flags = get_uint_field(p, ROUTEREQUEST_FLAGS, FLAGS_LEN);
 
-    asprintf(&info, "Route Request: seq %d mestric %d flags %02x", sequence, metric, flags);
+    asprintf(&info, "Route Request: seq %d metric %d flags %02x", sequence, metric, flags);
 
     return info;
 }
@@ -1252,6 +1252,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                     set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
                                     linklayer_send_packet_update_ttl(ref_packet(packet));
                                 } else {
+#if 1
                                     /* No route, so report route error */
                                     packet_t *error = routeerror_packet_create(
                                         get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN), /* who sent it to us */
@@ -1262,6 +1263,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                     if (error != NULL) {
                                         linklayer_send_packet(error);
                                     }
+#endif
                                 }
                             }
                         } else {
