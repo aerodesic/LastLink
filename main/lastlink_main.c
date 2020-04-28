@@ -1,9 +1,13 @@
 /*
  * LastLink main
  */
+#include "sdkconfig.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "driver/uart.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,8 +34,8 @@
 #include "packets.h"
 
 #include "commands.h"
+#include "ssd1306_i2c.h"
 
-#include "sdkconfig.h"
 
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
@@ -129,11 +133,17 @@ void app_main(void)
     linklayer_set_debug(true);
 
    #if 1
-    start_commands(0, 1);
+    // start_commands(0, 1);
+    ESP_LOGE(TAG, "stdin.fd %d stdout.fd %d", fileno(stdin), fileno(stdout));
+    start_commands(fileno(stdin), fileno(stdout));
    #endif
 
     printf("FIRST_LASTLINK_FD %d LAST_LASTLINK_FD %d LWIP_SOCKET_OFFSET %d\n", FIRST_LASTLINK_FD, LAST_LASTLINK_FD, LWIP_SOCKET_OFFSET);
 #endif
+
+    display_t *display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
+    display->set_xy(display, 5, 20);
+    display->write_text(display, "Hello, world!");
 
 #if 0
     /* This becomes the main thread */

@@ -15,6 +15,8 @@
 #include "linklayer.h"
 #include "configdata.h"
 
+#define TAG "commands"
+
 /*
  * Go through buffer and tokenize into argv/argc structure.
  */
@@ -22,7 +24,7 @@ static int tokenize(char *buffer, const char**args, int maxargs)
 {
     int argc = 0;
 
-    while (*buffer != '\0' && maxargs > 1) {
+    while (*buffer != '\0' && argc < maxargs - 1) {
         /* Look for first non-space */
         while (isspace(*buffer)) {
             ++buffer;
@@ -82,17 +84,15 @@ static int readline(char *buffer, size_t len)
             if (ch == '\n') {
                 buffer[index] = '\0';
                 reading = false;
-                putchar('\n');
+                printf("\n");
             } else if (ch == '\b') {
                 if (index > 0) {
-                    putchar('\b');
-                    putchar(' ');
-                    putchar('\b');
+                    printf("\b \b");
                     --index;
                 }
             } else if (isprint(ch)) {
                 if (index < len-1) {
-                    putchar(ch);
+                    printf("%c", ch);
                     buffer[index++] = ch;
                 }
             }
@@ -113,21 +113,20 @@ static void CommandProcessor(void* params);
 /* Start a command processor on the specific fd pair */
 os_thread_t start_commands(int infd, int outfd)
 {
-    command_param_t *param = (command_param_t*) malloc(sizeof(command_param_t));
-    os_thread_t thread = NULL;
+    command_param_t *param = NULL;
 
-    if (param != NULL) {
+    if (infd >= 0 && outfd >= 0) {
+        param = (command_param_t*) malloc(sizeof(command_param_t));
 
-        param->in = infd;
-        param->out = outfd;
-
-        thread = os_create_thread(CommandProcessor, "commands", 40000, 10, param);
-
-    } else {
-        printf("Unable to start command processor\n");
+        if (param == NULL) {
+            printf("Unable to allocate command parameter; starting with default stdin/stdout\n");
+        } else {
+            param->in = infd;
+            param->out = outfd;
+        }
     }
 
-    return thread; 
+    return os_create_thread(CommandProcessor, "commands", 40000, 10, param);
 }
 
 #define MAX_ARGS  20
@@ -444,15 +443,21 @@ static command_entry_t  command_table[] = {
 
 void CommandProcessor(void* params)
 {
-    command_param_t *io = (command_param_t*) params;
+    if (params != NULL) {
+        command_param_t *io = (command_param_t*) params;
 
-    stdin = fdopen(io->in, "r");
-    stdout = fdopen(io->out, "w");
+        ESP_LOGE(TAG, "CommandProcess in %d out %d", io->in, io->out);
 
-    free((void*) io);
-    io = NULL;
+        _GLOBAL_REENT->_stdin = fdopen(io->in, "r");
+        _GLOBAL_REENT->_stdout = fdopen(io->out, "w");
+
+        free((void*) io);
+        io = NULL;
+    }
 
     bool running = true;
+
+    ESP_LOGE(TAG, "stdin is %p fd %d  stdout is %p fd %d", stdin, fileno(stdin), stdout, fileno(stdout));
 
     printf("********************************************************\n");
     printf("CommandProcessor running\n");
@@ -464,11 +469,12 @@ void CommandProcessor(void* params)
         printf(">> ");
 
         int len = readline(buffer, sizeof(buffer));
+        //printf("readline returned %d\n", len);
 
         if (len >= 1) {
 
             const char* args[MAX_ARGS];
-             int argc = tokenize(buffer, args, MAX_ARGS);
+            int argc = tokenize(buffer, args, MAX_ARGS);
 
 #if 0
             char *savep;

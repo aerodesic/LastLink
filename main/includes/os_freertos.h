@@ -69,10 +69,12 @@ int os_items_in_queue_from_isr(os_queue_t queue);
 int os_items_in_queue(os_queue_t queue);
 
 /* Timers */
-os_timer_t os_create_timer(const char* name, int timeout, bool reload, void* param, void (*function)(void* param));
+os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer));
+os_timer_t os_create_repeating_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer));
 bool os_start_timer(os_timer_t timer);
 bool os_stop_timer(os_timer_t timer);
 bool  os_reset_timer(os_timer_t timer);
+bool os_set_timer(os_timer_t timer, int value);
 void* os_get_timer_data(os_timer_t timer);
 bool os_delete_timer(os_timer_t timer);
 

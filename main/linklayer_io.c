@@ -170,7 +170,7 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
     t.length = 8*len;           /* data */
     t.tx_buffer = buffer;
 
-    dump_buffer("Write", buffer, len);
+    //dump_buffer("Write", buffer, len);
 
     return spi_device_transmit(radio->spi, &t) == ESP_OK;
 #else
@@ -229,9 +229,9 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
     }
 #endif
 
-    if (ok) {
-        dump_buffer("Read", buffer, len);
-    }
+    //if (ok) {
+    //    dump_buffer("Read", buffer, len);
+    //}
     return ok;
 }
 

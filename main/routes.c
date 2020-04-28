@@ -350,7 +350,7 @@ void route_set_pending_request(route_t* r, packet_t* request, int retries, int t
 
             r->pending_request = request;
             r->pending_retries = retries;
-            r->pending_timer = os_create_timer("route_timer", ROUTE_REQUEST_TIMEOUT, true, (void*) r, route_request_retry);
+            r->pending_timer = os_create_repeating_timer("route_timer", ROUTE_REQUEST_TIMEOUT, (void*) r, route_request_retry);
             os_start_timer(r->pending_timer);
 
             route_table_unlock(rt);

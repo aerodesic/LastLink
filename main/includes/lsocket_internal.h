@@ -60,14 +60,16 @@
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
 typedef struct packet_window {
+    os_mutex_t       lock;                       /* For exclusive access */
+    int              retry_time;                 /* Next time for retry delay */
+    int              retries;                    /* Count of remaining tries */
     uint8_t          length;                     /* Number of slots */
     uint8_t          in;                         /* Where the next sequential packet is placed. */
     uint8_t          released;                   /* Number of packets freed that have not issued release_semaphore */
     int              sequence;                   /* Sequence number of first packet (or expected packet) */
     os_semaphore_t   available;                  /* Semaphore for access */
-    os_mutex_t       lock;                       /* For exclusive access */
     unsigned int     window;                     /* Window of used slots */
-    packet_t         *slots[1];
+    packet_t         *slots[1];                  /* 1..length slots */
 } packet_window_t;
 
 typedef enum {
@@ -82,7 +84,14 @@ typedef enum {
 typedef struct ls_socket ls_socket_t;
 typedef struct packet_window packet_window_t;
 
+/* A timer for the socket */
+typedef struct socket_timer {
+    uint64_t    expires;
+} socket_timer_t;
+
 typedef struct ls_socket {
+    bool                    inuse;              /* TRUE if socket is opened by user */
+    bool                    dead;               /* Failure marks socket as dead */
     ls_socket_type_t        socket_type;        /* Socket type (DATAGRAM or STREAM) */
 
     ls_socket_state_t       state;              /* Current state */
@@ -91,6 +100,7 @@ typedef struct ls_socket {
     ls_address_t            dest_addr;          /* Destination address of the connection */
     int                     serial_number;      /* Unique serial number */
 
+    socket_timer_t          linger_timer;       /* Performs close after no more users */
 
     union {
         /* LISTEN SOCKET INFO */
@@ -106,23 +116,23 @@ typedef struct ls_socket {
         /* STREAM SOCKET INFO */
         struct {
            /* Filtered and ordered data packets show up here */
-           ls_socket_t             *parent;      /* The listening socket number that begat us */
+           ls_socket_t             *parent;      /* The listening socket number that begat us (if any) */
 
            /* state machine retry stuff */
-           struct {
-               int                     retries;
-               os_timer_t              retry_timer;
-               packet_t*               retry_packet;
-               os_queue_t              response_queue;
-           };
+           socket_timer_t          state_machine_timer;
+           int                     retries;
+           packet_t*               retry_packet;
+           os_queue_t              response_queue;
 
            /* Deals with residue of left over data on packets between read calls */
-           packet_t*               residue_packet;
-           int                     residue_offset;
+           packet_t*               current_read_packet;
+           int                     current_read_offset;
 
            /* Packet assembly buffers */
            packet_window_t         *input_window;
+           socket_timer_t          output_window_timer;
            packet_window_t         *output_window;
+           socket_timer_t          socket_flush_timer;
            packet_t                *current_write_packet;
         };
     };

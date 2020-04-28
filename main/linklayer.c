@@ -351,7 +351,7 @@ static bool routeannounce_packet_process(packet_t* p)
     bool processed = false;
 
     if (p != NULL) {
-        linklayer_print_packet("Route Announce", p);
+        //linklayer_print_packet("Route Announce", p);
         if (route_table_lock(&route_table)) {
             route_t* route = route_update(&route_table,
                                           p->radio_num,
@@ -432,7 +432,7 @@ static bool routerequest_packet_process(packet_t* p)
     bool processed = false;
 
     if (p != NULL) {
-        linklayer_print_packet("Route Request", p);
+        //linklayer_print_packet("Route Request", p);
 
         if (linklayer_lock()) {
 
@@ -516,7 +516,7 @@ static bool routeerror_packet_process(packet_t* p)
 
         if (linklayer_lock()) {
 
-            linklayer_print_packet("ROUTE ERROR", p);
+            //linklayer_print_packet("ROUTE ERROR", p);
 
             /* Get address from packet */
             int address = get_uint_field(p, ROUTEERROR_ADDRESS, ADDRESS_LEN);
@@ -1050,10 +1050,10 @@ void linklayer_send_packet(packet_t* packet)
                     /* We have a route so select routeto and radio */
                     set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
                     if (route->radio_num != UNKNOWN_RADIO) {
-            ESP_LOGD(TAG, "%s: routing to radio %d", __func__, route->radio_num);
+            //ESP_LOGD(TAG, "%s: routing to radio %d", __func__, route->radio_num);
                         radio = radio_table[route->radio_num];
                     } else {
-            ESP_LOGE(TAG, "%s: no radio for route", __func__);
+            //ESP_LOGE(TAG, "%s: no radio for route", __func__);
                         release_packet(packet);
                         packet = NULL;
                     }
@@ -1114,15 +1114,15 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
 {
     if (radio == NULL) {
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
-ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
+//ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
     } else {
-        char *info;
-        asprintf(&info, "To Radio %d", radio->radio_num);
-        linklayer_print_packet(info, packet);
-        free((void*) info);
+        //char *info;
+        //asprintf(&info, "To Radio %d", radio->radio_num);
+        //linklayer_print_packet(info, packet);
+        //free((void*) info);
 
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
@@ -1202,7 +1202,7 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
  */
 static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 {
-    linklayer_print_packet("on_receive", packet);
+    //linklayer_print_packet("on_receive", packet);
 
     if (packet != NULL) {
         packet_received += 1;
@@ -1298,10 +1298,10 @@ static packet_t* linklayer_on_transmit(radio_t* radio)
     /* Pull packet from transmit queue and discard */
     packet_t* packet = NULL;
 
-ESP_LOGD(TAG, "%s: getting last packet", __func__);
+//ESP_LOGD(TAG, "%s: getting last packet", __func__);
 
     if (os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &packet, 0)) {
-ESP_LOGD(TAG, "%s: releasing packet %p", __func__, packet);
+//ESP_LOGD(TAG, "%s: releasing packet %p", __func__, packet);
         release_packet(packet);
 
         /* Peek next packet to send */
@@ -1310,7 +1310,7 @@ ESP_LOGD(TAG, "%s: releasing packet %p", __func__, packet);
         }
     }
 
-ESP_LOGD(TAG, "%s: returning next packet %p", __func__, packet);
+//ESP_LOGD(TAG, "%s: returning next packet %p", __func__, packet);
     /* Return next packet to send or NULL if no more. */
     return packet;
 }

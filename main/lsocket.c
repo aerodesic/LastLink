@@ -75,53 +75,65 @@
 #define TAG "lsocket"
 
 /* PING support */
-static const char* ping_packet_format(const packet_t* p);
-static const char* pingreply_packet_format(const packet_t* p);
-static bool ping_packet_process(packet_t* p);
-static bool pingreply_packet_process(packet_t* p);
+static const char* ping_packet_format(const packet_t *p);
+static const char* pingreply_packet_format(const packet_t *p);
+static bool ping_packet_process(packet_t *p);
+static bool pingreply_packet_process(packet_t *p);
 static int find_ping_table_entry(int sequence);
 
-static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t len, bool eor);
-static ls_socket_t*  validate_socket(int s);
+static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor);
+static ls_socket_t * validate_socket(int s);
 
-static bool stream_packet_process(packet_t* packet);
-static const char* stream_packet_format(const packet_t* packet);
+static bool stream_packet_process(packet_t *packet);
+static const char* stream_packet_format(const packet_t *packet);
 #if 0
-static packet_t* assemble_socket_data(packet_t* packet_to_send, packet_t* packet);
+static packet_t *assemble_socket_data(packet_t *packet_to_send, packet_t *packet);
 #endif
 
 static int ls_ioctl_r_wrapper(int fd, int cmd, va_list args);
 
-static const char* socket_type_of(const ls_socket_t* socket);
-static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t* socket);
+static const char* socket_type_of(const ls_socket_t *socket);
+static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket);
 
-static bool datagram_packet_process(packet_t* packet);
-static const char* datagram_packet_format(const packet_t* packet);
+static bool datagram_packet_process(packet_t *packet);
+static const char* datagram_packet_format(const packet_t *packet);
 
-static packet_t* datagram_packet_create_from_packet(const packet_t* packet);
-static packet_t* datagram_packet_create_from_socket(const ls_socket_t* socket);
+static packet_t *datagram_packet_create_from_packet(const packet_t *packet);
+static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket);
 
-static packet_t* stream_packet_create_from_packet(const packet_t* packet, uint8_t flags);
-static packet_t* stream_packet_create_from_socket(const ls_socket_t* socket, uint8_t flags);
+static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_t flags);
+static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uint8_t flags);
 
-static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type);
-static ls_socket_t* find_listening_socket_from_packet(const packet_t* packet);
+static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type);
+static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet);
 
-static void start_state_machine(ls_socket_t* socket, ls_socket_state_t state, packet_t* packet, int timeout, int retries);
-static void cancel_state_machine(ls_socket_t* socket);
-static void send_state_machine_response(ls_socket_t* socket, ls_error_t response);
-static ls_error_t get_state_machine_response(ls_socket_t* socket);
+static ssize_t release_socket(ls_socket_t* socket);
 
-static ls_error_t ls_close_helper(int s, bool immediate);
-static ls_error_t ls_close_immediate(int s);
+static os_timer_t socket_timer;
+static void socket_timer_scanner(os_timer_t);
+static void start_socket_timer(socket_timer_t *timer, int delay);
+static void stop_socket_timer(socket_timer_t *timer);
+static bool socket_timer_check(socket_timer_t *timer, uint64_t current_time, uint32_t *next_time);
+
+static void start_state_machine(ls_socket_t *socket, ls_socket_state_t state, packet_t *packet, int timeout, int retries);
+static void cancel_state_machine(ls_socket_t *socket);
+static void state_machine_timeout(ls_socket_t *socket);
+static void send_state_machine_response(ls_socket_t *socket, ls_error_t response);
+static ls_error_t get_state_machine_response(ls_socket_t *socket);
+static void socket_flush_stream(ls_socket_t *socket);
+static void ack_output_window(ls_socket_t *socket, int ack_sequence, unsigned int ack_window);
+static void send_output_window(ls_socket_t *socket);
+static void socket_linger_check(ls_socket_t *socket);
+
+static ls_error_t ls_close_ptr(ls_socket_t *socket);
 
 /* Put a packet into the relative window of queue.  Returns true if success */
-static bool put_packet_into_window(packet_window_t* queue, packet_t* packet);
-static packet_t* get_packet_from_window(packet_window_t* queue);
-static bool write_packet_to_window(packet_window_t* queue, packet_t* packet);
-static void release_packets_in_window(packet_window_t* queue, int sequence, unsigned int window);
-static packet_window_t* allocate_packet_window(int length, int available);
-static bool release_packet_window(packet_window_t* queue);
+static bool put_packet_into_window(packet_window_t *queue, packet_t *packet);
+static packet_t *get_packet_from_window(packet_window_t *queue);
+static bool write_packet_to_window(packet_window_t *queue, packet_t *packet);
+static void release_packets_in_window(packet_window_t *queue, int sequence, unsigned int window);
+static packet_window_t *allocate_packet_window(int length, int available);
+static bool release_packet_window(packet_window_t *queue);
 
 typedef struct ping_table_entry {
     os_queue_t   queue;
@@ -135,9 +147,9 @@ static ls_socket_t  socket_table[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 /*
  * Ping packet create
  */
-packet_t* ping_packet_create(int dest)
+packet_t *ping_packet_create(int dest)
 {
-    packet_t* p;
+    packet_t *p;
 
     p = linklayer_create_generic_packet(dest, PING_PROTOCOL, PING_LEN);
 
@@ -152,12 +164,12 @@ packet_t* ping_packet_create(int dest)
     return p;
 }
 
-static bool ping_packet_process(packet_t* p)
+static bool ping_packet_process(packet_t *p)
 {
     bool processed = false;
 
     if (p != NULL) {
-linklayer_print_packet("PING RECEIVED", p);
+//linklayer_print_packet("PING RECEIVED", p);
 
         if (linklayer_lock()) {
             /* Sanity check - reuse last entry if full */
@@ -183,7 +195,7 @@ linklayer_print_packet("PING RECEIVED", p);
                 /* Rewind TTL */
                 set_uint_field(p, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
 
-linklayer_print_packet("SEND PING REPLY", p);
+//linklayer_print_packet("SEND PING REPLY", p);
 
                 linklayer_send_packet(ref_packet(p));
 
@@ -200,11 +212,9 @@ linklayer_print_packet("SEND PING REPLY", p);
     return processed;
 }
 
-static const char* ping_format_routes(const packet_t* p)
+static const char* ping_format_routes(const packet_t *p)
 {
     int num_routes = (p->length - PING_ROUTE_TABLE) / ADDRESS_LEN;
-
-//ESP_LOGI(TAG, "%s: num_routes %d", __func__, num_routes);
 
     /* Allocate worst case length */
     char *routes = (char*) malloc(2 + (8 + 1) * num_routes + 2);
@@ -223,7 +233,7 @@ static const char* ping_format_routes(const packet_t* p)
     return routes;
 }
 
-static const char* ping_packet_format(const packet_t* p)
+static const char* ping_packet_format(const packet_t *p)
 {
     char* info;
 
@@ -237,7 +247,7 @@ static const char* ping_packet_format(const packet_t* p)
     return info;
 }
 
-static const char* pingreply_packet_format(const packet_t* p)
+static const char* pingreply_packet_format(const packet_t *p)
 {
     char* info;
 
@@ -251,14 +261,14 @@ static const char* pingreply_packet_format(const packet_t* p)
     return info;
 }
 
-static bool pingreply_packet_process(packet_t* p)
+static bool pingreply_packet_process(packet_t *p)
 {
     bool processed = false;
 
     if (p != NULL) {
         if (linklayer_lock()) {
 
-linklayer_print_packet("PING REPLY RECEIVED", p);
+//linklayer_print_packet("PING REPLY RECEIVED", p);
 
             /* If reply is for us, we do not add our address - but deliver it */
             if (linklayer_packet_is_for_this_node(p)) {
@@ -305,7 +315,7 @@ static int find_ping_table_entry(int sequence)
     return slot;
 }
 
-static int register_ping(const packet_t* packet)
+static int register_ping(const packet_t *packet)
 {
     int slot = find_ping_table_entry(0);
     if (slot >= 0) {
@@ -317,9 +327,9 @@ static int register_ping(const packet_t* packet)
     return slot;
 }
 
-static packet_t* wait_for_ping_reply(int slot, int timeout)
+static packet_t *wait_for_ping_reply(int slot, int timeout)
 {
-    packet_t* packet = NULL;
+    packet_t *packet = NULL;
 
     if (slot >= 0 && slot < ELEMENTS_OF(ping_table)) {
         if (! os_get_queue_with_timeout(ping_table[slot].queue, (os_queue_item_t*) &packet, timeout)) {
@@ -340,7 +350,7 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 {
     ls_error_t err = 0;
 
-    packet_t* packet = ping_packet_create(address);
+    packet_t *packet = ping_packet_create(address);
 
     if (packet != NULL) {
         int slot = register_ping(packet);
@@ -349,7 +359,7 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 
             linklayer_send_packet(packet);
 
-            packet_t* reply = wait_for_ping_reply(slot, timeout);
+            packet_t *reply = wait_for_ping_reply(slot, timeout);
 
             if (reply != NULL) {
                 /* Pass information back to caller */
@@ -379,9 +389,9 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
 }
 
 
-static ls_socket_t* find_free_socket(void)
+static ls_socket_t *find_free_socket(void)
 {
-    ls_socket_t* socket = NULL;
+    ls_socket_t *socket = NULL;
 
     for (int index = 0; socket == NULL && index < ELEMENTS_OF(socket_table); ++index) {
         if (socket_table[index].socket_type == LS_UNUSED) {
@@ -428,9 +438,9 @@ static int find_free_local_port(void) {
 
 
 /* Look in socket table for socket matching the connection and type */
-static ls_socket_t* find_socket_from_packet(const packet_t* packet, ls_socket_type_t type)
+static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type)
 {
-    ls_socket_t* socket = NULL;
+    ls_socket_t *socket = NULL;
 
     ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
     ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
@@ -455,9 +465,9 @@ ls_dump_socket_ptr("found", socket_table + index);
     return socket;
 }
 
-static ls_socket_t* find_listening_socket_from_packet(const packet_t* packet)
+static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
 {
-    ls_socket_t* socket = NULL;
+    ls_socket_t *socket = NULL;
 
     ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
 
@@ -472,9 +482,9 @@ static ls_socket_t* find_listening_socket_from_packet(const packet_t* packet)
     return socket;
 }
 
-static packet_t* datagram_packet_create_from_packet(const packet_t* packet)
+static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
 {
-    packet_t* new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+    packet_t *new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
                                                            DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
 
     if (new_packet != NULL) {
@@ -485,9 +495,9 @@ static packet_t* datagram_packet_create_from_packet(const packet_t* packet)
     return new_packet;
 }
 
-static packet_t* datagram_packet_create_from_socket(const ls_socket_t* socket)
+static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
 {
-    packet_t* packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
+    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
@@ -497,15 +507,15 @@ static packet_t* datagram_packet_create_from_socket(const ls_socket_t* socket)
     return packet;
 }
 
-static bool datagram_packet_process(packet_t* packet)
+static bool datagram_packet_process(packet_t *packet)
 {
     bool processed = false;
 
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
-ESP_LOGD(TAG, "%s: finding socket for this packet", __func__);
-        ls_socket_t* socket = find_socket_from_packet(packet, LS_DATAGRAM);
+//ESP_LOGD(TAG, "%s: finding socket for this packet", __func__);
+        ls_socket_t *socket = find_socket_from_packet(packet, LS_DATAGRAM);
 
-ls_dump_socket_ptr("inbound packet for", socket);
+//ls_dump_socket_ptr("inbound packet for", socket);
 
         if (socket != NULL) {
 
@@ -521,7 +531,7 @@ ls_dump_socket_ptr("inbound packet for", socket);
     return processed;
 }
 
-static const char* datagram_packet_format(const packet_t* packet)
+static const char* datagram_packet_format(const packet_t *packet)
 {
     char* info;
 
@@ -537,9 +547,9 @@ static const char* datagram_packet_format(const packet_t* packet)
      return info;
 }
 
-static packet_t* stream_packet_create_from_packet(const packet_t* packet, uint8_t flags)
+static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_t flags)
 {
-    packet_t* new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+    packet_t *new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
                                                            STREAM_PROTOCOL, STREAM_PAYLOAD);
 
     if (new_packet != NULL) {
@@ -551,13 +561,15 @@ static packet_t* stream_packet_create_from_packet(const packet_t* packet, uint8_
     return new_packet;
 }
 
-static packet_t* stream_packet_create_from_socket(const ls_socket_t* socket, uint8_t flags)
+static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uint8_t flags)
 {
-    packet_t* packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_PAYLOAD);
+    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_PAYLOAD);
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
         set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, socket->local_port);
+        /* The connection sequence number rides on the STREAM sequence number field until data flows */
+        set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, socket->serial_number);
         set_uint_field(packet, STREAM_FLAGS, FLAGS_LEN, flags);
     }
 
@@ -565,24 +577,26 @@ static packet_t* stream_packet_create_from_socket(const ls_socket_t* socket, uin
 }
 
 #if 0
-static packet_t* assemble_socket_data(packet_t* packet_to_send, packet_t* packet)
+static packet_t *assemble_socket_data(packet_t *packet_to_send, packet_t *packet)
 {
     return packet_to_send;
 }
 #endif
 
-static bool stream_packet_process(packet_t* packet)
+static bool stream_packet_process(packet_t *packet)
 {
     bool processed = false;
 
     bool reject = true;
+
+linklayer_print_packet("stream packet", packet);
 
     if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
         /* Read the flags field for later use */
         uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
 
         /* Get the socket for this packet if there is one */
-        ls_socket_t* socket = find_socket_from_packet(packet, LS_STREAM);
+        ls_socket_t *socket = find_socket_from_packet(packet, LS_STREAM);
 
         switch (flags & STREAM_FLAGS_CMD) {
             default: {
@@ -598,8 +612,9 @@ static bool stream_packet_process(packet_t* packet)
                  *
                  * If there is no data in this packet, it will be ignored if the first packet in the queue.
                  */
-                put_packet_into_window(socket->input_window, packet);
-                reject = false;
+                if (put_packet_into_window(socket->input_window, packet)) {
+                    reject = false;
+                }
                 break;
             }
 
@@ -610,19 +625,23 @@ static bool stream_packet_process(packet_t* packet)
                     cancel_state_machine(socket);
                     if (socket->state == LS_STATE_INBOUND_CONNECT) {
                         /* Redundant CONNECT gets a CONNECT_ACK */
-                        linklayer_send_packet(stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_CONNECT_ACK));
+                        linklayer_send_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK));
                         reject = false;
                     }
                 } else {
                     /* Didn't find actual socket, so see if this is a new listen */
-                    ls_socket_t* listen_socket = find_listening_socket_from_packet(packet);
+                    ls_socket_t *listen_socket = find_listening_socket_from_packet(packet);
 
                     if (listen_socket != NULL) {
-                        ls_socket_t* new_connection = find_free_socket();
+                        ls_socket_t *new_connection = find_free_socket();
 
                         if (new_connection != NULL) {
+                            new_connection->inuse = true;
+                            new_connection->dead = false;
+
                             /* Create a new connection that achievs a local endpoint for the new socket */
                             new_connection->socket_type = LS_STREAM;
+                            new_connection->serial_number = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
                             new_connection->state = LS_STATE_INBOUND_CONNECT;
                             new_connection->local_port = listen_socket->local_port;
                             new_connection->dest_port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
@@ -635,8 +654,9 @@ ls_dump_socket_ptr("new connection", new_connection);
 
                             /* Send a CONNECT ACK and go to INBOUND CONNECT state waiting for full acks */
                             start_state_machine(new_connection, LS_STATE_INBOUND_CONNECT,
-                                                stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_CONNECT_ACK),
+                                                stream_packet_create_from_socket(new_connection, STREAM_FLAGS_CMD_CONNECT_ACK),
                                                 STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
+
                             reject = false;
                         }
                     }
@@ -654,12 +674,17 @@ ls_dump_socket_ptr("new connection", new_connection);
                     if (socket->state == LS_STATE_OUTBOUND_CONNECT) {
                         /* Receiving a CONNECT ACK in the OUTBOUND connect, so send a CONNECT ACK and go the CONNECTED state */
                         start_state_machine(socket, LS_STATE_CONNECTED,
-                                            stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_CONNECT_ACK),
-                                            STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
+                                            stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK),
+                                            0, 0);
 
-                        /* Deliver success to caller */
+                        /* Finish building socket by adding queues */
+                        socket->input_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, 0);
+                        socket->output_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, CONFIG_LASTLINK_STREAM_WINDOW_SIZE);
+
+                        /* Deliver success to caller of original connect */
                         send_state_machine_response(socket, LSE_NO_ERROR);
                         reject = false;
+
                     } else if (socket->state == LS_STATE_INBOUND_CONNECT) {
                         socket->state = LS_STATE_CONNECTED;
                         /* Send the socket number to the waiting listener */
@@ -672,6 +697,8 @@ ls_dump_socket_ptr("new connection", new_connection);
                             /* ERROR connection has no parent.  Just release the socket and reject connection attempt. */
                             memset(socket, 0, sizeof(*socket));
                         }
+                        /* Let ls_listen finish it's work */
+                        send_state_machine_response(socket, LSE_NO_ERROR);
                     }
                 }
                 break;
@@ -685,9 +712,13 @@ ls_dump_socket_ptr("new connection", new_connection);
 
                     /* In any state, start a disconnect */
                     start_state_machine(socket, LS_STATE_DISCONNECTING,
-                                        stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_DISCONNECTED),
+                                        stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED),
                                         STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
-                    reject = false;
+
+                    /* This will shut down the reader when it reads to end of queue */
+                    if (put_packet_into_window(socket->input_window, NULL)) {
+                        reject = false;
+                    }
                 }
                 break;
             }
@@ -713,7 +744,7 @@ ls_dump_socket_ptr("new connection", new_connection);
 
                     /* An error so tear down the connection */
                     start_state_machine(socket, LS_STATE_DISCONNECTED,
-                                        stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_DISCONNECTED),
+                                        stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED),
                                         STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
                     reject = false;
                 }
@@ -724,10 +755,10 @@ ls_dump_socket_ptr("new connection", new_connection);
         if (reject) {
             linklayer_send_packet(stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_REJECT));
         } else if (socket != NULL) {
-            /* Process any data ack */
-            release_packets_in_window(socket->output_window,
-                                      get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
-                                      get_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN));
+            /* Ack the output window */
+            ack_output_window(socket,
+                              get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                              get_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN));
         }
 
         processed = true;
@@ -736,7 +767,7 @@ ls_dump_socket_ptr("new connection", new_connection);
     return processed;
 }
 
-static const char* stream_packet_format(const packet_t* packet)
+static const char* stream_packet_format(const packet_t *packet)
 {
     char* info;
 
@@ -770,6 +801,9 @@ ls_error_t ls_socket_init(void)
         linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
         linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
 
+        /* Create the timer but don't start it */
+        socket_timer = os_create_timer("socket_timer", 5, NULL, socket_timer_scanner);
+
         esp_vfs_t vfs = {
             .flags    = ESP_VFS_FLAG_DEFAULT,
             .read = &ls_read,
@@ -801,6 +835,11 @@ ls_error_t ls_socket_deinit(void)
 {
     linklayer_lock();
 
+    /* Kill socket timer */
+    os_stop_timer(socket_timer);
+    os_delete_timer(socket_timer);
+    socket_timer = NULL;
+
     /* Purge all waiting pings */
     for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
         if (ping_table[ping].sequence != 0) {
@@ -814,7 +853,7 @@ ls_error_t ls_socket_deinit(void)
 
     /* Close all sockets */
     for (int s = 0; s < ELEMENTS_OF(socket_table); ++s) {
-        ls_close_immediate(s);
+        (void) release_socket(&socket_table[s]);
     }
 
     /* De-register protocols */
@@ -837,6 +876,82 @@ ls_error_t ls_socket_deinit(void)
     return err;
 }
 
+static ssize_t release_socket(ls_socket_t* socket)
+{
+    ssize_t err = LSE_NO_ERROR;
+
+    switch (socket->socket_type) {
+        case LS_UNUSED: {
+            err = LSE_NOT_OPENED;
+            break;
+        }
+
+        case LS_DATAGRAM: {
+            /* Close packet receive queue */
+            linklayer_release_packets_in_queue(socket->datagram_packets);
+            if (socket->datagram_packets != NULL) {
+                os_delete_queue(socket->datagram_packets);
+                socket->datagram_packets = NULL;
+            }
+            socket->socket_type = LS_UNUSED;
+            break;
+        }
+
+        case LS_STREAM: {
+            if (socket->listen) {
+                /* Go through all sockets and bust the parent link to this listener */
+                for (int socknum = 0; socknum < ELEMENTS_OF(socket_table); ++socknum) {
+                    if (socket_table[socknum].socket_type == LS_STREAM && socket_table[socknum].parent == socket) {
+                        socket_table[socknum].parent = NULL;
+                    }
+                }
+
+                /* Close listener queue */
+                ls_socket_t *c;
+                while (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &c, 0)) {
+                    ls_close_ptr(c);
+                }
+
+                os_delete_queue(socket->connections);
+                socket->connections = NULL;
+                socket->socket_type = LS_UNUSED;
+            } else {
+                stop_socket_timer(&socket->state_machine_timer);
+                stop_socket_timer(&socket->socket_flush_timer);
+                stop_socket_timer(&socket->output_window_timer);
+
+                /* Otherwise forcibly shut everything down */
+                release_packet_window(socket->input_window);
+                socket->input_window = NULL;
+                release_packet_window(socket->output_window);
+                socket->output_window = NULL;
+
+                release_packet(socket->retry_packet);
+                socket->retry_packet = NULL;
+
+                if (socket->response_queue != NULL) {
+                    os_delete_queue(socket->response_queue);
+                    socket->response_queue = NULL;
+                }
+
+                release_packet(socket->current_read_packet);
+                socket->current_read_packet = NULL;
+
+                release_packet(socket->current_write_packet);
+                socket->current_write_packet = NULL;
+
+                socket->state = LS_STATE_IDLE;
+                socket->socket_type = LS_UNUSED;
+            }
+            break;
+        }
+    }
+
+    socket->inuse = false;
+
+    return err;
+}
+
 /*
  * Create a socket for sending or listening (determined by ls_connect or ls_listen)
  *
@@ -854,10 +969,15 @@ int ls_socket(ls_socket_type_t socket_type)
     if (socket_type == LS_DATAGRAM || socket_type == LS_STREAM) {
 
         if (linklayer_lock()) {
-            ls_socket_t* socket = find_free_socket();
+            ls_socket_t *socket = find_free_socket();
 
             if (socket != NULL) {
+                socket->inuse = true;
+                socket->dead = false;
                 socket->socket_type = socket_type;
+                socket->state = LS_STATE_IDLE;
+                socket->local_port = -1;
+
                 /* Return the socket index in the table plus the offset */
                 ret = socket - socket_table + FIRST_LASTLINK_FD;
             } else {
@@ -886,7 +1006,7 @@ ls_error_t ls_bind(int s, ls_port_t local_port)
 {
     ls_error_t err = LSE_INVALID_SOCKET;
 
-    ls_socket_t* socket = validate_socket(s);
+    ls_socket_t *socket = validate_socket(s);
 
     if (socket != NULL) {
         /* Assign local port from free pool if not specified by user */
@@ -914,7 +1034,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
 {
     ls_error_t err;
 
-    ls_socket_t* socket = validate_socket(s);
+    ls_socket_t *socket = validate_socket(s);
 
     /* Validate paramters */
     if (socket != NULL && socket->socket_type == LS_STREAM) {
@@ -954,10 +1074,8 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
 }
 
 /* Called by repeating timer to keep machine running - retransmit data, etc. */
-static void state_machine_timeout(void* param)
+static void state_machine_timeout(ls_socket_t *socket)
 {
-    ls_socket_t* socket = (ls_socket_t*) param;
-
     if (--(socket->retries) > 0) {
 
         /* Timed out so retry by sending connect packet again (if still present) */
@@ -981,11 +1099,11 @@ static void state_machine_timeout(void* param)
  *      socket       Socket to run state machine
  *      state        State to assign socket
  *      packet       Initial packet to be sent (captured and retransmitted unless timeout, retry or answer)
- *      timeout      Timeout between retry cycles.
+ *      timeout      Timeout between retry cycles. (if 0, does not start timer)
  *      retries      Number of times to retry packet until state changes.
  *
  */
-static void start_state_machine(ls_socket_t* socket, ls_socket_state_t state, packet_t* packet, int timeout, int retries)
+static void start_state_machine(ls_socket_t *socket, ls_socket_state_t state, packet_t *packet, int timeout, int retries)
 {
     /* Cancel any running state machine */
     cancel_state_machine(socket);
@@ -993,20 +1111,24 @@ static void start_state_machine(ls_socket_t* socket, ls_socket_state_t state, pa
     /* Validate socket */
 
     socket->state = state;
-    socket->retries = retries;
-    socket->retry_timer = os_create_timer("connecting", timeout, false, (void*) socket, state_machine_timeout);
-    socket->retry_packet = packet;
+    if (timeout != 0) {
+        socket->retries = retries;
+        start_socket_timer(&socket->state_machine_timer, timeout);
+        socket->retry_packet = ref_packet(packet);
+    }
 
     if (socket->response_queue == NULL) {
         socket->response_queue = os_create_queue(1, sizeof(ls_error_t));
     }
 
+ls_dump_socket_ptr("state changed", socket);
     if (packet != NULL) {
-        linklayer_send_packet(ref_packet(packet));
+linklayer_print_packet("sending packet", packet);
+        linklayer_send_packet(packet);
     }
 }
 
-void send_state_machine_response(ls_socket_t* socket, ls_error_t response)
+void send_state_machine_response(ls_socket_t *socket, ls_error_t response)
 {
     if (socket->response_queue != NULL) {
         os_put_queue(socket->response_queue, (os_queue_item_t) response);
@@ -1015,7 +1137,7 @@ void send_state_machine_response(ls_socket_t* socket, ls_error_t response)
     }
 }
 
-ls_error_t get_state_machine_response(ls_socket_t* socket)
+ls_error_t get_state_machine_response(ls_socket_t *socket)
 {
     int response;
     if (! os_get_queue(socket->response_queue, (os_queue_item_t*) &response)) {
@@ -1032,14 +1154,11 @@ ls_error_t get_state_machine_response(ls_socket_t* socket)
     return (ls_error_t) response;
 }
 
-static void cancel_state_machine(ls_socket_t* socket)
+static void cancel_state_machine(ls_socket_t *socket)
 {
     socket->retries = 0;
 
-    if (socket->retry_timer != NULL) {
-        os_delete_timer(socket->retry_timer);
-        socket->retry_timer = NULL;
-    }
+    stop_socket_timer(&socket->state_machine_timer);
 
     release_packet(socket->retry_packet);
     socket->retry_packet = NULL;
@@ -1063,7 +1182,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
 {
     ls_error_t err = LSE_NO_ERROR;
 
-    ls_socket_t* socket = validate_socket(s);
+    ls_socket_t *socket = validate_socket(s);
 
     if (socket != NULL) {
         socket->dest_port = port;
@@ -1082,9 +1201,6 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                 socket->datagram_packets = os_create_queue(5, sizeof(packet_t*));
             }
         } else {
-            socket->input_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, 0);
-            socket->output_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, CONFIG_LASTLINK_STREAM_WINDOW_SIZE);
-
             /* Start sending connect packet and wait for complete */
             start_state_machine(socket, LS_STATE_OUTBOUND_CONNECT,
                                 stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT),
@@ -1104,6 +1220,111 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
     return err;
 }
 
+static void socket_flush_stream(ls_socket_t *socket)
+{
+//linklayer_print_packet("socketflush", socket->current_write_packet);
+/* Locks needed ? */
+    stop_socket_timer(&socket->socket_flush_timer);
+    assert(socket->output_window != NULL);
+
+    if (socket->output_window != NULL) {
+        write_packet_to_window(socket->output_window, ref_packet(socket->current_write_packet));
+        release_packet(socket->current_write_packet);
+        socket->current_write_packet = NULL;
+ESP_LOGI(TAG, "%s: start output_window_timer", __func__);
+        start_socket_timer(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
+    }
+}
+
+/*
+ * Send any packes in the output window (unacknowledged) + the ACK sequence and window flags.
+ */
+static void ack_output_window(ls_socket_t *socket, int ack_sequence, unsigned int ack_window)
+{
+    stop_socket_timer(&socket->output_window_timer);
+
+ESP_LOGI(TAG, "%s: waiting for output window lock...", __func__);
+
+    if (os_acquire_recursive_mutex(socket->output_window->lock)) {
+ESP_LOGI(TAG, "%s: got output window lock...", __func__);
+
+        /* Release these packets in window */
+        release_packets_in_window(socket->output_window, socket->input_window->sequence, socket->input_window->window);
+
+ESP_LOGI(TAG, "%s: released_packet_in_window done...", __func__);
+
+        /* If packets remain in window, start the send_output_window timer again */
+        if (socket->output_window->in != 0) {
+            socket->output_window->retry_time = 0;
+            start_socket_timer(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME);
+        }
+          
+        os_release_recursive_mutex(socket->output_window->lock);
+    }
+}
+
+static void send_output_window(ls_socket_t *socket)
+{
+    stop_socket_timer(&socket->output_window_timer);
+
+ESP_LOGI(TAG, "%s: waiting for window lock", __func__);
+
+    if (os_acquire_recursive_mutex(socket->output_window->lock)) {
+ESP_LOGI(TAG, "%s: input window in is %d", __func__, socket->output_window->in);
+        /* If packets in window, then send them. */
+        if (socket->output_window->in != 0) {
+            /* If first time, set new timeout and retry count */
+            if (socket->output_window->retries == 0) {
+                socket->output_window->retries = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRIES;
+                socket->output_window->retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME;
+
+            } else {
+                socket->output_window->retries -= 1;
+            }
+ 
+            if (socket->output_window->retries != 0) {
+ESP_LOGI(TAG, "%s: retries is %d", __func__, socket->output_window->retries);
+                /* Packets in queue - send all that are here */
+                for (int slot = 0; slot < socket->output_window->in; ++slot) {
+                    if (socket->output_window->slots[slot] != NULL) {
+ESP_LOGI(TAG, "%s: sending packet in slot %d", __func__, slot);
+linklayer_print_packet("sending packet", socket->output_window->slots[slot]);
+                        linklayer_send_packet(ref_packet(socket->output_window->slots[slot]));
+                    }
+                }
+
+                /* Come back in exponential time */
+                start_socket_timer(&socket->output_window_timer, socket->output_window->retry_time);
+
+                /* Next time wait twice as long */
+                socket->output_window->retry_time <<= 1;
+
+            } else {
+                /* Timed out - Mark it as dead */
+                socket->dead = true;
+
+            }
+        }
+        os_release_recursive_mutex(socket->output_window->lock);
+    }
+}
+
+/*
+ * Link and check every little while until socket has been disconnected.
+ */
+static void socket_linger_check(ls_socket_t* socket)
+{
+    if (!socket->inuse && socket->socket_type == LS_STREAM) {
+        if (socket->state == LS_STATE_DISCONNECTED) {
+            (void) release_socket(socket);
+        } else {
+            /* Look again later */
+            start_socket_timer(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
+        }
+    }
+}
+
+
 /*
  * Write to a datagram or stream socket.
  *
@@ -1120,13 +1341,13 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
  *      ls_error_t          If >0, number of bytes written (might be less than len if error)
  *                          Otherwise is error code (< 0)
  */
-static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t len, bool eor)
+static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor)
 {
     ls_error_t err;
 
     switch (socket->socket_type) {
         case LS_DATAGRAM: {
-            packet_t* packet = datagram_packet_create_from_socket(socket);
+            packet_t *packet = datagram_packet_create_from_socket(socket);
             if (packet != NULL) {
                 int tomove = len;
                 if (tomove > DATAGRAM_LEN) {
@@ -1146,9 +1367,6 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t l
             int written = 0;
 
             if (len != 0 || eor) { 
-                /*
-                 * Kill the timer set with LASTLINK_STREAM_TRANSMIT_DELAY
-                 */
                 while (len != 0) {
                     if (socket->current_write_packet == NULL) {
                         socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DATA);
@@ -1183,11 +1401,13 @@ static ls_error_t ls_write_helper(ls_socket_t* socket, const char* buf, size_t l
                     if (eor) {
                         int flags = get_uint_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN);
                         flags |= STREAM_FLAGS_EOR;
+                        set_uint_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN, flags);
                     }
                     write_packet_to_window(socket->output_window, socket->current_write_packet);
                     socket->current_write_packet = NULL;
                 } else {
-                    /* Set a timer with LASTLINK_STREAM_TRANSMIT_DELAY to force transmission if nothing else is stored in packet. */
+                    /* Set a timer with CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY to force transmission if nothing else is stored in packet. */
+                    start_socket_timer(&socket->socket_flush_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
                 }
             }
             err = written;
@@ -1255,15 +1475,15 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
 {
     ls_error_t err = LSE_NO_ERROR;
 
-    ls_socket_t* socket = validate_socket(s);
+    ls_socket_t *socket = validate_socket(s);
 
     if (socket == NULL) {
         err = LSE_INVALID_SOCKET;
     } else if (socket->socket_type == LS_DATAGRAM) {
         /* Pend on a packet in the queue */
-        packet_t* packet;
+        packet_t *packet;
         if (os_get_queue_with_timeout(socket->datagram_packets, (os_queue_item_t*) &packet, timeout)) {
-linklayer_print_packet("ls_read DATAGRAM", packet);
+//linklayer_print_packet("ls_read DATAGRAM", packet);
             /* A packet with data */
             int packet_data_length = packet->length - DATAGRAM_PAYLOAD;
             if (packet_data_length > maxlen) {
@@ -1283,7 +1503,7 @@ linklayer_print_packet("ls_read DATAGRAM", packet);
         }
     } else if (socket->socket_type == LS_STREAM) {
         /* STREAM packets arrive on the socket stream_packet_queue after being sorted and acked as necessary */
-        packet_t* packet;
+        packet_t *packet;
         bool eor = false;
         int total_len = 0;
 
@@ -1291,12 +1511,13 @@ linklayer_print_packet("ls_read DATAGRAM", packet);
         while (!eor && maxlen != 0) {
             int offset = 0;
 
-            if (socket->residue_packet != NULL) {
-                packet = socket->residue_packet;
-                socket->residue_packet = NULL;
-                offset = socket->residue_offset;
-                socket->residue_offset = 0;
+            if (socket->current_read_packet != NULL) {
+                packet = socket->current_read_packet;
+                socket->current_read_packet = NULL;
+                offset = socket->current_read_offset;
+                socket->current_read_offset = 0;
             } else {
+                /* This blocks until packet is ready or socket is shut down remotely */
                 packet = get_packet_from_window(socket->input_window);
                 offset = 0;
             }
@@ -1323,14 +1544,14 @@ linklayer_print_packet("ls_read DATAGRAM", packet);
                     release_packet(packet);
                 } else {
                     /* Otherwise save the packet and offset */
-                    socket->residue_packet = packet;
-                    socket->residue_offset = offset;
+                    socket->current_read_packet = packet;
+                    socket->current_read_offset = offset;
                 }
             } else {
                 /* Socket remotely closed.  Return residue for last read. */
                 eor = true;
                 /* Shutdown socket */
-                ls_close_immediate(s);
+                //ls_close_immediate(s);
             }
         }
     } else {
@@ -1356,98 +1577,52 @@ ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout)
 
 
 /*
- * Close a socket.  All internal information is deleted.
- * Returns status code.  0 is success.
+ * Close a socket.
  */
-static ls_error_t ls_close_helper(int s, bool immediate)
+static ls_error_t ls_close_ptr(ls_socket_t *socket)
 {
     ls_error_t err = LSE_NO_ERROR;
 
-    ls_socket_t* socket = validate_socket(s);
     if (socket != NULL) {
         if (linklayer_lock()) {
             switch (socket->socket_type) {
-                case LS_UNUSED: {
-                    err = LSE_NOT_OPENED;
+                default: {
+                    err = LSE_INVALID_SOCKET;
+                    break;
+                }
+
+                case LS_DATAGRAM: {
+                    err = release_socket(socket);
                     break;
                 }
 
                 case LS_STREAM: {
                     if (socket->listen) {
-                        /* Go through all sockets and bust the parent link to this listener */
-                        for (int socknum = 0; socknum < ELEMENTS_OF(socket_table); ++socknum) {
-                            if (socket_table[socknum].socket_type == LS_STREAM && socket_table[socknum].parent == socket) {
-                                socket_table[socknum].parent = NULL;
-                            }
-                        }
-
-                        /* Close listener queue */
-                        ls_socket_t* c;
-                        while (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &c, 0)) {
-                            if (c != NULL) {
-                                ls_close_helper(c - socket_table, immediate);
-                            }
-                        }
-
-                        os_delete_queue(socket->connections);
-                        socket->connections = NULL;
-                        socket->socket_type = LS_UNUSED;
-
+                        err = release_socket(socket);
                     } else {
-                        if (!immediate) {
-                            /*
-                             * Start a close by sending disconnected to remote end.
-                             * Socket will no longer be writable by can be read until end of data.
-                             * When reaching end data, local socket will also close.
-                             */
-                            start_state_machine(socket, LS_STATE_DISCONNECTING,
-                                                stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED),
-                                                STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
+                        /* Flush any remaining output */
+                        socket_flush_stream(socket);
 
-                            err = get_state_machine_response(socket);
-                        } else {
-                            /* Otherwise forcibly shut everything down */
-                            release_packet_window(socket->input_window);
-                            socket->input_window = NULL;
-                            release_packet_window(socket->output_window);
-                            socket->output_window = NULL;
+                        /*
+                         * Start a close by sending disconnect to remote end.
+                         * Socket will no longer be writable by can be read until end of data.
+                         * When reaching end data, local socket will also close.
+                         */
+                        start_state_machine(socket, LS_STATE_DISCONNECTING,
+                                            stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT),
+                                            STREAM_CONNECT_TIMEOUT, STREAM_CONNECT_RETRIES);
 
-                            if (socket->retry_timer != NULL) {
-                                os_delete_timer(socket->retry_timer);
-                                socket->retry_timer = NULL;
-                                release_packet(socket->retry_packet);
-                                socket->retry_packet = NULL;
-                            }
-                            if (socket->response_queue != NULL) {
-                                os_delete_queue(socket->response_queue);
-                                socket->response_queue = NULL;
-                            }
-                            release_packet(socket->residue_packet);
-                            socket->residue_packet = NULL;
+                        err = get_state_machine_response(socket);
 
-                            release_packet(socket->current_write_packet);
-                            socket->current_write_packet = NULL;
-                        }
+                        /* After purged queues finish or a suitable timeout, socket will be cleared */
+                        start_socket_timer(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
                     }
-                    break;
-                }
-
-                case LS_DATAGRAM: {
-                    /* Close packet receive queue */
-                    linklayer_release_packets_in_queue(socket->datagram_packets);
-                    if (socket->datagram_packets != NULL) {
-                        os_delete_queue(socket->datagram_packets);
-                        socket->datagram_packets = NULL;
-                    }
-                    socket->socket_type = LS_UNUSED;
-                    break;
-                }
-
-                default: {
-                    err = LSE_INVALID_SOCKET;
                     break;
                 }
             }
+
+            socket->inuse = false;
+
             linklayer_unlock();
         }
     } else {
@@ -1459,18 +1634,13 @@ static ls_error_t ls_close_helper(int s, bool immediate)
 
 ls_error_t ls_close(int s)
 {
-    return ls_close_helper(s, false);
-}
-
-static ls_error_t ls_close_immediate(int s)
-{
-    return ls_close_helper(s, true);
+    return ls_close_ptr(validate_socket(s));
 }
 
 
-static ls_socket_t* validate_socket(int s)
+static ls_socket_t *validate_socket(int s)
 {
-    ls_socket_t* ret = NULL;
+    ls_socket_t *ret = NULL;
 
     if (s >= FIRST_LASTLINK_FD && s <= LAST_LASTLINK_FD) {
 
@@ -1666,7 +1836,7 @@ int ls_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
  */
 ls_error_t ls_get_last_error(int s)
 {
-    ls_socket_t* socket = validate_socket(s);
+    ls_socket_t *socket = validate_socket(s);
 
     ls_error_t err;
 
@@ -1691,27 +1861,58 @@ ls_error_t ls_get_last_error(int s)
  * Returns true if success.
  *
  */
-static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
+static bool put_packet_into_window(packet_window_t *queue, packet_t *packet)
 {
     bool ok = false;
 
-    int relative_sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN) - queue->sequence;
+    if (queue != NULL) {
+ESP_LOGI(TAG, "%s: waiting for lock", __func__);
+        if (os_acquire_recursive_mutex(queue->lock)) {
+            int relative_sequence;
+            int ready_count = 0;
 
-    if (relative_sequence >= 0 && relative_sequence < queue->length) {
-        if (os_acquire_mutex(queue->lock)) {
-            /* Ignore packet if already installed */
-            if (queue->slots[relative_sequence] == NULL) {
-                queue->slots[relative_sequence] = ref_packet(packet);
-                queue->window |= 1 << relative_sequence;
+            if (packet != NULL) {
+                relative_sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN) - queue->sequence;
+ESP_LOGI(TAG, "%s: relative sequence %d from packet %d queue %d", __func__, relative_sequence, get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN), queue->sequence);
+            } else {
+ESP_LOGI(TAG, "%s: packet was NULL", __func__);
+                /* One extra release so the end of data is seen */
+                ready_count = 1;
+
+                /* Find first available entry and use it. */
+                relative_sequence = 0;
+                while (queue->slots[relative_sequence] != NULL && relative_sequence < queue->length) {
+                    ++relative_sequence;
+                }
+                /* relative_sequence now points to first available entry or past the end if none found */
             }
 
-            /* Move 'in' forward to release contiguous packets from beginning of sequence */
-            while (queue->in < queue->length && queue->slots[queue->in] != NULL) {
-                os_release_counting_semaphore(queue->available, 1);
+ESP_LOGI(TAG, "%s: relative_sequence %d queue->length %d", __func__, relative_sequence, queue->length);
+            if (relative_sequence >= 0 && relative_sequence < queue->length) {
+                /* Ignore packet if already installed */
+                if (queue->slots[relative_sequence] == NULL) {
+                    queue->slots[relative_sequence] = ref_packet(packet);
+                    queue->window |= 1 << relative_sequence;
+ESP_LOGI(TAG, "%s: packet stored in slot %d; window %04x queue->in %d", __func__, relative_sequence, queue->window, queue->in);
+                    ok = true;
+                }
+            }
+
+            /* Make available all packets from here that are in the window */
+            while ((queue->window & (1 << queue->in)) != 0) {
+                ready_count++;
                 queue->in++;
             }
-            os_release_mutex(queue->lock);
-            ok = true;
+      
+ESP_LOGI(TAG, "%s: %d packets ready; in is now %d", __func__, ready_count, queue->in);
+
+            /* Release as many slots as have become contiguous */
+            if (ready_count != 0) {
+                bool rok = os_release_counting_semaphore(queue->available, ready_count);
+ESP_LOGI(TAG, "%s: release count %d returned %s", __func__, ready_count, rok ? "TRUE" : "FALSE");
+            }
+
+            os_release_recursive_mutex(queue->lock);
         }
     }
 
@@ -1723,13 +1924,13 @@ static bool put_packet_into_window(packet_window_t* queue, packet_t* packet)
  *
  * When NULL is returned, the socket was closed remotely.
  */
-static packet_t* get_packet_from_window(packet_window_t* queue)
+static packet_t *get_packet_from_window(packet_window_t *queue)
 {
-    packet_t* packet = NULL;
+    packet_t *packet = NULL;
 
     if (os_acquire_counting_semaphore(queue->available)) {
         /* Remove first entry */
-        if (os_acquire_mutex(queue->lock)) {
+        if (os_acquire_recursive_mutex(queue->lock)) {
 
             /* Take the top of the queue */
             packet = queue->slots[0];
@@ -1745,7 +1946,7 @@ static packet_t* get_packet_from_window(packet_window_t* queue)
                 queue->sequence++;
 
             }
-            os_release_mutex(queue->lock);
+            os_release_recursive_mutex(queue->lock);
         }
     }
 
@@ -1767,22 +1968,26 @@ static packet_t* get_packet_from_window(packet_window_t* queue)
  *
  * Returns true on success.
  */
-static bool write_packet_to_window(packet_window_t* queue, packet_t* packet)
+static bool write_packet_to_window(packet_window_t *queue, packet_t *packet)
 {
     bool ok = false;
 
+ESP_LOGI(TAG, "%s: waiting for available...", __func__);
+
     if (os_acquire_counting_semaphore(queue->available)) {
         /* Room to put the packet.  Lock the queue */
-        if (os_acquire_mutex(queue->lock)) {
-            
+ESP_LOGI(TAG, "%s: waiting for lock...", __func__);
+        if (os_acquire_recursive_mutex(queue->lock)) {
+ESP_LOGI(TAG, "%s: got lock...", __func__);
             /* Sanity check */
             if (queue->in < queue->length) {
+ESP_LOGI(TAG, "%s: putting packet %p in queue at %d", __func__, packet, queue->in);
                 /* Insert sequence number into packet */
                 set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, queue->sequence + queue->in);
                 queue->slots[queue->in++] = ref_packet(packet);
                 ok = true;
             }
-            os_release_mutex(queue->lock);
+            os_release_recursive_mutex(queue->lock);
         }
     }
     return ok;
@@ -1804,14 +2009,15 @@ static bool write_packet_to_window(packet_window_t* queue, packet_t* packet)
  *      window          - additional packets (bit field relative to sequence) that are acked.
  *
  */
-static void release_packets_in_window(packet_window_t* queue, int sequence, unsigned int window)
+static void release_packets_in_window(packet_window_t *queue, int sequence, unsigned int window)
 {
-    if (os_acquire_mutex(queue->lock)) {
+    if (os_acquire_recursive_mutex(queue->lock)) {
 ESP_LOGI(TAG, "%s: sequence %d window %04x", __func__, sequence, window);
         /* Ack the head of the queue, if any */
         while (queue->in != 0 && queue->slots[0] != NULL &&  (sequence < get_uint_field(queue->slots[0], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN))) {
 ESP_LOGI(TAG, "%s: release packet %p in window slot 0 (in %d)", __func__, queue->slots[0], queue->in);
             release_packet(queue->slots[0]);
+
             /* Remove from table */
             if (queue->in > 1) {
                 memcpy(queue->slots + 0, queue->slots + 1, (queue->in - 1) * sizeof(queue->slots[0]));
@@ -1843,6 +2049,8 @@ ESP_LOGI(TAG, "%s: released %d in queue", __func__, queue->released);
             os_release_counting_semaphore(queue->available, queue->released);
             queue->released = 0;
         }
+
+        os_release_recursive_mutex(queue->lock);
     }
 }
 
@@ -1854,31 +2062,30 @@ ESP_LOGI(TAG, "%s: released %d in queue", __func__, queue->released);
  *        length           Total window size of queue
  *        available        Initial available slots (0 for read side; length for write side)
  */
-static packet_window_t* allocate_packet_window(int length, int available)
+static packet_window_t *allocate_packet_window(int length, int available)
 {
-     packet_window_t* queue = (packet_window_t*) malloc(sizeof(packet_window_t) + sizeof(packet_t*) * (length - 1));
+     packet_window_t *queue = (packet_window_t*) malloc(sizeof(packet_window_t) + sizeof(packet_t*) * (length - 1));
 
      if (queue != NULL) {
          memset(queue, 0, sizeof(packet_window_t) + sizeof(packet_t*) * (length - 1));
          queue->available = os_create_counting_semaphore(length, available);
-         queue->lock = os_create_mutex();
+assert(queue->available != NULL);
+         queue->lock = os_create_recursive_mutex();
          queue->length = length;
      }
 
      return queue;
 }
 
-static bool release_packet_window(packet_window_t* queue)
+static bool release_packet_window(packet_window_t *queue)
 {
-    if (os_acquire_mutex(queue->lock)) {
+    if (os_acquire_recursive_mutex(queue->lock)) {
         os_delete_semaphore(queue->available);
 
         /* Release packets in queue */
         for (int index = 0; index < queue->length; ++index) {
-            if (queue->slots[index] != NULL) {
-                release_packet(queue->slots[index]);
-                queue->slots[index] = NULL;
-            }
+            release_packet(queue->slots[index]);
+            queue->slots[index] = NULL;
         }
         os_delete_mutex(queue->lock);
     }
@@ -1888,7 +2095,7 @@ static bool release_packet_window(packet_window_t* queue)
     return true;
 }
 
-static const char* socket_type_of(const ls_socket_t* socket)
+static const char* socket_type_of(const ls_socket_t *socket)
 {
     const char* type = "UNDEFINED";
     if (socket != NULL) {
@@ -1903,7 +2110,7 @@ static const char* socket_type_of(const ls_socket_t* socket)
     return type;
 }
         
-static const char* socket_state_of(const ls_socket_t* socket)
+static const char* socket_state_of(const ls_socket_t *socket)
 {
     switch (socket->state) {
         case LS_STATE_IDLE:             return "Idle";
@@ -1916,7 +2123,7 @@ static const char* socket_state_of(const ls_socket_t* socket)
     }
 }
 
-static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t* socket)
+static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
 {
     if (socket != NULL) {
         printf("%s: %d (%p) state %s listen %s type %s local port %d dest port %d dest addr %d sn %d parent %d\n",
@@ -1929,7 +2136,7 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t* socket)
                socket->dest_port,
                socket->dest_addr,
                socket->serial_number,
-               socket->parent ? socket->parent - socket_table : -1);
+               socket->parent ? (socket->parent - socket_table) : -1);
     } else {
         printf("%s: invalid socket\n", msg);
     }
@@ -1942,4 +2149,76 @@ ls_error_t ls_dump_socket(const char* msg, int s)
     return ls_dump_socket_ptr(msg, validate_socket(s));
 }
     
+/* Called by timer to work on the sockets.
+ * Rechedules itself when new time interval is needed.
+ */
+static void socket_timer_scanner(os_timer_t timer)
+{
+    if (linklayer_lock()) {
+        uint32_t next_time = 0;
+        uint64_t current_time = get_milliseconds();
+
+        for (int socket_index = 0; socket_index < ELEMENTS_OF(socket_table); ++socket_index) {
+            /* Check the socket timer and fire action is ready */
+            if (socket_timer_check(&socket_table[socket_index].state_machine_timer, current_time, &next_time)) {
+ESP_LOGI(TAG, "%s: state_machine_timer for socket %d fired", __func__, socket_index);
+               state_machine_timeout(&socket_table[socket_index]);
+            }
+
+            if (socket_timer_check(&socket_table[socket_index].socket_flush_timer, current_time, &next_time)) {
+ESP_LOGI(TAG, "%s: socket_flush_timer for socket %d fired", __func__, socket_index);
+                 socket_flush_stream(&socket_table[socket_index]);
+            }
+
+            if (socket_timer_check(&socket_table[socket_index].output_window_timer, current_time, &next_time)) {
+ESP_LOGI(TAG, "%s: output_window_timer for socket %d fired", __func__, socket_index);
+                 send_output_window(&socket_table[socket_index]);
+            }
+
+            if (socket_timer_check(&socket_table[socket_index].linger_timer, current_time, &next_time)) {
+ESP_LOGI(TAG, "%s: linger_timer for socket %d fired", __func__, socket_index);
+                 socket_linger_check(&socket_table[socket_index]);
+            }
+        }
+
+        if (next_time != 0) {
+            /* Set delay to next trigger */
+            os_set_timer(socket_timer, next_time);
+            /* And start it */
+            os_start_timer(socket_timer);
+        }
+
+        linklayer_unlock();
+    }
+}
+
+static bool socket_timer_check(socket_timer_t *timer, uint64_t current_time, uint32_t *next_time)
+{
+    bool fired = timer->expires != 0 && current_time >= timer->expires;
+
+    /* If it didn't fire, calculate next time to fire */
+    if (!fired) {
+        uint32_t time_to_fire = timer->expires - current_time;
+        if (*next_time == 0 || time_to_fire < *next_time) {
+            *next_time = time_to_fire;
+        }
+    } 
+
+    return fired;
+}
+
+static void start_socket_timer(socket_timer_t *timer, int delay)
+{
+    timer->expires = delay + get_milliseconds();
+
+    /* Force a scan to reschedule */
+    os_set_timer(socket_timer, 1);
+    os_start_timer(socket_timer);
+}
+
+static void stop_socket_timer(socket_timer_t *timer)
+{
+    timer->expires = 0;
+}
+
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */

@@ -164,6 +164,8 @@ bool os_release_counting_semaphore(os_semaphore_t sem, int count)
 {
     bool ok = false;
 
+assert(sem != NULL);
+
     while ((count != 0) && (ok = os_release_mutex(sem))) {
         --count;
     }
@@ -265,9 +267,18 @@ bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t* item)
     return xQueuePeekFromISR(queue, (void**) item) == pdTRUE;
 }
 
-os_timer_t os_create_timer(const char* name, int timeout, bool reload, void* param, void (*function)(void* param))
+os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer))
 {
-    return xTimerCreate(name, pdMS_TO_TICKS(timeout), reload, param, function);
+    int ticks = pdMS_TO_TICKS(period);
+
+    return xTimerCreate(name, ticks ? ticks : 1, pdFALSE, param, function);
+}
+
+os_timer_t os_create_repeating_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer))
+{
+    int ticks = pdMS_TO_TICKS(period);
+
+    return xTimerCreate(name, ticks ? ticks : 1, pdTRUE, param, function);
 }
 
 bool os_start_timer(os_timer_t timer)
@@ -283,6 +294,13 @@ void* os_get_timer_data(os_timer_t timer)
 bool os_stop_timer(os_timer_t timer)
 {
     return xTimerStop(timer, portMAX_DELAY);
+}
+
+bool os_set_timer(os_timer_t timer, int period)
+{
+    int ticks = pdMS_TO_TICKS(period);
+
+    return xTimerChangePeriod(timer, ticks ? ticks : 1, portMAX_DELAY);
 }
 
 bool os_reset_timer(os_timer_t timer)
