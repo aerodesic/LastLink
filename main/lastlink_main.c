@@ -87,6 +87,25 @@ printf("readline returning '%s'\n", buffer);
 #endif
 
 
+void bargraph(display_t *display, int x, int y, int width, int height, int range, int value, const char* text)
+{
+    display->draw_rectangle(display, x, y, x + width - 1, y + height - 1, draw_flag_border);
+    int bar = ((width - 1) * value) / range;
+
+    display->draw_rectangle(display, x,       y, x + bar,       y + height - 1, draw_flag_fill);
+    display->draw_rectangle(display, x + bar, y, x + width - 1, y + height - 1, draw_flag_clear);
+
+    if (text != NULL) {
+        int cwidth, cheight;
+        font_metrics(display->font, text, &cwidth, &cheight);
+        display->set_xy(display, x + width/2 - cwidth/2, y + height/2 -  cheight/2);
+        display->write_text(display, text);
+    } else {
+        display->show(display);
+    }
+}
+
+
 void app_main(void)
 {
 #if 1
@@ -141,9 +160,32 @@ void app_main(void)
     printf("FIRST_LASTLINK_FD %d LAST_LASTLINK_FD %d LWIP_SOCKET_OFFSET %d\n", FIRST_LASTLINK_FD, LAST_LASTLINK_FD, LWIP_SOCKET_OFFSET);
 #endif
 
+#if 1
+#define X1  33
+#define Y1  17
+#define W   64
+#define H   32
+
     display_t *display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
-    display->set_xy(display, 5, 20);
-    display->write_text(display, "Hello, world!");
+    display->write_text(display, "Hello");
+
+    for (int progress = 0; progress <= 100; ++progress) {
+        bargraph(display, X1, Y1, W, H, 100, progress, "Hello");
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    for (int progress = 100; progress >= 0; --progress) {
+        bargraph(display, X1, Y1, W, H, 100, progress, "Goodbye");
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    //display->set_xy(display, 40, 30);
+    //display->draw_line(display, 0, 0, 127, 63);
+    //display->draw_line(display, 127, 0, 0, 63);
+    //display->show(display);
+#endif
 
 #if 0
     /* This becomes the main thread */
