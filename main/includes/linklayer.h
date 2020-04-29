@@ -214,7 +214,7 @@ int linklayer_allocate_sequence(void);
 bool linklayer_register_protocol(int number, bool (*protocol_processor)(packet_t* packet), const char* (*protocol_format)(const packet_t* packet));
 bool linklayer_unregister_protocol(int number);
 
-bool linklayer_set_promiscuous_mode(bool mode);
+os_queue_t linklayer_set_promiscuous_mode(bool mode);
 bool linklayer_set_debug(bool enable);
 
 void linklayer_send_packet(packet_t* packet);

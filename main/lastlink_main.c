@@ -48,48 +48,33 @@ const char* TAG = "lastlink";
 
 static const char* default_config[] = DEFAULT_CONFIG;
 
-#ifdef NOTUSED
-static int readline(char *buffer, size_t len)
+#define NUMLINES 6
+char lines[NUMLINES][16];
+int nextline = 0;
+
+static display_t *display;
+
+static void add_line_to_buffer(const char* buffer)
 {
-    int index = 0;
-
-    bool reading = true;
-
-    while (reading) {
-        int ch = getchar();
-
-        if (ch < 0) {
-            os_delay(5);
-        } else {
-            if (ch == '\n') {
-                buffer[index] = '\0';
-                reading = false;
-                putchar('\n');
-            } else if (ch == '\b') {
-                if (index > 0) {
-                    putchar('\b');
-                    putchar(' ');
-                    putchar('\b');
-                    --index;
-                }
-            } else if (isprint(ch)) {
-                if (index < len-1) {
-                    putchar(ch);
-                    buffer[index++] = ch;
-                }
-            }
-        }
+    /* Scroll the text */
+    if (nextline == NUMLINES) {
+        memcpy(lines, lines + 1, sizeof(lines) - sizeof(lines[0]));
+        nextline = NUMLINES - 1;
     }
+    strcpy(lines[nextline], buffer);
 
-printf("readline returning '%s'\n", buffer);
-    return index;
+    nextline++;
+
+    display->hold(display);
+    display->draw_rectangle(display, 0, 12, 127, 52, draw_flag_clear);
+    for (int line = 0; line < NUMLINES && lines[line] != NULL; ++line) {
+        display->draw_text(display, 0, 12 + line*8, lines[line]);
+    }
+    display->show(display);
 }
-#endif
-
 
 void app_main(void)
 {
-#if 1
     //Initialize NVS
     if (init_nvs() == ESP_OK) {
         /* pass */
@@ -105,72 +90,47 @@ void app_main(void)
             fclose(fp);
         }
     }
-#endif
 
 
     ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
     init_configuration(CONFIG_LASTLINK_CONFIG_FILE, default_config);
-
-#if 0
-    ESP_LOGD(TAG, "zap = '%s'", get_config_str("zip", "not found"));
-    ESP_LOGD(TAG, "section1.this = '%s'", get_config_str("section1.this", "not found"));
-    ESP_LOGD(TAG, "section1.section2.blot = '%s'", get_config_str("section1.section2.blot", "not found"));
-    ESP_LOGD(TAG, "zorch = '%s'", get_config_str("zorch", "not found"));
-    ESP_LOGD(TAG, "section1.section2.section3.only = '%s'", get_config_str("section1.section2.section3.only", "not found"));
-    ESP_LOGD(TAG, "notfound = '%s'", get_config_str("notfound", "not found"));
-    ESP_LOGD(TAG, "address %d flags 0x%02x announce %d", get_config_int("lastlink.address", 99), get_config_int("lastlink.flags", 99), get_config_int("lastlink.announce", -1));
-#endif
-
-#if 1
     /* initialize the lastlink network */
     #if CONFIG_LASTLINK_ADDRESS_OVERRIDE
         linklayer_init(CONFIG_LASTLINK_ADDRESS_OVERRIDE, get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #else
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
+
     linklayer_set_debug(true);
 
-   #if 1
+#if 1
     // start_commands(0, 1);
     ESP_LOGE(TAG, "stdin.fd %d stdout.fd %d", fileno(stdin), fileno(stdout));
     start_commands(fileno(stdin), fileno(stdout));
-   #endif
-
-    printf("FIRST_LASTLINK_FD %d LAST_LASTLINK_FD %d LWIP_SOCKET_OFFSET %d\n", FIRST_LASTLINK_FD, LAST_LASTLINK_FD, LWIP_SOCKET_OFFSET);
 #endif
 
-#if 1
-#define X1  33
-#define Y1  17
-#define W   64
-#define H   32
+    display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
+    display->draw_text(display, 0, 0, "LastLink v1.0");
+    
+    os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
-    display_t *display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
-    display->write_text(display, "Hello");
+    int tick_count = 0;
 
-    for (int progress = 0; progress <= 100; ++progress) {
-        display->draw_progress_bar(display, X1, Y1, W, H, 100, progress, "Hello");
-        vTaskDelay(pdMS_TO_TICKS(1));
+    packet_t *packet; 
+    while (true) {
+        char buffer[16];
+        if (os_get_queue_with_timeout(queue, (os_queue_item_t*) &packet, 1000)) {
+            snprintf(buffer, sizeof(buffer), "%04x %04x %02x",
+                     get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                     get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN));
+            add_line_to_buffer(buffer);
+        } else {
+            snprintf(buffer, sizeof(buffer), "T %d", ++tick_count);
+            add_line_to_buffer(buffer);
+        }
     }
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    for (int progress = 100; progress >= 0; --progress) {
-        display->draw_progress_bar(display, X1, Y1, W, H, 100, progress, "Goodbye");
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    //display->set_xy(display, 40, 30);
-    //display->draw_line(display, 0, 0, 127, 63);
-    //display->draw_line(display, 127, 0, 0, 63);
-    //display->show(display);
-#endif
-
-#if 0
-    /* This becomes the main thread */
-    wifi_init_softap();
-#endif
 }
 

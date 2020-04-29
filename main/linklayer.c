@@ -737,7 +737,7 @@ static void test_button_handler(void* param)
 }
 #endif
 
-bool linklayer_set_promiscuous_mode(bool mode) {
+os_queue_t linklayer_set_promiscuous_mode(bool mode) {
     bool ok = true;
 
     if (mode) {
@@ -752,7 +752,7 @@ bool linklayer_set_promiscuous_mode(bool mode) {
         }
     }
 
-    return ok;
+    return promiscuous_queue;
 }
 
 bool linklayer_set_debug(bool enable)
