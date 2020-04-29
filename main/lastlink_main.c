@@ -87,25 +87,6 @@ printf("readline returning '%s'\n", buffer);
 #endif
 
 
-void bargraph(display_t *display, int x, int y, int width, int height, int range, int value, const char* text)
-{
-    display->draw_rectangle(display, x, y, x + width - 1, y + height - 1, draw_flag_border);
-    int bar = ((width - 1) * value) / range;
-
-    display->draw_rectangle(display, x,       y, x + bar,       y + height - 1, draw_flag_fill);
-    display->draw_rectangle(display, x + bar, y, x + width - 1, y + height - 1, draw_flag_clear);
-
-    if (text != NULL) {
-        int cwidth, cheight;
-        font_metrics(display->font, text, &cwidth, &cheight);
-        display->set_xy(display, x + width/2 - cwidth/2, y + height/2 -  cheight/2);
-        display->write_text(display, text);
-    } else {
-        display->show(display);
-    }
-}
-
-
 void app_main(void)
 {
 #if 1
@@ -170,14 +151,14 @@ void app_main(void)
     display->write_text(display, "Hello");
 
     for (int progress = 0; progress <= 100; ++progress) {
-        bargraph(display, X1, Y1, W, H, 100, progress, "Hello");
+        display->draw_progress_bar(display, X1, Y1, W, H, 100, progress, "Hello");
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     for (int progress = 100; progress >= 0; --progress) {
-        bargraph(display, X1, Y1, W, H, 100, progress, "Goodbye");
+        display->draw_progress_bar(display, X1, Y1, W, H, 100, progress, "Goodbye");
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
