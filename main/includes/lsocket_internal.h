@@ -18,7 +18,7 @@
  */
 #define PING_SEQUENCE                  (HEADER_LEN + 0)
 #define PING_ROUTE_TABLE               (PING_SEQUENCE + SEQUENCE_NUMBER_LEN)
-#define PING_LEN                       (PING_ROUTE_TABLE + ADDRESS_LEN - HEADER_LEN)             /* Length with a single ADDRESS in route table */
+#define PING_LEN                       (PING_ROUTE_TABLE - HEADER_LEN)             /* Length with a no addresses in route table */
 
 #define PING_PROTOCOL                  (FIRST_DATA_PROTOCOL+0)
 

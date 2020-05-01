@@ -3,9 +3,12 @@
  */
 #include "sdkconfig.h"
 
+#define VERSION "1.0"
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdarg.h>
 
 #include "driver/uart.h"
 
@@ -52,23 +55,25 @@ static const char* default_config[] = DEFAULT_CONFIG;
 char lines[NUMLINES][16];
 int nextline = 0;
 
-static display_t *display;
+display_t *display;
 
-static void add_line_to_buffer(const char* buffer)
+static void add_line_to_buffer(const char* fmt, ...)
 {
     /* Scroll the text */
     if (nextline == NUMLINES) {
         memcpy(lines, lines + 1, sizeof(lines) - sizeof(lines[0]));
         nextline = NUMLINES - 1;
     }
-    strcpy(lines[nextline], buffer);
 
-    nextline++;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(lines[nextline++], sizeof(lines[nextline]), fmt, ap);
+    va_end(ap);
 
     display->hold(display);
     display->draw_rectangle(display, 0, 12, 127, 52, draw_flag_clear);
     for (int line = 0; line < NUMLINES && lines[line] != NULL; ++line) {
-        display->draw_text(display, 0, 12 + line*8, lines[line]);
+        display->draw_text(display, 0, 12 + line*8, "%s", lines[line]);
     }
     display->show(display);
 }
@@ -105,6 +110,11 @@ void app_main(void)
 
     linklayer_set_debug(true);
 
+#if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
+    linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));
+
+#endif
+
 #if 1
     // start_commands(0, 1);
     ESP_LOGE(TAG, "stdin.fd %d stdout.fd %d", fileno(stdin), fileno(stdout));
@@ -112,24 +122,52 @@ void app_main(void)
 #endif
 
     display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
-    display->draw_text(display, 0, 0, "LastLink v1.0");
+    display->contrast(display, get_config_int("display.contrast", 128));
+#if 1
+    display->draw_text(display, 0, 0, "Lastlink @%d", get_config_int("lastlink.address", 0));
+#else
+    display->draw_text(display, 0, 0, "LastLink %s", VERSION);
+#endif
     
     os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
-    int tick_count = 0;
+    uint64_t starting_tick_count  = get_milliseconds();
 
     packet_t *packet; 
     while (true) {
-        char buffer[16];
-        if (os_get_queue_with_timeout(queue, (os_queue_item_t*) &packet, 1000)) {
-            snprintf(buffer, sizeof(buffer), "%04x %04x %02x",
-                     get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),
-                     get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                     get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN));
-            add_line_to_buffer(buffer);
-        } else {
-            snprintf(buffer, sizeof(buffer), "T %d", ++tick_count);
-            add_line_to_buffer(buffer);
+        if (os_get_queue(queue, (os_queue_item_t*) &packet)) {
+
+            uint64_t elapsed = get_milliseconds() - starting_tick_count;
+
+            int addresses[4];
+            addresses[0] = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+            addresses[1] = get_uint_field(packet, HEADER_ORIGIN_ADDRESS,  ADDRESS_LEN);
+            addresses[2] = get_uint_field(packet, HEADER_DEST_ADDRESS,    ADDRESS_LEN);
+            addresses[3] = get_uint_field(packet, HEADER_SENDER_ADDRESS,  ADDRESS_LEN);
+            int protocol = get_uint_field(packet, HEADER_PROTOCOL,        PROTOCOL_LEN);
+            bool transmitted = packet->transmitted;
+
+            /* Format for log message */
+            const char *p_message = linklayer_format_packet(packet);
+
+            release_packet(packet);
+
+            char buffer[16];
+            char *p = buffer; 
+
+            for (int index = 0; index < 4; ++index) {
+                if (addresses[index] == BROADCAST_ADDRESS) {
+                    p += snprintf(p, sizeof(buffer) - (p-buffer), " X");
+                } else {
+                    p += snprintf(p, sizeof(buffer) - (p-buffer), " %x", addresses[index]);
+                }
+            }
+
+            add_line_to_buffer("%d%s%s %x", (unsigned int) (elapsed / 1000), transmitted ? ">" : "<", buffer, protocol);
+
+            ESP_LOGI(TAG, "%s %s", transmitted ? "OUT" : "IN ", p_message);
+
+            free((void*) p_message);
         }
     }
 }

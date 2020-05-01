@@ -64,16 +64,17 @@ typedef struct radio {
     void* driver_private_data;
 
     /* Filled in by linklayer; owned by radio; removed by linklayer */
-    int (*read_register)(radio_t* radio, int register);
-    bool (*write_register)(radio_t* radio, int register, int value);
-    bool (*write_buffer)(radio_t* radio, int register, const uint8_t* buffer, int length);
-    bool (*read_buffer)(radio_t* radio, int register, uint8_t* buffer, int bufsize);
+    int (*read_register)(radio_t* radio, int reg);
+    bool (*write_register)(radio_t* radio, int reg, int value);
+    bool (*write_buffer)(radio_t* radio, int reg, const uint8_t* buffer, int length);
+    bool (*read_buffer)(radio_t* radio, int reg, uint8_t* buffer, int bufsize);
 
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
     void (*on_receive)(radio_t* radio, packet_t* packet);
     packet_t* (*on_transmit)(radio_t*);
     void (*reset_device)(radio_t* radio);
+    void (*activity_indicator)(radio_t* radio, bool active);
 
 
     /************************************************/

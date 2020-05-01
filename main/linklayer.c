@@ -44,23 +44,23 @@
 
 #define TAG  "linklayer"
 
-static bool beacon_packet_process(packet_t* p);
-static const char* beacon_packet_format(const packet_t* p);
+static bool beacon_packet_process(packet_t* packet);
+static const char* beacon_packet_format(const packet_t* packet);
 
 static packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
-static bool routeannounce_packet_process(packet_t* p);
+static bool routeannounce_packet_process(packet_t* packet);
 
-static const char* routeannounce_packet_format(const packet_t* p);
+static const char* routeannounce_packet_format(const packet_t* packet);
 static packet_t* routerequest_packet_create(int address);
 
-static bool routerequest_packet_process(packet_t* p);
-static const char* routerequest_packet_format(const packet_t* p);
+static bool routerequest_packet_process(packet_t* packet);
+static const char* routerequest_packet_format(const packet_t* packet);
 
 static packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
-static bool routeerror_packet_process(packet_t* p);
+static bool routeerror_packet_process(packet_t* packet);
 
 static char tohex(int v);
-static const char* default_packet_format(const packet_t* p);
+static const char* default_packet_format(const packet_t* packet);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
@@ -70,6 +70,7 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
+static void linklayer_activity_indicator(radio_t* radio, bool active);
 static packet_t* linklayer_on_transmit(radio_t* radio);
 static void reset_device(radio_t* radio);
 
@@ -88,7 +89,12 @@ static int                        packet_received;     /* Total packets received
 static int                        packet_processed;    /* Packets accepted for processing */
 static int                        packet_transmitted;  /* Total packets transmitted */
 static int                        packet_ignored;      /* Packets not processed */
+#if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
+/* If table is defined, allow packages only from entries in the table */
+static int                        receive_only_from[CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE];
+#endif
 static radio_t**                  radio_table;
+static int                        activity_count = -1;
 
 typedef struct protocol_entry {
     bool        (*process)(packet_t*);                 /* Process function; return true if processed */
@@ -240,6 +246,53 @@ bool linklayer_packet_is_for_this_node(const packet_t* p)
 {
     return get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN) == linklayer_node_address;
 }
+     
+
+#ifdef CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
+/*
+ * Assign receive_only addresses.  If the first slot is non-zero, only permit incoming
+ * packets from the addresses in the table.
+ */
+void linklayer_set_receive_only_from(const char* addresses)
+{
+    ESP_LOGD(TAG, "%s: setting to %s", __func__, addresses);
+
+    const char *p = addresses;
+    
+    for (size_t slot = 0; slot < ELEMENTS_OF(receive_only_from) && p != NULL; ++slot) {
+        receive_only_from[slot] = strtol(p, NULL, 0);
+        p = (const char*) strchr(p, ',');
+        if (p != NULL) {
+            ++p;
+        }
+    }
+
+    for (size_t slot = 0; slot < ELEMENTS_OF(receive_only_from) && receive_only_from[slot] != 0; ++slot) {
+        ESP_LOGD(TAG, "%s: receive_only_from[%d] is %d", __func__, slot, receive_only_from[slot]);
+    }
+}
+
+bool is_valid_address(int address)
+{
+    bool ok = true;
+
+    if (address != linklayer_node_address && receive_only_from[0] != 0) {
+        ok = false;
+        for (size_t slot = 0; slot < ELEMENTS_OF(receive_only_from) && !ok; ++slot) {
+            /* First one found triggers OK */
+            ok = address == receive_only_from[slot];
+        }
+        if (! ok) {
+            ESP_LOGD(TAG, "%s: Ignoring packet from %d", __func__, address);
+        }
+    }
+
+    return ok;
+}
+#else
+#define is_valid_address(addr)   (true)
+#endif
+       
 
 /*
  * Create a generic packet
@@ -289,34 +342,39 @@ packet_t* beacon_packet_create(const char* name)
     return p;
 }
 
-static bool beacon_packet_process(packet_t* p)
+/*
+ * All process functions must release the packet when complete and ref_packet before passing it on.
+ */
+static bool beacon_packet_process(packet_t* packet)
 {
     bool processed = false;
 
-    if (p != NULL) {
-        const char* name = get_str_field(p, BEACON_NAME, BEACON_NAME_LEN);
+    if (packet != NULL) {
+        const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
 
         ESP_LOGD(TAG, "Beacon: dest %d origin %d routeto %d sender %d ttl %d name '%s'",
-                 get_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN),
-                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
-                 get_int_field(p, HEADER_TTL, TTL_LEN),
+                 get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN),
+                 get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
+                 get_int_field(packet, HEADER_TTL, TTL_LEN),
                  name);
 
         free((void*) name);
 
         processed = true;
+
+        release_packet(packet);
     }
 
     return processed;
 }
 
-static const char* beacon_packet_format(const packet_t* p)
+static const char* beacon_packet_format(const packet_t* packet)
 {
     char* info;
 
-    const char* name = get_str_field(p, BEACON_NAME, BEACON_NAME_LEN);
+    const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
 
     asprintf(&info, "Beacon: %s", name);
     free((void*) name);
@@ -334,46 +392,46 @@ static const char* beacon_packet_format(const packet_t* p)
  */
 static packet_t* routeannounce_packet_create(int dest, int sequence, int metric)
 {
-    packet_t* p = linklayer_create_generic_packet(dest, ROUTEANNOUNCE_PROTOCOL, ROUTEANNOUNCE_LEN);
-    if (p != NULL) {
-        set_uint_field(p, ROUTEANNOUNCE_FLAGS, FLAGS_LEN, node_flags);
-        set_uint_field(p, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
-        set_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN, metric);
-        set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-        set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+    packet_t* packet = linklayer_create_generic_packet(dest, ROUTEANNOUNCE_PROTOCOL, ROUTEANNOUNCE_LEN);
+    if (packet != NULL) {
+        set_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN, node_flags);
+        set_uint_field(packet, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
+        set_uint_field(packet, ROUTEANNOUNCE_METRIC, METRIC_LEN, metric);
+        set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+        set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
     }
 
-    return p;
+    return packet;
 }
 
-static bool routeannounce_packet_process(packet_t* p)
+static bool routeannounce_packet_process(packet_t* packet)
 {
     bool processed = false;
 
-    if (p != NULL) {
-        //linklayer_print_packet("Route Announce", p);
+    if (packet != NULL) {
+        //linklayer_print_packet("Route Announce", packet);
         if (route_table_lock(&route_table)) {
             route_t* route = route_update(&route_table,
-                                          p->radio_num,
-                                          get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                          get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
-                                          get_uint_field(p, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN),
-                                          get_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN),
-                                          get_uint_field(p, ROUTEANNOUNCE_FLAGS, FLAGS_LEN));
+                                          packet->radio_num,
+                                          get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
+                                          get_uint_field(packet, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                                          get_uint_field(packet, ROUTEANNOUNCE_METRIC, METRIC_LEN),
+                                          get_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN));
 
             if (route != NULL) {
                 /* If this packet was for us, then release any pending route packets to queue now */
-                if (linklayer_packet_is_for_this_node(p)) {
+                if (linklayer_packet_is_for_this_node(packet)) {
                     /* We now have a route, so release all packets waiting to go on this route. */
                     route_release_packets(route);
 
                 } else {
 
                     /* Not for us, so clear routeto so a re-route will be done */
-                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                    set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                     /* Update the metric */
-                    set_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN, get_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN));
-                    linklayer_send_packet_update_ttl(ref_packet(p));
+                    set_uint_field(packet, ROUTEANNOUNCE_METRIC, METRIC_LEN, get_uint_field(packet, ROUTEANNOUNCE_METRIC, METRIC_LEN));
+                    linklayer_send_packet_update_ttl(ref_packet(packet));
                 }
 
                 processed = true;
@@ -384,18 +442,20 @@ static bool routeannounce_packet_process(packet_t* p)
         } else {
             /* Unable to get mutex */
         }
+
+        release_packet(packet);
     }
 
     return processed;
 }
 
-static const char* routeannounce_packet_format(const packet_t* p)
+static const char* routeannounce_packet_format(const packet_t* packet)
 {
     char* info;
 
-    int sequence = get_uint_field(p, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN);
-    int metric = get_uint_field(p, ROUTEANNOUNCE_METRIC, METRIC_LEN);
-    int flags = get_uint_field(p, ROUTEANNOUNCE_FLAGS, FLAGS_LEN);
+    int sequence = get_uint_field(packet, ROUTEANNOUNCE_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    int metric = get_uint_field(packet, ROUTEANNOUNCE_METRIC, METRIC_LEN);
+    int flags = get_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN);
 
     asprintf(&info, "Route Announce: seq %d metric %d flags %02x", sequence, metric, flags);
 
@@ -427,11 +487,11 @@ static packet_t* routerequest_packet_create(int address)
     return p;
 }
 
-static bool routerequest_packet_process(packet_t* p)
+static bool routerequest_packet_process(packet_t* packet)
 {
     bool processed = false;
 
-    if (p != NULL) {
+    if (packet != NULL) {
         //linklayer_print_packet("Route Request", p);
 
         if (linklayer_lock()) {
@@ -441,30 +501,30 @@ static bool routerequest_packet_process(packet_t* p)
             /* Update the route table and see if we have a route */
             route_t* route = route_update(
                                  &route_table,
-                                 p->radio_num,
-                                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
-                                 get_uint_field(p, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN),
-                                 get_uint_field(p, ROUTEREQUEST_METRIC, METRIC_LEN),
-                                 get_uint_field(p, ROUTEREQUEST_FLAGS, FLAGS_LEN));
+                                 packet->radio_num,
+                                 get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
+                                 get_uint_field(packet, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                                 get_uint_field(packet, ROUTEREQUEST_METRIC, METRIC_LEN),
+                                 get_uint_field(packet, ROUTEREQUEST_FLAGS, FLAGS_LEN));
 
             /* If packet is dest for our node, announce route back to origin with same seqeuence and new metric. */
-            if (linklayer_packet_is_for_this_node(p)) {
+            if (linklayer_packet_is_for_this_node(packet)) {
                 packet_t* ra = routeannounce_packet_create(
-                                          get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                          get_int_field(p, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN),
+                                          get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
+                                          get_int_field(packet, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN),
                                           1);
 
                 /* Label it as going to specific radio of origin */
-                ra->radio_num = p->radio_num;
+                ra->radio_num = packet->radio_num;
                 linklayer_send_packet(ra);
 
                 processed = true;
 
             /* Else if it's a broadcast and route was updated, increase metric and rebroadcast it to next route */
-            } else if (get_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
-                set_uint_field(p, ROUTEREQUEST_METRIC, METRIC_LEN, get_uint_field(p, ROUTEREQUEST_METRIC, METRIC_LEN));
-                linklayer_send_packet_update_ttl(p);
+            } else if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS && route != NULL) {
+                set_uint_field(packet, ROUTEREQUEST_METRIC, METRIC_LEN, get_uint_field(packet, ROUTEREQUEST_METRIC, METRIC_LEN));
+                linklayer_send_packet_update_ttl(ref_packet(packet));
                 processed = true;
 
             }
@@ -474,18 +534,20 @@ static bool routerequest_packet_process(packet_t* p)
         } else {
             /* Cannot get mutex */
         }
+
+        release_packet(packet);
     }
 
     return processed;
 }
 
-static const char* routerequest_packet_format(const packet_t* p)
+static const char* routerequest_packet_format(const packet_t* packet)
 {
     char* info;
 
-    int sequence = get_uint_field(p, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN);
-    int metric = get_uint_field(p, ROUTEREQUEST_METRIC, METRIC_LEN);
-    int flags = get_uint_field(p, ROUTEREQUEST_FLAGS, FLAGS_LEN);
+    int sequence = get_uint_field(packet, ROUTEREQUEST_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    int metric = get_uint_field(packet, ROUTEREQUEST_METRIC, METRIC_LEN);
+    int flags = get_uint_field(packet, ROUTEREQUEST_FLAGS, FLAGS_LEN);
 
     asprintf(&info, "Route Request: seq %d metric %d flags %02x", sequence, metric, flags);
 
@@ -508,26 +570,26 @@ static packet_t* routeerror_packet_create(int dest, int address, int sequence, c
     return p;
 }
 
-static bool routeerror_packet_process(packet_t* p)
+static bool routeerror_packet_process(packet_t* packet)
 {
     bool processed = false;
 
-    if (p != NULL) {
+    if (packet != NULL) {
 
         if (linklayer_lock()) {
 
             //linklayer_print_packet("ROUTE ERROR", p);
 
             /* Get address from packet */
-            int address = get_uint_field(p, ROUTEERROR_ADDRESS, ADDRESS_LEN);
+            int address = get_uint_field(packet, ROUTEERROR_ADDRESS, ADDRESS_LEN);
             if (address >= 0) {
                 /* Delete route associated with this address */
                 route_remove(&route_table, address);
 
                 /* If not for us, redirect it on to dest */
-                if (! linklayer_packet_is_for_this_node(p)) {
-                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-                    linklayer_send_packet(ref_packet(p));
+                if (! linklayer_packet_is_for_this_node(packet)) {
+                    set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                    linklayer_send_packet(ref_packet(packet));
                 }
             }
 
@@ -538,18 +600,19 @@ static bool routeerror_packet_process(packet_t* p)
         } else {
             /* Cannot get mutex */
         }
+        release_packet(packet);
     }
 
     return processed;
 }
 
-static const char* routeerror_packet_format(const packet_t* p)
+static const char* routeerror_packet_format(const packet_t* packet)
 {
     char* info;
 
-    int address = get_uint_field(p, ROUTEERROR_ADDRESS, ADDRESS_LEN);
-    int sequence = get_uint_field(p, ROUTEERROR_SEQUENCE, SEQUENCE_NUMBER_LEN);
-    const char* reason = get_str_field(p, ROUTEERROR_REASON, REASON_LEN);
+    int address = get_uint_field(packet, ROUTEERROR_ADDRESS, ADDRESS_LEN);
+    int sequence = get_uint_field(packet, ROUTEERROR_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    const char* reason = get_str_field(packet, ROUTEERROR_REASON, REASON_LEN);
 
     asprintf(&info, "Route Error: seq %d address %x '\"%s\"", sequence, address, reason);
 
@@ -641,12 +704,12 @@ const char* linklayer_escape_raw_data(const uint8_t* data, size_t length)
     return outdata;
 }
 
-static const char* default_packet_format(const packet_t* p)
+static const char* default_packet_format(const packet_t* packet)
 {
     char* info;
 
     /* Extract from end of header to end of packet */
-    const char* data = linklayer_escape_raw_data(p->buffer + HEADER_LEN, p->length - HEADER_LEN);
+    const char* data = linklayer_escape_raw_data(packet->buffer + HEADER_LEN, packet->length - HEADER_LEN);
 
     asprintf(&info, "Data: \"%s\"", data);
 
@@ -738,16 +801,14 @@ static void test_button_handler(void* param)
 #endif
 
 os_queue_t linklayer_set_promiscuous_mode(bool mode) {
-    bool ok = true;
 
     if (mode) {
         if (promiscuous_queue == NULL) {
             promiscuous_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
-            ok = promiscuous_queue != NULL;
         }
     } else {
         if (promiscuous_queue != NULL) {
-            ok = os_delete_queue(promiscuous_queue);
+            os_delete_queue(promiscuous_queue);
             promiscuous_queue = NULL;
         }
     }
@@ -874,6 +935,7 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->on_receive = linklayer_on_receive;
     radio->on_transmit = linklayer_on_transmit;
     radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
+    radio->activity_indicator = linklayer_activity_indicator;
     radio->reset_device = reset_device;
 
     return true;
@@ -994,7 +1056,6 @@ void linklayer_send_packet(packet_t* packet)
          * Label the from address and if no to address, attempt to route
          */
 
-
         /* Indicate coming from us */
         set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
 
@@ -1074,6 +1135,16 @@ void linklayer_send_packet(packet_t* packet)
 
             /* If radio is NULL, packet will be sent through all radios */
             if (packet != NULL) {
+
+                /* In promiscuous mode, deliver to receiver so it can handle it (but not process it) */
+                if (promiscuous_queue != NULL) {
+                    packet_t *p_packet = duplicate_packet(packet);
+                    if (p_packet != NULL) {
+                        p_packet->transmitted = true;
+                        os_put_queue(promiscuous_queue, p_packet);
+                    }
+                }
+
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
@@ -1210,68 +1281,69 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
         if (packet->crc_ok) {
 
             int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+            int sender  = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+            int origin  = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+            int dest    = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
 
-            if (routeto == BROADCAST_ADDRESS || routeto == linklayer_node_address) {
-                if (packet->crc_ok) {
-                    ++packet_processed;
+            /* Only if valid, broadcast or to us and not originated from us */
+            if (is_valid_address(sender) &&
+                (routeto == BROADCAST_ADDRESS || routeto == linklayer_node_address) &&
+                (origin != linklayer_node_address)) {
 
-                    if (debug_flag) {
-                        linklayer_print_packet("Received", packet);
-                    }
+                ++packet_processed;
 
-                    /* In promiscuous mode, deliver to receiver so it can handle it (but not process it) */
-                    if (promiscuous_queue != NULL) {
-                        os_put_queue(promiscuous_queue, duplicate_packet(packet));
-                    }
+                if (debug_flag) {
+                    linklayer_print_packet("Received", packet);
+                }
+
+                /* In promiscuous mode, deliver to receiver so it can handle it (but not process it) */
+                if (promiscuous_queue != NULL) {
+                    os_put_queue(promiscuous_queue, duplicate_packet(packet));
+                }
 
 #ifdef CONFIG_LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
-                    /* We have received a packet from someone.  We can add a provisional
-                     * route to the ORIGIN via the SENDER and give it a high metric
-                     * and unused sequence number.  (note: SEQ 0 is never used for real
-                     * messages.)
-                     */
-                    route_update(&route_table,
-                                 packet->radio_num,
-                                 get_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                 get_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN),
-                                 UNDEFINED_SEQUENCE_NUMBER,
-                                 MAX_METRIC,
-                                 NO_HOST_FLAGS);
+                /* We have received a packet from someone.  We can add a provisional
+                 * route to the ORIGIN via the SENDER and give it a high metric
+                 * and unused sequence number.  (note: SEQ 0 is never used for real
+                 * messages.)
+                 */
+                route_update(&route_table,
+                             packet->radio_num,
+                             origin,
+                             sender,
+                             UNDEFINED_SEQUENCE_NUMBER,
+                             MAX_METRIC,
+                             NO_HOST_FLAGS);
 #endif
 
-                    int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
+                int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
 
-                    if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
-                        if (protocol_table[protocol].process != NULL) {
-                            bool processed = protocol_table[protocol].process(packet);
-                            if (! processed) {
-                                /* Look for a route for forward */
-                                route_t* route = route_find(&route_table, get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN));
-                                if (route != NULL) {
-                                    /* Reroute packet and resend */
-                                    set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
-                                    linklayer_send_packet_update_ttl(ref_packet(packet));
-                                } else {
+                if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
+                    if (protocol_table[protocol].process != NULL) {
+                        bool processed = protocol_table[protocol].process(ref_packet(packet));
+                        if (! processed) {
+                            /* Look for a route for forward */
+                            route_t* route = route_find(&route_table, dest);
+                            if (route != NULL) {
+                                /* Reroute packet and resend */
+                                set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, route->routeto);
+                                linklayer_send_packet_update_ttl(ref_packet(packet));
+                            } else {
 #if 1
-                                    /* No route, so report route error */
-                                    packet_t *error = routeerror_packet_create(
-                                        get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN), /* who sent it to us */
-                                        get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),   /* Offending address */
-                                        linklayer_allocate_sequence(),
-                                        "no route");
+                                /* No route, so report route error */
+                                packet_t *error = routeerror_packet_create(sender, dest, linklayer_allocate_sequence(), "no route");
 
-                                    if (error != NULL) {
-                                        linklayer_send_packet(error);
-                                    }
-#endif
+                                if (error != NULL) {
+                                    linklayer_send_packet(error);
                                 }
+#endif
                             }
-                        } else {
-                            ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
                         }
                     } else {
-                        ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
+                        ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
                     }
+                } else {
+                    ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
                 }
             } else {
                 /* It is not processed */
@@ -1315,8 +1387,55 @@ static packet_t* linklayer_on_transmit(radio_t* radio)
     return packet;
 }
 
+static void linklayer_activity_indicator(radio_t* radio, bool active)
+{
+ESP_LOGI(TAG, "%s: active %s", __func__, active ? "TRUE" : "FALSE");
+
+    if (activity_count < 0) {
+ESP_LOGI(TAG, "%s: initialize activity GPIO %d", __func__, CONFIG_LINKLAYER_LED_ACTIVITY_GPIO);
+
+        gpio_config_t io = {
+            .intr_type = GPIO_PIN_INTR_DISABLE,
+            .mode = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << CONFIG_LINKLAYER_LED_ACTIVITY_GPIO,
+            .pull_down_en = 0,
+            .pull_up_en = 0,
+        };
+
+        gpio_config(&io);
+        activity_count = 0;
+    }
+
+    if (active) {
+        activity_count++;
+    } else if (activity_count != 0) {
+        activity_count--;
+    } else {
+        ESP_LOGE(TAG, "%s: trying to set activity_count < 0", __func__);
+    }
+
+    gpio_set_level(CONFIG_LINKLAYER_LED_ACTIVITY_GPIO, activity_count != 0); 
+}
+
 void linklayer_print_packet(const char* reason, packet_t* packet)
 {
+    char* buffer = linklayer_format_packet(packet);
+
+    if (buffer != NULL) {
+
+        ESP_LOGE(TAG, "%s: (%p) %s", reason, packet, buffer);
+
+        free((void*) buffer);
+
+    } else {
+        ESP_LOGD(TAG, "%s: NULL packet", __func__);
+    }
+}
+
+char* linklayer_format_packet(packet_t* packet)
+{
+    char *buffer = NULL;
+
     if (packet != NULL) {
         int routeto  = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
         int flags    = get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN);
@@ -1328,12 +1447,12 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
 
         const char* info = linklayer_packet_format(packet, protocol);
 
-        ESP_LOGD(TAG, "%s: (%p) R=%04x O=%04x D=%04x S=%04x F=%02x TTL=%d Proto=%d Ref=%d Radio=%d: %s", reason, packet, routeto, origin, dest, sender, flags, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
+        asprintf(&buffer, "R=%04x O=%04x D=%04x S=%04x F=%02x TTL=%d Proto=%d Ref=%d Radio=%d: %s", routeto, origin, dest, sender, flags, ttl, protocol, packet->ref, packet->radio_num, info ? info : "");
 
         free((void*) info);
-    } else {
-        ESP_LOGE(TAG, "%s: NULL packet", __func__);
     }
+
+    return buffer;
 }
 
 static const char* linklayer_packet_format(const packet_t* packet, int protocol)

@@ -9,11 +9,12 @@
 #include "esp_log.h"
 
 #include "os_freertos.h"
-
 #include "lsocket.h"
 #include "commands.h"
 #include "linklayer.h"
 #include "configdata.h"
+
+#include "display.h"
 
 #define TAG "commands"
 
@@ -131,12 +132,21 @@ os_thread_t start_commands(int infd, int outfd)
 
 #define MAX_ARGS  20
 
+#define HELP_CMD_FIELD_LEN   30
+
+static void show_help(const char* command, const char *params, const char *description)
+{
+    printf("%s %-*s %s\n", command, HELP_CMD_FIELD_LEN - strlen(command), params, description);
+}
+
 /**********************************************************************/
 /* ping <node address>                                                */
 /**********************************************************************/
 static int ping_command(int argc, const char **argv)
 {
-    if (argc > 1) {
+    if (argc == 0) {
+        show_help(argv[0], "<node address>", "Find and report path to a node");
+    } else {
         int address = strtol(argv[1], NULL, 10);
 
         int paths[100];
@@ -157,13 +167,17 @@ static int ping_command(int argc, const char **argv)
 /**********************************************************************/
 /* test <blah> <blah> <blah>                                          */
 /**********************************************************************/
-static int test_command(int argc, const char **argv)
+static int echo_command(int argc, const char **argv)
 {
-     for (int arg = 0; arg < argc; ++arg) {
-         printf("arg %d '%s'\n", arg, argv[arg]);
-     }
+    if (argc == 0) {
+        show_help(argv[0], "<blah blah>..", "Echo arguments for testing");
+    } else {
+        for (int arg = 0; arg < argc; ++arg) {
+            printf("arg %d '%s'\n", arg, argv[arg]);
+        }
+    }
 
-     return 0;
+    return 0;
 }
 
 /**********************************************************************/
@@ -171,7 +185,10 @@ static int test_command(int argc, const char **argv)
 /**********************************************************************/
 static int address_command(int argc, const char **argv)
 {
-    if (argc > 1) {
+    if (argc == 0) {
+        show_help(argv[0], "", "Show address if no parameters");
+        show_help(argv[0], "<address>", "Set address to <address>");
+    } else if (argc > 1) {
         int address = strtol(argv[1], NULL, 10);
         if (address >= 1 && address <= 500) {
             linklayer_node_address = address;
@@ -203,9 +220,15 @@ static const log_level_t  log_levels[] = {
     { .name = "verbose", .level = ESP_LOG_VERBOSE },
 };
 
+#ifndef ELEMENTS_OF
+#define ELEMENTS_OF(x)   (sizeof(x) / sizeof(0[x]))
+#endif
+
 static int loglevel_command(int argc, const char **argv)
 {
-    if (argc > 2) {
+    if (argc == 0) {
+        show_help(argv[0], "<tag> <loglevel>", "Set log level for tag");
+    } else if (argc > 2) {
         bool found = false;
         int level;
 
@@ -233,7 +256,11 @@ static int loglevel_command(int argc, const char **argv)
 /**********************************************************************/
 static int config_command(int argc, const char **argv)
 {
-    if (argc == 1) {
+    if (argc == 0) {
+        show_help(argv[0], "", "Show all config vars");
+        show_help(argv[0], "<var>", "Show value of config var");
+        show_help(argv[0], "<var> <value>", "Set value of config var");
+    } else if (argc == 1) {
         write_config(stdout);
     } else {
         const char* var = argv[1];
@@ -255,7 +282,9 @@ static int config_command(int argc, const char **argv)
 /**********************************************************************/
 static int dglisten_command(int argc, const char **argv)
 {
-    if (argc > 1) {
+    if (argc == 0) {
+        show_help(argv[0], "<port>", "Listen for datagrams on <port>");
+    } else if (argc > 1) {
         int port = strtol(argv[1], NULL, 10);
         int socket = ls_socket(LS_DATAGRAM);
         if (socket >= 0) {
@@ -299,7 +328,9 @@ static int dglisten_command(int argc, const char **argv)
 /**********************************************************************/
 static int dgsend_command(int argc, const char **argv)
 {
-    if (argc >= 4) {
+    if (argc == 0) {
+        show_help(argv[0], "<address> <port> <data>", "Send datagram <data> to <port> on <address>");
+    } else if (argc >= 4) {
         int address = strtol(argv[1], NULL, 10);
         int port = strtol(argv[2], NULL, 10);
         printf("Sending '%s' to %d/%d\n", argv[3], address, port);
@@ -334,7 +365,9 @@ static int dgsend_command(int argc, const char **argv)
 /**********************************************************************/
 static int stlisten_command(int argc, const char **argv)
 {
-    if (argc > 1) {
+    if (argc == 0) {
+        show_help(argv[0], "<port>", "Listen for stream connection on <port>");
+    } else if (argc > 1) {
         int port = strtol(argv[1], NULL, 10);
         int socket = ls_socket(LS_STREAM);
         if (socket >= 0) {
@@ -379,7 +412,9 @@ static int stlisten_command(int argc, const char **argv)
 /**********************************************************************/
 static int stconnect_command(int argc, const char **argv)
 {
-    if (argc >= 4) {
+    if (argc == 0) {
+        show_help(argv[0], "<address> <port>", "Connect to stream <port> on <address>");
+    } else if (argc >= 4) {
         int address = strtol(argv[1], NULL, 10);
         int port = strtol(argv[2], NULL, 10);
 
@@ -418,7 +453,48 @@ static int stconnect_command(int argc, const char **argv)
 /**********************************************************************/
 static int status_command(int argc, const char **argv)
 {
-    printf("free packets %d\n", available_packets());
+    if (argc == 0) {
+        show_help(argv[0], "", "Show system status");
+    } else {
+        printf("free packets %d\n", available_packets());
+    }
+
+    return 0;
+}
+
+/**********************************************************************/
+/* contrast <val>                                                     */
+/**********************************************************************/
+static int contrast_command(int argc, const char **argv)
+{
+    extern display_t *display;
+
+    if (argc == 0) {
+        show_help(argv[0], "<value>", "Set display contrast (brightness)");
+    } else if (argc == 2) {
+        int val = strtol(argv[1], NULL, 10);
+        if (val < 0 || val > 255) {
+            printf("Value must be from 0 to 255\n");
+        } else {
+            display->contrast(display, val);
+        } 
+    }
+
+    return 0;
+}
+
+/**********************************************************************/
+/* reboot                                                             */
+/**********************************************************************/
+static int reboot_command(int argc, const char **argv)
+{
+    extern display_t *display;
+
+    if (argc == 0) {
+        show_help(argv[0], "", "Reboot device");
+    } else {
+        esp_restart();
+    }
 
     return 0;
 }
@@ -428,18 +504,42 @@ typedef struct command_entry {
     int            (*function)(int argc, const char **argv);
 } command_entry_t;
 
+static int help_command(int argc, const char **argv);
+
 static command_entry_t  command_table[] = {
-    { .name = "test",       .function = test_command      },
+    { .name = "help",       .function = help_command      },
+    { .name = "?",          .function = help_command      },
+    { .name = "contrast",   .function = contrast_command  },
+    { .name = "echo",       .function = echo_command      },
     { .name = "ping",       .function = ping_command      },
     { .name = "address",    .function = address_command   },
     { .name = "loglevel",   .function = loglevel_command  },
     { .name = "config",     .function = config_command    },
     { .name = "dglisten",   .function = dglisten_command  },
     { .name = "dgsend",     .function = dgsend_command    },
+    { .name = "reboot",     .function = reboot_command    },
     { .name = "stlisten",   .function = stlisten_command  },
     { .name = "stconnect",  .function = stconnect_command },
     { .name = "status",     .function = status_command    },
 };
+
+/**********************************************************************/
+/* help                                                               */
+/**********************************************************************/
+static int help_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "Show help");
+    } else {
+        for (int command = 0; command < ELEMENTS_OF(command_table); ++command) {
+            const char *table[2] = { command_table[command].name, NULL };
+            command_table[command].function(0, table);
+        }
+    }
+
+    return 0;
+}
+
 
 void CommandProcessor(void* params)
 {

@@ -12,6 +12,11 @@
 #define UNKNOWN_RADIO        -1
 
 typedef struct packet {
+#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
+    const char       *last_release_filename;
+    int              last_release_lineno;
+#endif
+    bool             transmitted;                /* TRUE if packet was transmitted (promiscuous mode status) */
     int              radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int              rssi;                       /* Received signal strength */
     int              snr;                        /* In .1 db */
@@ -49,27 +54,26 @@ packet_t *duplicate_packet(packet_t *packet);
 int available_packets(void);
 
 /*
- * Update usecount on packet.
+ * Release packet
  */
-#ifdef NOTUSED
-packet_t *ref_packet(packet_t *p);
+#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
+bool release_packet_debug(const char* filename, int lineno, packet_t* packet);
+#define release_packet(packet) release_packet_debug(__FILE__, __LINE__, packet)
 #else
-inline static packet_t* ref_packet_x(const char* filename, int lineno, packet_t* packet)
+bool release_packet_simple(packet_t *packet);
+#define release_packet(packet) release_packet_plain(packet)
+#endif
+
+/*
+ * Reference a packet
+ */
+inline static packet_t* ref_packet(packet_t* packet)
 {
     if (packet != NULL) {
-printf("Packet %p ref %d in %s:%d\n", packet, packet->ref+1, filename, lineno);
         packet->ref++;
     }
     return packet;
 }
-#define ref_packet(p) ref_packet_x(__FILE__, __LINE__, p)
-#endif
-
-/*
- * Decrement packet use count and if 0, free it.
- */
-bool release_packet_x(const char* filename, int lineno, packet_t *p);
-#define release_packet(p) release_packet_x(__FILE__, __LINE__, p)
 
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.

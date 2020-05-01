@@ -1,4 +1,15 @@
 menu "LastLink Configuration"
+    config LASTLINK_RECEIVE_ONLY_FROM_TABLE
+        int "Length of receive-only debug table"
+        default 0
+        help
+            This table will define a list of address from which this node
+            will accept packets.  This is used to test a network environment
+            where all nodes are close but we want to limit paths to simulate
+            a disperse array.  A blank string means no limits.
+
+            The contents of this table is filled from a configuration variable.
+
     config LASTLINK_WIFI_SSID
         string "WiFi SSID"
         default "myssid"
@@ -24,6 +35,10 @@ menu "LastLink Configuration"
     config LASTLINK_RADIO_SX127x_ENABLED
         bool "Enable SX127x Driver"
         default y
+
+    config LINKLAYER_LED_ACTIVITY_GPIO
+        int "Activity (TRANSMIT) led GPIO"
+        default 0
 
     # Currently up to 8 radios
     RADIO_NUM:=1
@@ -126,6 +141,14 @@ menu "LastLink Configuration"
     endmenu
 
     menu "Packet Configuration"
+        config LASTLINK_DEBUG_PACKET_RELEASE
+            bool "Debug packet release"
+            default n
+            help
+                Adds test code in packet_release to determine if the
+                caller is releasing an already-released packet.  If so
+                prints message with previous and current releasers
+                as well as the packet contents.
         config LASTLINK_NUM_PACKETS
             int "Number of available packets"
             default 10

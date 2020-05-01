@@ -222,6 +222,7 @@ void linklayer_send_packet_update_ttl(packet_t* packet);
 
 int linklayer_get_node_address(void);
 void linklayer_print_packet(const char* reason, packet_t* packet);
+char* linklayer_format_packet(packet_t* packet);
 
 bool linklayer_put_received_packet(packet_t* packet);
 bool linklayer_packet_is_for_this_node(const packet_t* p);
@@ -230,12 +231,16 @@ void linklayer_release_packets_in_queue(os_queue_t queue);
 
 radio_t* linklayer_get_radio_from_number(int radio_num);
 
-#ifdef CONFIG_LASTLINK_RADIO_SX126x_ENABLED
+#if CONFIG_LASTLINK_RADIO_SX126x_ENABLED
 bool sx126x_radio(radio_t* radio);
 #endif
 
-#ifdef CONFIG_LASTLINK_RADIO_SX127x_ENABLED
+#if CONFIG_LASTLINK_RADIO_SX127x_ENABLED
 bool sx127x_radio(radio_t* radio);
+#endif
+
+#if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
+void linklayer_set_receive_only_from(const char* addresses);
 #endif
 
 #endif /* __linklayer_h_included */

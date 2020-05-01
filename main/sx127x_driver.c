@@ -202,15 +202,16 @@ static void rx_handle_interrupt(radio_t* radio)
             packet->snr = get_packet_snr(radio);
             packet->radio_num = radio->radio_num;
 
-ESP_LOGI(TAG, "%s: packet len %d crc_ok %s rssi %d radio %d", __func__, packet->length, packet->crc_ok ? "OK" : "BAD", packet->rssi, packet->radio_num);
+ESP_LOGD(TAG, "%s: packet len %d crc_ok %s rssi %d radio %d", __func__, packet->length, packet->crc_ok ? "OK" : "BAD", packet->rssi, packet->radio_num);
 
             /* Pass it to protocol layer */
             radio->on_receive(radio, ref_packet(packet));
         }
 
         release_packet(packet);
+
     } else {
-         data->packet_memory_failed++;
+        data->packet_memory_failed++;
     }
 }
 
@@ -230,8 +231,8 @@ static void tx_handle_interrupt(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s", __func__);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s", __func__);
 
     data->tx_interrupts++;
 
@@ -251,7 +252,7 @@ ESP_LOGI(TAG, "%s", __func__);
 #endif
         transmit_packet(radio, packet);
     } else {
-ESP_LOGI(TAG, "%s: no packet", __func__);
+ESP_LOGD(TAG, "%s: no packet", __func__);
 
         /* Other return to receive mode. */
         set_receive_mode(radio);
@@ -264,7 +265,7 @@ static void global_interrupt_handler(void* param)
 {
     bool running = true;
 
-    ESP_LOGI(TAG, "%s: running", __func__);
+    ESP_LOGD(TAG, "%s: running", __func__);
 
     while (running) {
         radio_t* radio;
@@ -279,7 +280,7 @@ static void global_interrupt_handler(void* param)
 
             data->irq_flags = flags;
 
-ESP_LOGI(TAG, "%s: ******************************************* radio %d flags %02x", __func__, radio->radio_num, flags);
+ESP_LOGD(TAG, "%s: ******************************************* radio %d flags %02x", __func__, radio->radio_num, flags);
 
             if (acquire_lock(radio)) {
 
@@ -292,14 +293,14 @@ ESP_LOGI(TAG, "%s: ******************************************* radio %d flags %0
                 if (flags & SX127x_IRQ_CAD_DONE) {
                     /* Turn off CAD detect flag */
                     data->cad_detected = false;
-                    ESP_LOGI(TAG, "%s: CAD_DONE detected", __func__);
+                    ESP_LOGD(TAG, "%s: CAD_DONE detected", __func__);
                     flags &= ~SX127x_IRQ_CAD_DONE;
                 }
 
                 if (flags & SX127x_IRQ_CAD_DETECTED) {
                     /* Turn on CAD detect flag */
                     data->cad_detected = true;
-                    ESP_LOGI(TAG, "%s: CAD detected", __func__);
+                    ESP_LOGD(TAG, "%s: CAD detected", __func__);
                     flags &= ~SX127x_IRQ_CAD_DETECTED;
                 }
 #endif
@@ -325,7 +326,7 @@ ESP_LOGI(TAG, "%s: ******************************************* radio %d flags %0
             running = false;
         }
     }
-    ESP_LOGI(TAG, "%s: stopped", __func__);
+    ESP_LOGD(TAG, "%s: stopped", __func__);
 }
 
 static bool radio_stop(radio_t* radio)
@@ -484,7 +485,7 @@ static bool radio_start(radio_t* radio)
             /* Configure the unit for receive channel 0; probably overriden by caller */
             set_channel(radio, 0);
 
-            ESP_LOGI(TAG, "SX127x radio started");
+            ESP_LOGD(TAG, "SX127x radio started");
 
             ok = true;
         }
@@ -587,8 +588,8 @@ static bool set_txpower(radio_t* radio, int power)
 {
      bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: power %d", __func__, power);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: power %d", __func__, power);
 
      if (acquire_lock(radio)) {
          sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
@@ -642,8 +643,8 @@ static bool set_channel(radio_t* radio, int channel)
 {
     bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: channel %d", __func__, channel);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: channel %d", __func__, channel);
 
     if (channel >= 0 && channel < ELEMENTS_OF(channel_table.channels)) {
         if (acquire_lock(radio)) {
@@ -737,8 +738,8 @@ static bool set_bandwidth(radio_t* radio, int bw)
     if (acquire_lock(radio)) {
         sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: %d", __func__, bw);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: %d", __func__, bw);
 
         int bwcode = -1;
         int bwindex = 0;
@@ -777,8 +778,8 @@ static bool set_spreading_factor(radio_t* radio, int spreading_factor)
 {
     bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: sf %d", __func__, spreading_factor);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: sf %d", __func__, spreading_factor);
 
     if (spreading_factor >= 6 && spreading_factor <= 12) {
 
@@ -834,8 +835,8 @@ static int set_coding_rate(radio_t* radio, int rate)
 
     if (rate >= 5 && rate <= 8) {
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: %d", __func__, rate);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: %d", __func__, rate);
 
         if (acquire_lock(radio)) {
             int config1 = radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1);
@@ -854,8 +855,8 @@ ESP_LOGI(TAG, "%s: %d", __func__, rate);
 static int set_preamble_length(radio_t* radio, int length)
 {
     bool ok = false;
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: length %d", __func__, length);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: length %d", __func__, length);
 
     if (acquire_lock(radio)) {
 
@@ -872,8 +873,8 @@ static int set_enable_crc(radio_t* radio, bool enable)
 {
     bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: enable %s", __func__, enable ? "TRUE" : "FALSE");
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: enable %s", __func__, enable ? "TRUE" : "FALSE");
 
     if (acquire_lock(radio)) {
         int config2 = radio->read_register(radio, SX127x_REG_MODEM_CONFIG_2);
@@ -913,8 +914,8 @@ static bool set_sync_word(radio_t* radio, uint8_t sync)
 {
     bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: sync %02x", __func__, sync);
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: sync %02x", __func__, sync);
 
     if (acquire_lock(radio)) {
         ok = radio->write_register(radio, SX127x_REG_SYNC_WORD, sync);
@@ -929,8 +930,8 @@ static bool set_implicit_header(radio_t* radio, bool implicit_header)
 {
     bool ok = false;
 
-ESP_LOGI(TAG, "******************************************************");
-ESP_LOGI(TAG, "%s: enable %s", __func__, implicit_header ? "TRUE" : "FALSE");
+ESP_LOGD(TAG, "******************************************************");
+ESP_LOGD(TAG, "%s: enable %s", __func__, implicit_header ? "TRUE" : "FALSE");
 
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
@@ -1009,7 +1010,9 @@ static bool transmit_packet(radio_t* radio, packet_t* packet)
     if (acquire_lock(radio)) {
 
         start_packet(radio);
+        radio->activity_indicator(radio, true);
         write_packet(radio, packet);
+        radio->activity_indicator(radio, false);
         set_transmit_mode(radio);
 
         release_lock(radio);

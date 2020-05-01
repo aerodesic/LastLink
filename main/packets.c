@@ -214,27 +214,17 @@ packet_t *duplicate_packet(packet_t* packet)
     return create_packet(packet->buffer, packet->length);
 }
 
-/*
- * Decrement packet ref count and if 0, free it.
- */
-bool release_packet_x(const char *filename, int lineno, packet_t *p)
+bool release_packet_plain(packet_t *packet)
 {
     bool ok = false;
 
-    if (p != NULL) {
-ESP_LOGD(TAG, "%s: %p ref %d in %s/%d", __func__, p, p->ref-1 , filename, lineno);
-
+    if (packet != NULL) {
         /* We don't need to lock on mutex - just make sure it's there.  The queue
          * function is atomic.
          */
         if (free_packets_queue != NULL) {
-if (p != NULL && p->ref == 0) {
-   ESP_LOGE(TAG, "%s", "*********************************************************");
-   linklayer_print_packet("Already free", p);
-   ESP_LOGE(TAG, "%s", "*********************************************************");
-}
-            if (p != NULL && --(p->ref) == 0) {
-                ok = os_put_queue_with_timeout(free_packets_queue, p, 0);
+            if (packet != NULL && --(packet->ref) == 0) {
+                ok = os_put_queue_with_timeout(free_packets_queue, packet, 0);
             }
             ok = true;
         }
@@ -242,6 +232,31 @@ if (p != NULL && p->ref == 0) {
 
     return ok;
 }
+
+#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
+/*
+ * Decrement packet ref count and if 0, free it.
+ */
+bool release_packet_debug(const char *filename, int lineno, packet_t *packet)
+{
+    bool ok;
+
+    if (packet != NULL && packet->ref != 0) {
+        packet->last_release_filename = filename;
+        packet->last_release_lineno = lineno;
+        ok = release_packet_plain(packet);
+    } else {
+        ESP_LOGE(TAG, "%s: ********************************************************", __func__);
+        ESP_LOGE(TAG, "%s: packet_release called by %s:%d", __func__, filename, lineno);
+        ESP_LOGE(TAG, "%s: Packet already release by %s:%d", __func__, packet->last_release_filename, packet->last_release_lineno);
+        linklayer_print_packet("Already released", packet);
+        ESP_LOGE(TAG, "%s: ********************************************************", __func__);
+        ok = false;
+    }
+
+    return ok;
+}
+#endif
 
 int available_packets(void)
 {
