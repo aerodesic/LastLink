@@ -10,6 +10,12 @@ menu "LastLink Configuration"
 
             The contents of this table is filled from a configuration variable.
 
+    config LASTLINK_TABLE_LISTS
+        bool "Add table lists"
+        default y
+        help
+            If enabled, adds extra table lists to status command.
+
     config LASTLINK_WIFI_SSID
         string "WiFi SSID"
         default "myssid"
@@ -91,7 +97,7 @@ menu "LastLink Configuration"
         config LASTLINK_ROUTE_REQUEST_RETRIES
             int "Route Request Retries"
             default 5
-            range 3 10
+            range 3 25
             help
                 Number of retries to receive a RouteAnnounce from RouteRequest
 
@@ -141,14 +147,13 @@ menu "LastLink Configuration"
     endmenu
 
     menu "Packet Configuration"
-        config LASTLINK_DEBUG_PACKET_RELEASE
-            bool "Debug packet release"
+        config LASTLINK_DEBUG_PACKET_ALLOCATION
+            bool "Debug packet allocation"
             default n
             help
-                Adds test code in packet_release to determine if the
-                caller is releasing an already-released packet.  If so
-                prints message with previous and current releasers
-                as well as the packet contents.
+                Adds test code in packet allocation and release to
+                determine who the last referenced caller that
+                allocated or released the packet.  
         config LASTLINK_NUM_PACKETS
             int "Number of available packets"
             default 10
@@ -293,6 +298,21 @@ menu "LastLink Configuration"
         help
             Defines the table controlling the maximum pings outstanding
             at one time.
+
+        config LASTLINK_PING_RETRY_TIMER
+        int "mS to wait for ping reply"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        default 5000
+        help
+            How long the ping function waits for a reply after it has been routed.
+
+        config LASTLINK_PING_RETRIES
+        int "Number of retries for PING"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        default 5
+        range 3 20
+        help
+            How many attempts are made to resend ping after it has been routed.
 
         config LASTLINK_STREAM_WINDOW_SIZE
         depends on LASTLINK_ENABLE_SOCKET_LAYER

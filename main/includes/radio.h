@@ -72,7 +72,7 @@ typedef struct radio {
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
     void (*on_receive)(radio_t* radio, packet_t* packet);
-    packet_t* (*on_transmit)(radio_t*);
+    packet_t* (*on_transmit)(radio_t*, bool first_packet);
     void (*reset_device)(radio_t* radio);
     void (*activity_indicator)(radio_t* radio, bool active);
 
@@ -115,7 +115,8 @@ typedef struct radio {
     /* Get datarate */
     int (*get_datarate)(radio_t* radio);
 
-    bool (*transmit_packet)(radio_t* radio, packet_t* packet);
+    //bool (*transmit_packet)(radio_t* radio, packet_t* packet);
+    void (*transmit_start)(radio_t* radio);
 
 } radio_t;
 

@@ -33,12 +33,12 @@ static bool set_channel(radio_t* radio, int channel);                /* Set chan
 static int get_channel(radio_t* radio);                              /* Get channel */
 static bool set_datarate(radio_t* radio, int datarate);              /* Set datarate */
 static int get_datarate(radio_t* radio);                             /* Get datarate */
-static bool transmit_packet(radio_t* radio, packet_t* packet);       /* Send packet immediately */
 
 static void catch_interrupt(void *param);
 static void rx_handle_interrupt(radio_t* radio);
 static void fhss_handle_interrupt(radio_t* radio);
-static void tx_handle_interrupt(radio_t* radio);
+static void tx_handle_interrupt(radio_t* radio, bool from_interrupt);
+static void transmit_start(radio_t *radio);
 static void global_interrupt_handler(void* param);
 static bool radio_stop(radio_t* radio);
 static bool release_lock(radio_t* radio);
@@ -82,7 +82,9 @@ typedef struct sx127x_private_data {
     int        fhss_interrupts;
     os_mutex_t rlock;
     int        packet_memory_failed;
-    uint8_t    irq_flags;
+    int        packet_crc_errors;
+    uint16_t   irq_flags;                      /* Bottom 8 are hardware flags acquired at irq scan time */
+#define SX127x_FORCE_START_TRANSMIT   0x100    /* Extra 'irq flag' for starting new transmit activity */
 } sx127x_private_data_t;
 
 static os_thread_t  global_interrupt_handler_thread;
@@ -90,12 +92,12 @@ static os_queue_t   global_interrupt_handler_queue;
 static void         global_interrupt_handler(void* param);
 static int          global_number_radios_active;
 
-#define MAX_IRQ_PENDING         20
+#define MAX_IRQ_PENDING         50
 
 #define FHSS_ENABLED            FALSE
 
-#define RECEIVE_IRQ_DIO         0
-#define TRANSMIT_FHSS_IRQ_DIO   1
+#define RECEIVE_IRQ_DIO                 0
+#define TRANSMIT_FHSS_TIMEOUT_IRQ_DIO   1
 
 #define GLOBAL_IRQ_THREAD_STACK    32768
 #define GLOBAL_IRQ_THREAD_PRIORITY (configMAX_PRIORITIES-1)  /* Highest priority */
@@ -126,7 +128,7 @@ bool sx127x_create(radio_t* radio)
         radio->get_channel      = get_channel;
         radio->set_datarate     = set_datarate;
         radio->get_datarate     = get_datarate;
-        radio->transmit_packet  = transmit_packet;
+        radio->transmit_start   = transmit_start;
 
         /* Allocate a data block for local data */
         radio->driver_private_data = malloc(sizeof(sx127x_private_data_t));
@@ -183,6 +185,8 @@ static void rx_handle_interrupt(radio_t* radio)
 
     int length;
 
+    bool start_receive = true;
+
     radio->write_register(radio, SX127x_REG_FIFO_PTR, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
 
     if (data->implicit_header) {
@@ -191,27 +195,42 @@ static void rx_handle_interrupt(radio_t* radio)
         length = radio->read_register(radio, SX127x_REG_RX_NUM_BYTES);
     }
 
-    /* Get a packet */
-    packet_t* packet = allocate_packet();
-    if (packet != NULL) {
-        if (radio->read_buffer(radio, SX127x_REG_FIFO, packet->buffer, length)) {
-            /* Buffer has been read.  Set length */
-            packet->length = length;
-            packet->crc_ok = (data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) == 0;
-            packet->rssi = get_packet_rssi(radio);
-            packet->snr = get_packet_snr(radio);
-            packet->radio_num = radio->radio_num;
+    /* Cannot reliably capture packet if CRC error so don't even try */
+    if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT)) == 0) {
+        /* Get a packet */
+        packet_t* packet = allocate_packet();
 
-ESP_LOGD(TAG, "%s: packet len %d crc_ok %s rssi %d radio %d", __func__, packet->length, packet->crc_ok ? "OK" : "BAD", packet->rssi, packet->radio_num);
+        if (packet != NULL) {
 
-            /* Pass it to protocol layer */
-            radio->on_receive(radio, ref_packet(packet));
+            if (radio->read_buffer(radio, SX127x_REG_FIFO, packet->buffer, length)) {
+                /* Buffer has been read.  Set length */
+                packet->length = length;
+                packet->crc_ok = true;
+                packet->rssi = get_packet_rssi(radio);
+                packet->snr = get_packet_snr(radio);
+                packet->radio_num = radio->radio_num;
+
+ESP_LOGI(TAG, "%s: packet len %d rssi %d radio %d", __func__, packet->length, packet->rssi, packet->radio_num);
+
+                start_receive = false;
+                set_receive_mode(radio);
+
+                /* Pass it to protocol layer */
+                radio->on_receive(radio, ref_packet(packet));
+            }
+
+            release_packet(packet);
+
+        } else {
+            data->packet_memory_failed++;
         }
+    } else if ((data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) != 0) {
+       data->packet_crc_errors++;
+    }
 
-        release_packet(packet);
-
-    } else {
-        data->packet_memory_failed++;
+    if (start_receive) {
+        /* Restart bubble machine */
+        set_receive_mode(radio);
     }
 }
 
@@ -226,39 +245,111 @@ static void fhss_handle_interrupt(radio_t* radio)
     data->fhss_interrupts++;
 }
 
+static void wait_if_radio_busy(radio_t *radio, int delay_seed)
+{
+    /* Wait 0 to 50 ms */
+    int r = ((esp_random() + delay_seed) % 6) * 20 + 50;
+ESP_LOGI(TAG, "%s: r wait %d", __func__, r);
+    os_delay(r);
 
-static void tx_handle_interrupt(radio_t* radio)
+    uint8_t status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
+    if ((status & SX127x_MODEM_STATUS_HEADER_VALID) != 0) {
+        ESP_LOGI(TAG, "************************************ radio %d waiting %02x...", radio->radio_num, status);
+        while ((radio->read_register(radio, SX127x_REG_MODEM_STATUS) & SX127x_MODEM_STATUS_HEADER_VALID) != 0) {
+            os_delay(1);
+            //os_delay(((esp_random() + delay_seed) % 10 + 1) * 50);
+        }
+        ESP_LOGI(TAG, "************************************ radio %d finished waiting", radio->radio_num);
+    }
+}
+
+static bool start_packet(radio_t* radio)
+{
+    return set_standby_mode(radio) &&
+           radio->write_register(radio, SX127x_REG_FIFO_PTR, TX_FIFO_BASE);
+}
+
+static bool write_packet(radio_t* radio, packet_t* packet)
+{
+    bool ok = false;
+
+#if 0
+    /* Read how much is in the fifo */
+    int current = radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH);
+    if (current >= 0) {
+
+        /* Calculate how much room */
+        int size = packet->length - TX_FIFO_BASE - current;
+
+        if (packet->length < size) {
+            size = packet->length;
+        }
+
+        radio->write_buffer(radio, SX127x_REG_FIFO, packet->buffer, size);
+
+        /* Set the new length of the payload in process */
+        radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, current + size);
+
+        ok = true;
+    }
+#endif
+    /* Write packet length to buffer so we can validate the return length */
+    ok = radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, packet->length) &&
+         radio->write_buffer(radio, SX127x_REG_FIFO, packet->buffer, packet->length);
+
+    return ok;
+}
+
+static void tx_handle_interrupt(radio_t* radio, bool from_interrupt)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-ESP_LOGD(TAG, "******************************************************");
-ESP_LOGD(TAG, "%s", __func__);
+//ESP_LOGD(TAG, "******************************************************");
+//ESP_LOGD(TAG, "%s", __func__);
 
-    data->tx_interrupts++;
+    if (from_interrupt) {
+        data->tx_interrupts++;
+        radio->activity_indicator(radio, false);
+    }
 
     /* Discard current queue entry and get next packet to send */
-    packet_t* packet = radio->on_transmit(radio);
+    packet_t* packet = radio->on_transmit(radio, ! from_interrupt);
+
     if (packet != NULL) {
-#ifdef NOTUSED
-        /* Pause if CAD is detected */
-        while (data->cad_detected) {
-            os_delay(1);
-        }
-#else
-        /* Wait for modem all-clear */
-        while ((radio->read_register(radio, SX127x_REG_MODEM_STATUS) & SX127x_MODEM_STATUS_CLEAR) == 0) {
-            os_delay(1);
-        }
-#endif
-        transmit_packet(radio, packet);
+
+        wait_if_radio_busy(radio, packet->delay_seed);
+
+        start_packet(radio);
+        write_packet(radio, packet);
+        set_transmit_mode(radio);
+
+        radio->activity_indicator(radio, true);
+
     } else {
-ESP_LOGD(TAG, "%s: no packet", __func__);
+
+//ESP_LOGI(TAG, "%s: no packet", __func__);
 
         /* Other return to receive mode. */
         set_receive_mode(radio);
     }
 }
 
+
+/* Force start transmit interrupt handler */
+static void transmit_start(radio_t *radio)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    if (acquire_lock(radio)) {
+
+        data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
+        os_put_queue(global_interrupt_handler_queue, (os_queue_item_t) radio);
+        release_lock(radio);
+
+    } else {
+        ESP_LOGE(TAG, "%s: Cannot acquire lock", __func__);
+    }
+}
 
 /* Param is ignored */
 static void global_interrupt_handler(void* param)
@@ -268,65 +359,83 @@ static void global_interrupt_handler(void* param)
     ESP_LOGD(TAG, "%s: running", __func__);
 
     while (running) {
-        radio_t* radio;
+        radio_t *radio;
 
         if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t*) &radio)) {
 
-            sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+//ESP_LOGI(TAG, "%s: got %p", __func__, radio);
 
-            /* Clear interrupt */
-            uint8_t flags = radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
-            radio->write_register(radio, SX127x_REG_IRQ_FLAGS, flags);
+            if (radio != NULL) {
+                sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-            data->irq_flags = flags;
+                if (acquire_lock(radio)) {
+                    /* Clear interrupt */
+                    data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
+                    radio->write_register(radio, SX127x_REG_IRQ_FLAGS, data->irq_flags & 0xFF);
 
-ESP_LOGD(TAG, "%s: ******************************************* radio %d flags %02x", __func__, radio->radio_num, flags);
+                    while (data->irq_flags != 0) {
 
-            if (acquire_lock(radio)) {
+//ESP_LOGI(TAG, "%s: ******************************************* radio %d flags %02x", __func__, radio->radio_num, data->irq_flags);
 
-                if (flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
-                    fhss_handle_interrupt(radio);
-                    flags &= ~SX127x_IRQ_FHSS_CHANGE_CHANNEL;
-                }
+                        /* Only process one flag per scan - in priority order */
+                        if (data->irq_flags & SX127x_IRQ_FHSS_CHANGE_CHANNEL) {
+                            fhss_handle_interrupt(radio);
+                            data->irq_flags &= ~SX127x_IRQ_FHSS_CHANGE_CHANNEL;
+                        }
 
 #ifdef NOTUSED
-                if (flags & SX127x_IRQ_CAD_DONE) {
-                    /* Turn off CAD detect flag */
-                    data->cad_detected = false;
-                    ESP_LOGD(TAG, "%s: CAD_DONE detected", __func__);
-                    flags &= ~SX127x_IRQ_CAD_DONE;
-                }
+                        else if (data->irq_flags & SX127x_IRQ_CAD_DONE) {
+                            /* Turn off CAD detect flag */
+                            data->cad_detected = false;
+                            ESP_LOGD(TAG, "%s: CAD_DONE detected", __func__);
+                            data->irq_flags &= ~SX127x_IRQ_CAD_DONE;
+                        }
 
-                if (flags & SX127x_IRQ_CAD_DETECTED) {
-                    /* Turn on CAD detect flag */
-                    data->cad_detected = true;
-                    ESP_LOGD(TAG, "%s: CAD detected", __func__);
-                    flags &= ~SX127x_IRQ_CAD_DETECTED;
-                }
+                        else if (data->irq_flags & SX127x_IRQ_CAD_DETECTED) {
+                            /* Turn on CAD detect flag */
+                            data->cad_detected = true;
+                            ESP_LOGD(TAG, "%s: CAD detected", __func__);
+                            data->irq_flags &= ~SX127x_IRQ_CAD_DETECTED;
+                        }
 #endif
+                        else if (data->irq_flags & (SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT)) {
+                            rx_handle_interrupt(radio);
+                            data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_RX_TIMEOUT);
+                        }
 
-                if (flags & SX127x_IRQ_RX_DONE) {
-                    rx_handle_interrupt(radio);
-                    flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR);
+                        else if (data->irq_flags & SX127x_FORCE_START_TRANSMIT) {
+                            tx_handle_interrupt(radio, false);
+                            /* Kill both flags at once */
+                            data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
+                        }
+
+                        else if (data->irq_flags & SX127x_IRQ_TX_DONE ) {
+                            tx_handle_interrupt(radio, true);
+                            data->irq_flags &= ~SX127x_IRQ_TX_DONE;
+                        }
+
+                        else {
+                            ESP_LOGE(TAG, "%s: Interrupt not processed: %04x on radio %d", __func__, data->irq_flags, radio->radio_num);
+                            data->irq_flags = 0;   /* Remove unprocessed flags */
+                        }
+                    }
+
+                    release_lock(radio);
+                } else {
+                    ESP_LOGE(TAG, "%s: unable to acquire lock", __func__);
                 }
-
-                if (flags & SX127x_IRQ_TX_DONE) {
-                    tx_handle_interrupt(radio);
-                    flags &= ~SX127x_IRQ_TX_DONE;
-                }
-
-                if (flags != 0) {
-                    ESP_LOGE(TAG, "%s: Interrupt not processed: %02x on radio %d", __func__, flags, radio->radio_num);
-                }
-
-                release_lock(radio);
+            } else {
+                /* NULL delivered - shut down */
+                running = false;
             }
         } else {
-            /* NULL delivered - shut down */
+            ESP_LOGE(TAG, "%s: interrupt queue failed to read - exiting", __func__);
             running = false;
         }
     }
+
     ESP_LOGD(TAG, "%s: stopped", __func__);
+    os_exit_thread();
 }
 
 static bool radio_stop(radio_t* radio)
@@ -336,8 +445,8 @@ static bool radio_stop(radio_t* radio)
     if (acquire_lock(radio)) {
         /* Disable all interrupts */
         ok = disable_irq(radio, 0xFF)
-             && radio->attach_interrupt(radio, RECEIVE_IRQ_DIO,       GPIO_PIN_INTR_DISABLE, NULL)
-             && radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, GPIO_PIN_INTR_DISABLE, NULL)
+             && radio->attach_interrupt(radio, RECEIVE_IRQ_DIO,               GPIO_PIN_INTR_DISABLE, NULL)
+             && radio->attach_interrupt(radio, TRANSMIT_FHSS_TIMEOUT_IRQ_DIO, GPIO_PIN_INTR_DISABLE, NULL)
              ;
 
         if (ok && --global_number_radios_active == 0) {
@@ -467,14 +576,15 @@ static bool radio_start(radio_t* radio)
             /* Clear all interrupts */
             radio->write_register(radio, SX127x_REG_IRQ_FLAGS, 0xFF);
             /* Capture receive/transmit interrupts */
-            radio->attach_interrupt(radio, RECEIVE_IRQ_DIO,       GPIO_PIN_INTR_POSEDGE, catch_interrupt);
-            radio->attach_interrupt(radio, TRANSMIT_FHSS_IRQ_DIO, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+            radio->attach_interrupt(radio, RECEIVE_IRQ_DIO,               GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+            radio->attach_interrupt(radio, TRANSMIT_FHSS_TIMEOUT_IRQ_DIO, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
 
             /* Enable interrupts of interest */
 #ifdef NOTUSED
             enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);
 #else
-            enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE);
+            //enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE);
+            enable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT);
 #endif
 
             if (data->hop_period != 0) {
@@ -554,11 +664,15 @@ static bool set_receive_mode(radio_t* radio)
 {
     bool ok = false;
 
+ESP_LOGI(TAG, "%s: set_receive_mode", __func__);
+
     if (acquire_lock(radio)) {
-        ok =  radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_CONTINUOUS)
+        //ok =  radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_CONTINUOUS)
+        ok =  radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_SINGLE)
            && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, 0b00000000)
            ;
 
+        //ESP_LOGI(TAG, "%s: radio %d status %02x", __func__, radio->radio_num, radio->read_register(radio, SX127x_REG_MODEM_STATUS));
         release_lock(radio);
     }
 
@@ -669,17 +783,18 @@ ESP_LOGD(TAG, "%s: channel %d", __func__, channel);
 /*END TEST*/
 //#endif
 
-            set_datarate(radio, 0);
+            //set_datarate(radio, 0);
+            set_datarate(radio, 3);
 
             set_txpower(radio, channel_table_sx127x.datarates[chanp->datarate_group][0].tx);
 
             data->channel = channel;
 
-            ok = true;
-
             set_receive_mode(radio);
 
             release_lock(radio);
+
+            ok = true;
         }
     }
 
@@ -886,10 +1001,12 @@ ESP_LOGD(TAG, "%s: enable %s", __func__, enable ? "TRUE" : "FALSE");
                 config2 &= ~0x04;
             }
             ok = radio->write_register(radio, SX127x_REG_MODEM_CONFIG_2, config2);
+#if 0
 /*TEST*/
             /* Read back to verify */
             radio->read_register(radio, SX127x_REG_MODEM_CONFIG_2);
 /*END TEST*/
+#endif
         }
 
         release_lock(radio);
@@ -968,59 +1085,6 @@ static void catch_interrupt(void *param)
     if (awakened) {
         portYIELD_FROM_ISR();
     }
-}
-
-static bool start_packet(radio_t* radio)
-{
-    return set_standby_mode(radio) &&
-           radio->write_register(radio, SX127x_REG_FIFO_PTR, TX_FIFO_BASE) &&
-           radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0);
-}
-
-static bool write_packet(radio_t* radio, packet_t* packet)
-{
-    bool ok = false;
-
-    /* Read how much is in the fifo */
-    int current = radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH);
-    if (current >= 0) {
-
-        /* Calculate how much room */
-        int size = packet->length - TX_FIFO_BASE - current;
-
-        if (packet->length < size) {
-            size = packet->length;
-        }
-
-        radio->write_buffer(radio, SX127x_REG_FIFO, packet->buffer, size);
-
-        /* Set the new length of the payload in process */
-        radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, current + size);
-
-        ok = true;
-    }
-
-    return ok;
-}
-
-static bool transmit_packet(radio_t* radio, packet_t* packet)
-{
-    bool ok = false;
-
-    if (acquire_lock(radio)) {
-
-        start_packet(radio);
-        radio->activity_indicator(radio, true);
-        write_packet(radio, packet);
-        radio->activity_indicator(radio, false);
-        set_transmit_mode(radio);
-
-        release_lock(radio);
-
-        ok = true;
-    }
-
-    return ok;
 }
 
 #endif

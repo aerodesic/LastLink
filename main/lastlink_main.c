@@ -21,6 +21,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "bootloader_random.h"
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -85,12 +86,16 @@ void app_main(void)
         /* pass */
     }
 
+    display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
+    display->contrast(display, get_config_int("display.contrast", 128));
+
     if (init_spiffs() == ESP_OK) {
 	/* Try to open .config and if not found, format the spiffs */
-	FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
-	if (fp == NULL) {
+        FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
+	    if (fp == NULL) {
             /* Format the device */
-	    format_spiffs();
+            display->draw_text(display, 0, 32, "Formatting...");
+	        format_spiffs();
         } else {
             fclose(fp);
         }
@@ -109,6 +114,7 @@ void app_main(void)
     #endif
 
     linklayer_set_debug(true);
+    linklayer_set_listen_only(get_config_int("lastlink.listen_only", 0));
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
     linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));
@@ -116,15 +122,18 @@ void app_main(void)
 #endif
 
 #if 1
-    // start_commands(0, 1);
-    ESP_LOGE(TAG, "stdin.fd %d stdout.fd %d", fileno(stdin), fileno(stdout));
-    start_commands(fileno(stdin), fileno(stdout));
+    start_commands(stdin, stdout);
 #endif
 
-    display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
-    display->contrast(display, get_config_int("display.contrast", 128));
+    bootloader_random_enable();
+    ESP_LOGI(TAG, "random number 1 %d", esp_random());
+    ESP_LOGI(TAG, "random number 2 %d", esp_random());
+    ESP_LOGI(TAG, "random number 3 %d", esp_random());
+
+    display->clear(display);
+
 #if 1
-    display->draw_text(display, 0, 0, "Lastlink @%d", get_config_int("lastlink.address", 0));
+    display->draw_text(display, 0, 0, "Lastlink #%d", get_config_int("lastlink.address", 0));
 #else
     display->draw_text(display, 0, 0, "LastLink %s", VERSION);
 #endif

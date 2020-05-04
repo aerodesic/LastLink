@@ -49,5 +49,6 @@ typedef struct radio_config {
 
 bool io_init(radio_t* radio, const radio_config_t* config);
 bool io_deinit(radio_t* radio);
+void dump_buffer(const char* ident, const uint8_t* buffer, int  len);
 
 #endif /* __linklayer_io_h_included */

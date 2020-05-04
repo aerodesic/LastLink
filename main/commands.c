@@ -105,25 +105,25 @@ static int readline(char *buffer, size_t len)
 }
 
 typedef struct command_param {
-    int in;
-    int out;
+    FILE* in;
+    FILE* out;
 } command_param_t;
 
 static void CommandProcessor(void* params);
 
 /* Start a command processor on the specific fd pair */
-os_thread_t start_commands(int infd, int outfd)
+os_thread_t start_commands(FILE* in, FILE* out)
 {
     command_param_t *param = NULL;
 
-    if (infd >= 0 && outfd >= 0) {
+    if (in != NULL && out != NULL) {
         param = (command_param_t*) malloc(sizeof(command_param_t));
 
         if (param == NULL) {
             printf("Unable to allocate command parameter; starting with default stdin/stdout\n");
         } else {
-            param->in = infd;
-            param->out = outfd;
+            param->in = in;
+            param->out = out;
         }
     }
 
@@ -139,6 +139,41 @@ static void show_help(const char* command, const char *params, const char *descr
     printf("%s %-*s %s\n", command, HELP_CMD_FIELD_LEN - strlen(command), params, description);
 }
 
+typedef struct {
+    int address;
+    FILE* out;
+} ping_info_t;
+
+void ping_command_thread(void* param)
+{
+    ping_info_t *info = (ping_info_t*) param;
+
+    int address = info->address;
+
+    /* Set stdout for printing */
+    stdout = info->out;
+
+    free((void*) info);
+
+    printf("Test message from ping_command_thread\n");
+
+    int paths[100];
+    int path_len = ping(address, paths, ELEMENTS_OF(paths));
+
+    if (path_len < 0) {
+        printf("Ping error %d\n", path_len);
+    } else {
+        printf("Path:");
+        for (int path = 0; path < path_len; ++path) {
+            printf(" %d", paths[path]);
+        }
+
+        printf("\n");
+    }
+
+    os_exit_thread();
+}
+
 /**********************************************************************/
 /* ping <node address>                                                */
 /**********************************************************************/
@@ -149,18 +184,16 @@ static int ping_command(int argc, const char **argv)
     } else {
         int address = strtol(argv[1], NULL, 10);
 
-        int paths[100];
-        int path_len = ping(address, paths, 100, 10000);
-        if (path_len < 0) {
-            printf("Ping error %d\n", path_len);
+        ping_info_t *info = (ping_info_t*) malloc(sizeof(ping_info_t));
+        if (info != NULL) {
+            info->address = address;
+            info->out = stdout;
+            os_create_thread(ping_command_thread, "ping", 20000, 10, (void*) info);
         } else {
-            printf("Path:");
-            for (int path = 0; path < path_len; ++path) {
-                printf(" %d", paths[path]);
-            }
-            printf("\n");
+            printf("Unable to create ping info object\n");
         }
     }
+
     return 0;
 }
 
@@ -456,7 +489,19 @@ static int status_command(int argc, const char **argv)
     if (argc == 0) {
         show_help(argv[0], "", "Show system status");
     } else {
+        bool all = argc > 1 ? strcmp(argv[1], "-a") == 0 : false;
+
         printf("free packets %d\n", available_packets());
+#if CONFIG_LASTLINK_TABLE_LISTS
+        printf("\nPacket status:\n");
+        linklayer_print_packet_status(stdout, CONFIG_LASTLINK_NUM_PACKETS, all);
+        printf("\nLock status:\n");
+        linklayer_print_lock_status(stdout);
+        printf("\nRoute table:\n");
+        linklayer_print_route_table(stdout, CONFIG_LASTLINK_MAX_ROUTES, all);
+        printf("\nPing table:\n");
+        linklayer_print_lsocket_ping_table(stdout, all);
+#endif
     }
 
     return 0;
@@ -521,6 +566,7 @@ static command_entry_t  command_table[] = {
     { .name = "stlisten",   .function = stlisten_command  },
     { .name = "stconnect",  .function = stconnect_command },
     { .name = "status",     .function = status_command    },
+    { .name = "s",          .function = status_command    },
 };
 
 /**********************************************************************/
@@ -546,10 +592,10 @@ void CommandProcessor(void* params)
     if (params != NULL) {
         command_param_t *io = (command_param_t*) params;
 
-        ESP_LOGE(TAG, "CommandProcess in %d out %d", io->in, io->out);
+        ESP_LOGE(TAG, "CommandProcess in %d out %d", fileno(io->in), fileno(io->out));
 
-        _GLOBAL_REENT->_stdin = fdopen(io->in, "r");
-        _GLOBAL_REENT->_stdout = fdopen(io->out, "w");
+        stdin = io->in;
+        stdout = io->out;
 
         free((void*) io);
         io = NULL;
@@ -611,4 +657,6 @@ void CommandProcessor(void* params)
     printf("********************************************************\n");
     printf("CommandProcessor exiting\n");
     printf("********************************************************\n");
+
+    os_exit_thread();
 }

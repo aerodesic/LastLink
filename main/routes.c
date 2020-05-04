@@ -112,7 +112,7 @@ bool route_table_deinit(route_table_t* rt)
     return rt->lock == NULL;
 }
 
-route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, int sequence, int metric, uint8_t flags)
+route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, int source, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -122,6 +122,7 @@ route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, i
             r = (route_t*) malloc(sizeof(route_t));
             if (r != NULL) {
                 r->dest = dest;
+                r->source = source;
 	            r->sequence = sequence;
 	            r->metric = metric;
 	            r->routeto = routeto;
@@ -131,7 +132,6 @@ route_t* route_create(route_table_t* rt, int radio_num, int dest, int routeto, i
 	            route_update_lifetime(r, ROUTE_LIFETIME);
 
                 r->radio_num = radio_num;
-	            r->pending_request = NULL;
 	            r->pending_timer = NULL;
 	            r->pending_retries = 0;
 	            r->pending_packets = NULL;  /* No queue yet.  created when needed */
@@ -215,17 +215,15 @@ bool route_delete(route_t* r)
                 r->pending_timer = NULL;
             }
 
-            if (r->pending_request) {
-                linklayer_print_packet("PENDING REQUEST", r->pending_request);
-                release_packet(r->pending_request);
-                r->pending_request = NULL;
-            }
-
             if (r->pending_packets != NULL) {
                 /* Discard the packets waiting */
 	            packet_t* p;
 	            while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
                     linklayer_print_packet("PENDING PACKETS", p);
+
+                    /* Tell supplier if it needs to know when route is complete */
+                    packet_tell_routed_callback(p, false);
+
                     release_packet(p);
                 }
                 os_delete_queue(r->pending_packets);
@@ -256,10 +254,10 @@ void route_update_lifetime(route_t* r, int lifetime)
 /*
  * Find and update the route indicated by the address.
  *
- * If a new route is created or the sequence number is different or the metric improves,
+ * If a new route is created or the source/sequence number is different or the metric improves,
  * return the route_t* otherwise return NULL
  */
-route_t* route_update(route_table_t* rt, int radio_num, int dest, int routeto, int sequence, int metric, uint8_t flags)
+route_t* route_update(route_table_t* rt, int radio_num, int dest, int routeto, int source, int sequence, int metric, uint8_t flags)
 {
     route_t* r = NULL;
 
@@ -268,14 +266,15 @@ route_t* route_update(route_table_t* rt, int radio_num, int dest, int routeto, i
         r = route_find(rt, dest);
         if (r == NULL) {
             /* No route, so create a new one and return it */
-            r = route_create(rt, radio_num, dest, routeto, sequence, metric, flags);
-ESP_LOGI(TAG, "%s: creating route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
-        } else if (r != NULL && r->sequence == sequence && r->metric <= metric) {
+            r = route_create(rt, radio_num, dest, routeto, source, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: creating route D=%04x Radio %d R=%04x Source %d Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, source, sequence, metric, flags);
+        } else if (r != NULL && r->source == source && r->sequence == sequence && r->metric <= metric) {
             /* Ignore it - it's no better */
-ESP_LOGI(TAG, "%s: ingored route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: ignored route D=%04x Radio %d R=%04x Source %d Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, source, sequence, metric, flags);
             r = NULL;
         } else {
-ESP_LOGI(TAG, "%s: updating route D=%04x Radio %d R=%04x Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, sequence, metric, flags);
+ESP_LOGI(TAG, "%s: updating route D=%04x Radio %d R=%04x Source %d Sequence %d Metric %d Flags %02x", __func__, dest, radio_num, routeto, source, sequence, metric, flags);
+            r->source = source;
             r->sequence = sequence;
             r->metric = metric;
             r->flags = flags;
@@ -329,8 +328,14 @@ void route_request_retry(os_timer_t timer)
 
         if (route_table_lock(rt)) {
 
-	        if (r->pending_request != NULL && --(r->pending_retries) > 0) {
-                linklayer_send_packet(ref_packet(r->pending_request));
+	        if (r->pending_retries != 0) {
+                r->pending_retries--;
+
+                /* Create a route request and send it */
+                packet_t* packet = routerequest_packet_create(r->dest);
+
+	            linklayer_send_packet(packet);
+
 	        } else {
                 /* No joy, delete the route; will rebuild if necessary */
                 route_delete(r);
@@ -341,17 +346,20 @@ void route_request_retry(os_timer_t timer)
     }
 }
 
-void route_set_pending_request(route_t* r, packet_t* request, int retries, int timeout)
+void route_start_routerequest(route_t* r)
 {
     if (r != NULL) {
         route_table_t* rt = r->table;
 
         if (route_table_lock(rt)) {
 
-            r->pending_request = request;
-            r->pending_retries = retries;
+            r->pending_retries = ROUTE_REQUEST_RETRIES;
             r->pending_timer = os_create_repeating_timer("route_timer", ROUTE_REQUEST_TIMEOUT, (void*) r, route_request_retry);
             os_start_timer(r->pending_timer);
+
+            /* Create a route request and send it */
+            packet_t* packet = routerequest_packet_create(r->dest);
+	        linklayer_send_packet(packet);
 
             route_table_unlock(rt);
         }
@@ -364,38 +372,38 @@ void route_release_packets(route_t* r)
         route_table_t* rt = r->table;
         route_table_lock(rt);
 
-        if (r->pending_request != NULL) {
-            release_packet(r->pending_request);
-            r->pending_request = NULL;
+	    if (r->pending_timer != NULL) {
+            os_stop_timer(r->pending_timer);
+            os_delete_timer(r->pending_timer);
+	        r->pending_timer = NULL;
+	        r->pending_retries = 0;
+	    }
 
-	        if (r->pending_timer != NULL) {
-                os_stop_timer(r->pending_timer);
-                os_delete_timer(r->pending_timer);
-	            r->pending_timer = NULL;
-	            r->pending_retries = 0;
-	        }
+        if (r->pending_packets != NULL) {
+	        /* Move all packets to the send queue */
+	        packet_t* p;
+	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
 
-            if (r->pending_packets != NULL) {
-	            /* Move all packets to the send queue */
-	            packet_t* p;
-	            while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
-
-                    if (r->radio_num == UNKNOWN_RADIO) {
-                        ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d sequence %d", r->dest, r->routeto, r->sequence);
-                    }
-
-                    /* Assign the delivery route */
-                    set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, r->routeto);
-
-                    /* Direct it to specific radio */
-                    p->radio_num = r->radio_num;
-	                linklayer_send_packet(p);
+                if (r->radio_num == UNKNOWN_RADIO) {
+                    ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d source %d sequence %d", r->dest, r->routeto, r->source, r->sequence);
                 }
 
-                os_delete_queue(r->pending_packets);
-                r->pending_packets = NULL;
-	        }
-        }
+                /* Assign the delivery route */
+                set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, r->routeto);
+
+                /* Direct it to specific radio */
+                p->radio_num = r->radio_num;
+                if (packet_tell_routed_callback(p, true)) {
+	                linklayer_send_packet(p);
+                } else {
+                    /* Cancel the packet */
+                    release_packet(p);
+                }
+            }
+
+            os_delete_queue(r->pending_packets);
+            r->pending_packets = NULL;
+	    }
         route_table_unlock(rt);
     }
 }
@@ -425,7 +433,7 @@ route_t* route_find(route_table_t* rt, int address)
         if (start != NULL) {
             do {
                 if (route->dest == address) {
-ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
+//ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
                     found = route;
 
                     /* Update the expire time */
@@ -439,5 +447,39 @@ ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
     }
 
     return found;
+}
+
+int read_route_table(route_table_t* rt, route_table_values_t *table, int rtv_len)
+{
+    route_table_lock(rt);
+
+    int rt_used = 0;
+    route_t* start = rt->routes;
+    route_t* route = start;
+
+    if (start != NULL) {
+        do {
+            table[rt_used].dest = route->dest;
+            table[rt_used].radio_num = route->radio_num;
+            table[rt_used].source = route->source;
+            table[rt_used].sequence = route->sequence;
+            table[rt_used].metric = route->metric;
+            table[rt_used].routeto = route->routeto;
+            table[rt_used].flags = route->flags;
+            table[rt_used].lifetime = route->lifetime - get_milliseconds();
+            table[rt_used].pending_packets = route->pending_packets ? os_items_in_queue(route->pending_packets) : 0;
+            table[rt_used].timer = route->pending_timer != NULL;
+            table[rt_used].pending_retries = route->pending_retries;
+            
+            route = route->next;
+
+            ++rt_used;
+
+        } while (rt_used < rtv_len && route != start);
+    }
+
+    route_table_unlock(rt);
+
+    return rt_used;
 }
 

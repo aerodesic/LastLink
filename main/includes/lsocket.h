@@ -31,13 +31,14 @@ typedef enum {
     LSE_INVALID_SOCKET   = -1004,
     LSE_NO_MEM           = -1005,
     LSE_TIMEOUT          = -1006,
-    LSE_BAD_TYPE         = -1007,
-    LSE_SYSTEM_ERROR     = -1008,
-    LSE_INVALID_MAXQUEUE = -1009,
-    LSE_CONNECT_FAILED   = -1010,
-    LSE_NOT_WRITABLE     = -1011,
+    LSE_NO_ROUTE         = -1007,
+    LSE_BAD_TYPE         = -1008,
+    LSE_SYSTEM_ERROR     = -1009,
+    LSE_INVALID_MAXQUEUE = -1010,
+    LSE_CONNECT_FAILED   = -1011,
+    LSE_NOT_WRITABLE     = -1012,
 
-    LSE_NOT_IMPLEMENTED  = 1999,
+    LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;
 
 typedef enum {
@@ -140,11 +141,24 @@ ls_error_t ls_get_last_error(int socket);
 /*
  * Ping a node and return route list.
  */
-ls_error_t ping(int address, int* routelist, int routelistlen, int timeout);
+ls_error_t ping(int address, int* routelist, int routelistlen);
 
 /*
  * debug
  */
 ls_error_t ls_dump_socket(const char* msg, int socket);
+
+#if CONFIG_LASTLINK_TABLE_LISTS
+typedef struct {
+    int         sequence;
+    int         queue;
+    int         to;
+    bool        timer;
+    int         retries;
+    ls_error_t  error;
+} ping_info_table_t;
+
+int read_lsocket_ping_table(ping_info_table_t *table, int max_pings);
+#endif
 
 #endif /* __lsocket_h_include */

@@ -43,6 +43,7 @@ bool os_acquire_mutex_from_isr(os_mutex_t mutex, bool* awakened);
 bool os_release_mutex(os_mutex_t mutex);
 bool os_release_recursive_mutex(os_mutex_t mutex);
 bool os_release_mutex_from_isr(os_mutex_t mutex, bool* awakened);
+int os_get_mutex_count(os_mutex_t mutex);
 
 /* Semaphores */
 os_semaphore_t os_create_counting_semaphore(int max_count, int initial_count);
@@ -81,6 +82,7 @@ bool os_delete_timer(os_timer_t timer);
 os_thread_t os_create_thread(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param);
 os_thread_t os_create_thread_on_core(void (*process)(void* param), const char* name, size_t stack_size, int priority, void* param, int core);
 bool os_delete_thread(os_thread_t thread);
+bool os_exit_thread(void);
 
 /* Allocate DMA compatible memory */
 void* os_alloc_dma_memory(size_t size);

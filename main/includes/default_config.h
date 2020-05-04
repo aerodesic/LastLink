@@ -7,12 +7,13 @@
 #define __default_config_h_included
 
 #define DEFAULT_CONFIG {        \
-    "configversion=3",          \
+    "configversion=4",          \
     "[lastlink]",               \
     "    address=1",            \
     "    flags=0x00",           \
     "    announce=0",           \
     "    receive_only_from=",   \
+    "    listen_only=0",        \
     "[end]",                    \
     "[display]",                \
     "    contrast=128",         \

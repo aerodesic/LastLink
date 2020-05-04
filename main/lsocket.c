@@ -138,6 +138,10 @@ static bool release_packet_window(packet_window_t *queue);
 typedef struct ping_table_entry {
     os_queue_t   queue;
     int          sequence;
+    packet_t     *packet;
+    os_timer_t   timer;
+    int          retries;
+    ls_error_t   error;
 } ping_table_entry_t;
 
 ping_table_entry_t   ping_table[CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS];
@@ -276,7 +280,7 @@ static bool pingreply_packet_process(packet_t *packet)
             if (linklayer_packet_is_for_this_node(packet)) {
                 /* Look for ping request and deliver packet to process queue */
                 int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN));
-                if (slot >= 0) {
+                if (slot >= 0 && ping_table[slot].queue != NULL) {
                     os_put_queue(ping_table[slot].queue, ref_packet(packet));
                 }
 
@@ -322,51 +326,137 @@ static int find_ping_table_entry(int sequence)
     return slot;
 }
 
-static int register_ping(const packet_t *packet)
+static int register_ping(packet_t *packet)
 {
     int slot = find_ping_table_entry(0);
     if (slot >= 0) {
         /* Remember we are waiting on this sequence return */
         ping_table[slot].queue = os_create_queue(1, sizeof(packet_t*));
         ping_table[slot].sequence = get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+        ping_table[slot].packet = ref_packet(packet);
+        ping_table[slot].error = 0;
     }
 
     return slot;
 }
 
-static packet_t *wait_for_ping_reply(int slot, int timeout)
+static packet_t *wait_for_ping_reply(int slot)
 {
     packet_t *packet = NULL;
 
     if (slot >= 0 && slot < ELEMENTS_OF(ping_table)) {
-        if (! os_get_queue_with_timeout(ping_table[slot].queue, (os_queue_item_t*) &packet, timeout)) {
-            /* No reply - make sure empty return */
-            packet = NULL;
-        }
-        ping_table[slot].sequence = 0;
-        os_delete_queue(ping_table[slot].queue);
+        os_get_queue(ping_table[slot].queue, (os_queue_item_t*) &packet);
     }
 
     return packet;
 }
 
+static void release_ping_table_entry(int slot)
+{
+    /* Release the table */
+    ping_table[slot].sequence = 0;
+
+    if (ping_table[slot].timer != NULL) {
+        os_stop_timer(ping_table[slot].timer);
+        os_delete_timer(ping_table[slot].timer);
+    }
+
+    if (ping_table[slot].packet != NULL) {
+        release_packet(ping_table[slot].packet);
+    }
+
+    os_delete_queue(ping_table[slot].queue);
+    ping_table[slot].queue = NULL;
+}
+
+/*
+ * Resend the ping packet for the number of retries allowed
+ */
+void ping_retry(os_timer_t timer)
+{
+    int slot = (int) os_get_timer_data(timer);
+
+    linklayer_lock();
+
+    if (ping_table[slot].timer != NULL) {
+        if (ping_table[slot].timer != NULL && ping_table[slot].retries != 0) {
+            ping_table[slot].retries--;
+
+            /* Retransmit packet */
+            linklayer_send_packet(ref_packet(ping_table[slot].packet));
+        } else {
+            /* Give up */
+            os_stop_timer(timer);
+            os_delete_timer(timer);
+            ping_table[slot].timer = NULL;
+        
+            /* Tell pinger to give up */
+            ping_table[slot].error = LSE_TIMEOUT;
+            os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
+        }
+    }
+
+    linklayer_unlock();
+}
+
+
+/*
+ * ping_has_been_routed.
+ *
+ * Remember the packet in the slot and retry a few times
+ */
+static bool ping_has_been_routed(packet_t* packet, void* data)
+{
+    int slot = (int) slot;
+
+    linklayer_lock();
+
+    ESP_LOGI(TAG, "%s: for slot %d", __func__, slot);
+
+    if (packet != NULL) {
+        /* Create a timer to retry trasmission for a while */
+        ping_table[slot].retries = CONFIG_LASTLINK_PING_RETRIES;
+        ping_table[slot].timer = os_create_repeating_timer("ping_retry", CONFIG_LASTLINK_PING_RETRY_TIMER, (void*) slot, ping_retry);
+        os_start_timer(ping_table[slot].timer);
+
+        /* We are done with it */
+        release_packet(packet);
+    } else {
+        /* No route */
+        os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
+        ping_table[slot].error = LSE_NO_ROUTE;
+    }
+    linklayer_unlock();
+
+    /* Allow packet to be sent */
+    return true;
+}
+
 /*
  * Ping an address and return it's pathlist
  */
-ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
+ls_error_t ping(int address, int *pathlist, int pathlistlen)
 {
     ls_error_t err = 0;
 
     packet_t *packet = ping_packet_create(address);
 
     if (packet != NULL) {
+        linklayer_lock();
+
         int slot = register_ping(packet);
 
         if (slot >= 0) {
 
+            packet_set_routed_callback(packet, ping_has_been_routed, (void*) slot);
+
             linklayer_send_packet(packet);
 
-            packet_t *reply = wait_for_ping_reply(slot, timeout);
+            linklayer_unlock();
+
+            packet_t *reply = wait_for_ping_reply(slot);
+
+            linklayer_lock();
 
             if (reply != NULL) {
                 /* Pass information back to caller */
@@ -380,11 +470,18 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen, int timeout)
                 err = num_routes;
 
                 release_packet(reply);
+
             } else {
-                err = LSE_TIMEOUT;
+                err = ping_table[slot].error;
             }
 
+            release_ping_table_entry(slot);
+
+            linklayer_unlock();
+
         } else {
+            /* No ping table entry */
+            release_packet(packet);
             err = LSE_NO_MEM;
         }
 
@@ -615,7 +712,7 @@ linklayer_print_packet("stream packet", packet);
             case STREAM_FLAGS_CMD_DATA: {
                 /*
                  * Pass the data through the assembly phase.  This might require modifying the current outbound packet
-                 * to update ack seqeuence numbers, etc.  In some cases a brand new packet will be generated.
+                 * to update ack sequence numbers, etc.  In some cases a brand new packet will be generated.
                  *
                  * If there is no data in this packet, it will be ignored if the first packet in the queue.
                  */
@@ -1505,9 +1602,11 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
             }
             err = packet_data_length;
             release_packet(packet);
+
         } else {
             err = LSE_TIMEOUT;
         }
+
     } else if (socket->socket_type == LS_STREAM) {
         /* STREAM packets arrive on the socket stream_packet_queue after being sorted and acked as necessary */
         packet_t *packet;
@@ -2226,6 +2325,29 @@ static void start_socket_timer(socket_timer_t *timer, int delay)
 static void stop_socket_timer(socket_timer_t *timer)
 {
     timer->expires = 0;
+}
+
+
+int read_lsocket_ping_table(ping_info_table_t *pings, int max_pings)
+{
+    int num_pings = 0;
+
+    if (linklayer_lock()) {
+        while (num_pings < CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS && num_pings < max_pings) {
+            pings[num_pings].queue = (ping_table[num_pings].queue != NULL) ? os_items_in_queue(ping_table[num_pings].queue) : -1;
+            pings[num_pings].sequence = ping_table[num_pings].sequence;
+            pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
+            pings[num_pings].timer = ping_table[num_pings].timer != NULL;
+            pings[num_pings].retries = ping_table[num_pings].retries;
+            pings[num_pings].error = ping_table[num_pings].error;
+
+            ++num_pings;
+        }
+
+        linklayer_unlock();
+    }
+
+    return num_pings;
 }
 
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */

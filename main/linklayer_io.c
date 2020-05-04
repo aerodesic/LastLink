@@ -32,7 +32,7 @@ static int spi_read_register(radio_t* radio, int reg);
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* bufer, int len);
 
 #define NUM_PER_LINE 32
-static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
+void dump_buffer(const char* ident, const uint8_t* buffer, int len)
 {
     int addr = 0;
 
@@ -56,7 +56,7 @@ static void dump_buffer(const char* ident, const uint8_t* buffer, int len)
             pos += sprintf(outbuf + pos, "%c", isprint(buffer[addr + b]) ? buffer[addr + b] : '.');
         }
 
-        ESP_LOGD(TAG, "%s: %s", __func__, outbuf);
+        ESP_LOGI(TAG, "%s: %s", __func__, outbuf);
 
         addr += todump;
         len -= todump;

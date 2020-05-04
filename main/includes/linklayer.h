@@ -58,7 +58,11 @@
 #define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)
 #define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)
 #define HEADER_PROTOCOL                (HEADER_SENDER_ADDRESS + ADDRESS_LEN)
-#define HEADER_TTL                     (HEADER_PROTOCOL + PROTOCOL_LEN)
+/* Throw in 100 extra bytes before TTL */
+  #define HEADER_DUMMY_DATA              (HEADER_PROTOCOL + PROTOCOL_LEN)
+  #define HEADER_DUMMY_LEN               100
+  #define HEADER_TTL                     (HEADER_DUMMY_DATA + HEADER_DUMMY_LEN)
+//#define HEADER_TTL                     (HEADER_PROTOCOL + PROTOCOL_LEN)
 #define HEADER_LEN                     (HEADER_TTL + TTL_LEN)
 
 /* The generic payload part of the packet */
@@ -91,6 +95,8 @@ packet_t* beacon_packet_create(const char*name);
 #define ROUTEANNOUNCE_LEN              (ROUTEANNOUNCE_METRIC + METRIC_LEN - HEADER_LEN)
 #define ROUTEANNOUNCE_PROTOCOL         1
 
+packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
+
 /*******************************************************************************************
  *                                                                                         *
  *  Request a route                                                                        *
@@ -104,6 +110,8 @@ packet_t* beacon_packet_create(const char*name);
 #define ROUTEREQUEST_PROTOCOL          2
 
 #define NAMELOOKUP_NAME_LEN            16
+
+packet_t* routerequest_packet_create(int address);
 
 /*******************************************************************************************
  *                                                                                         *
@@ -133,6 +141,11 @@ packet_t* beacon_packet_create(const char*name);
 
 #define NAMEREQUEST_PROTOCOL           4
 
+/*******************************************************************************************
+ *                                                                                         *
+ *  Announce a route failure                                                               *
+ *                                                                                         *
+ *******************************************************************************************/
 #define ROUTEERROR_ADDRESS             (DATA_PAYLOAD)
 #define ROUTEERROR_SEQUENCE            (ROUTEERROR_ADDRESS + ADDRESS_LEN)
 #define ROUTEERROR_REASON              (ROUTEERROR_SEQUENCE + SEQUENCE_NUMBER_LEN)
@@ -142,6 +155,7 @@ packet_t* beacon_packet_create(const char*name);
 
 #define FIRST_DATA_PROTOCOL            6
 
+packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
 
 /*************************************************************************
  * This level maintains handles the routing protocol
@@ -216,6 +230,7 @@ bool linklayer_unregister_protocol(int number);
 
 os_queue_t linklayer_set_promiscuous_mode(bool mode);
 bool linklayer_set_debug(bool enable);
+bool linklayer_set_listen_only(bool enabled);
 
 void linklayer_send_packet(packet_t* packet);
 void linklayer_send_packet_update_ttl(packet_t* packet);
@@ -241,6 +256,14 @@ bool sx127x_radio(radio_t* radio);
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
 void linklayer_set_receive_only_from(const char* addresses);
+#endif
+
+
+#if CONFIG_LASTLINK_TABLE_LISTS
+void linklayer_print_route_table(FILE *fp, int max_view_route_table, bool all);
+void linklayer_print_packet_status(FILE* fp, int max_packet_info, bool all);
+void linklayer_print_lock_status(FILE* fp);
+void linklayer_print_lsocket_ping_table(FILE* fp, bool all);
 #endif
 
 #endif /* __linklayer_h_included */

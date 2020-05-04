@@ -11,15 +11,23 @@
 
 #define UNKNOWN_RADIO        -1
 
+typedef struct packet packet_t;  // Forward red
+
 typedef struct packet {
-#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
-    const char       *last_release_filename;
-    int              last_release_lineno;
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+    const char       *last_referenced_filename;
+    int              last_referenced_lineno;
 #endif
+
+    /* Call when packet has been routed.  Can then resend.  If entry is NULL, resend is automatic */
+    bool             (*routed_callback)(packet_t* packet, void* data);
+    void             *routed_callback_data;
+
+    uint8_t          delay_seed;                 /* To allow staggered packet transmission by some algorithm */
     bool             transmitted;                /* TRUE if packet was transmitted (promiscuous mode status) */
-    int              radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
-    int              rssi;                       /* Received signal strength */
-    int              snr;                        /* In .1 db */
+    uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
+    int8_t           rssi;                       /* Received signal strength */
+    int8_t           snr;                        /* In .1 db */
     bool             crc_ok;                     /* True if good crc check */
 
     int              ref;                        /* Ref counter - when released is decremented; when 0 item is freed */
@@ -34,39 +42,40 @@ bool init_packets(int num_packets);
 int deinit_packets(void);
 
 /*
- * Allocate a packet.  Packet is filled with zeroes before delivery.
- */
-packet_t *allocate_packet(void);
-
-/*
- * Create a packet from a user supplied buffer of specified length.
- */
-packet_t *create_packet(uint8_t *buf, size_t length);
-
-/*
- * Duplicate a packet
- */
-packet_t *duplicate_packet(packet_t *packet);
-
-/*
  * Return number of available packets.
  */
 int available_packets(void);
 
-/*
- * Release packet
- */
-#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+packet_t *allocate_packet_debug(const char* filename, int lineno);
+#define allocate_packet()  allocate_packet_debug(__FILE__, __LINE__)
+
+packet_t *create_packet_debug(const char* filename, int lineno, uint8_t *buf, size_t length);
+#define create_packet(buf, length)  create_packet_debug(__FILE__, __LINE__, buf, length)
+
+packet_t *duplicate_packet_debug(const char* filename, int lineno, packet_t *packet);
+#define duplicate_packet(packet) duplicate_packet_debug(__FILE__, __LINE__, packet)
+
 bool release_packet_debug(const char* filename, int lineno, packet_t* packet);
 #define release_packet(packet) release_packet_debug(__FILE__, __LINE__, packet)
-#else
-bool release_packet_simple(packet_t *packet);
-#define release_packet(packet) release_packet_plain(packet)
-#endif
 
-/*
- * Reference a packet
- */
+packet_t* ref_packet_debug(const char* filename, int lineno, packet_t *packet);
+#define ref_packet(packet)  ref_packet_debug(__FILE__, __LINE__, packet)
+
+#else
+
+packet_t *allocate_packet_plain(void);
+#define allocate_packet()  allocate_packet_plain()
+
+packet_t *create_packet_plain(uint8_t *buf, size_t length);
+#define create_packet(buf, length)  create_packet_plain(buf, length)
+
+packet_t *duplicate_packet_plain(packet_t *packet);
+#define duplicate_packet(packet) duplicate_packet_plain(packet)
+
+bool release_packet_plain(packet_t *packet);
+#define release_packet(packet) release_packet_plain(packet)
+
 inline static packet_t* ref_packet(packet_t* packet)
 {
     if (packet != NULL) {
@@ -74,6 +83,7 @@ inline static packet_t* ref_packet(packet_t* packet)
     }
     return packet;
 }
+#endif
 
 /*
  * Get an integer value from a field.  Bytes are packed to an integer in big endian format.
@@ -123,5 +133,29 @@ static inline packet_t *packet_dup(packet_t *p)
 
 bool packet_lock(void);
 void packet_unlock(void);
+bool packet_tell_routed_callback(packet_t *packet, bool success);
+void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *packet, void* data), void* data);
+
+#if CONFIG_LASTLINK_TABLE_LISTS
+typedef struct {
+    void*         address;
+    int           ref;
+    int           radio_num;
+    int           length;
+    bool          routed_callback;
+    void*         routed_callback_data;
+    int           routeto;
+    int           origin;
+    int           dest;
+    int           sender;
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+    const char    *last_referenced_filename;
+    unsigned int  last_referenced_lineno;
+#endif
+} packet_info_table_t;
+
+int read_packet_table(packet_info_table_t* table, int table_len);
+int get_packet_lock_count(void);
+#endif
 
 #endif /* __packets_h_included */

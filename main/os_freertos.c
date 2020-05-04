@@ -133,6 +133,11 @@ bool os_release_mutex_from_isr(os_mutex_t mutex, bool* awakened)
     return true;
 }
 
+int os_get_mutex_count(os_mutex_t mutex)
+{
+    return uxSemaphoreGetCount(mutex);
+}
+
 /* Semaphore */
 os_semaphore_t os_create_binary_semaphore(void)
 {
@@ -187,11 +192,11 @@ bool os_delete_semaphore(os_semaphore_t sem)
 /* Queue */
 os_queue_t os_create_queue(int depth, size_t size)
 {
-    ESP_LOGI(TAG, "%s: depth %d size %u", __func__, depth, size);
+    //ESP_LOGI(TAG, "%s: depth %d size %u", __func__, depth, size);
 
     os_queue_t q = xQueueCreate((UBaseType_t) depth, (UBaseType_t) size);
 
-    ESP_LOGI(TAG, "%s: returned %p", __func__, q);
+    // ESP_LOGI(TAG, "%s: returned %p", __func__, q);
 
     return q;
 }
@@ -334,12 +339,14 @@ os_thread_t os_create_thread_on_core(void (*process)(void* param), const char* n
 
 bool os_delete_thread(os_thread_t thread)
 {
-    if (thread != NULL) {
-        vTaskDelete(thread);
-        return true;
-    } else {
-        return false;
-    }
+    vTaskDelete(thread);
+    return true;
+}
+
+bool os_exit_thread(void)
+{
+    vTaskDelete(NULL);
+    return true;
 }
 
 void os_delay(int ms)
@@ -390,7 +397,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
 {
     bool ok = true;
 
-    ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
+    // ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
 
     gpio_config_t     io;
 
@@ -416,7 +423,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
             if (ok) {
                 esp_err_t err = gpio_isr_handler_add(gpio, handler, param);
                 if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
+                    // ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
                     ok = false;
                 }
             }

@@ -18,6 +18,8 @@
 #include "packets.h"
 
 /* Where freed packets go - where we look first */
+static packet_t          *packet_table;
+static int               packet_table_len;
 static os_queue_t        free_packets_queue;
 static os_mutex_t        packet_mutex;
 static int               active_packets;
@@ -50,19 +52,25 @@ bool init_packets(int num_packets)
 
         packet_lock();
 
-        free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
+        /* Create the bulk table */
+        packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
+        if (packet_table != NULL) {
+            
+            /* Zero the table */
+            memset(packet_table, 0, num_packets * sizeof(packet_t));
 
-        if (free_packets_queue != NULL) {
+            packet_table_len = num_packets;
+            free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
 
-            // ESP_LOGD(TAG, "free_packets_queue created");
+            if (free_packets_queue != NULL) {
+                // ESP_LOGD(TAG, "free_packets_queue created");
+    
+                ok = true;
 
-            ok = true;
+                int count = 0;
 
-            int count = 0;
-
-            while(ok && count < num_packets) {
-                packet_t *p = (packet_t *) malloc(sizeof(packet_t));
-                if (p != NULL) {
+                while(ok && count < num_packets) {
+                    packet_t *p = &packet_table[count];
                     memset(p, 0, sizeof(packet_t));
                     p->ref = 1;
                     p->buffer = (uint8_t*) os_alloc_dma_memory(MAX_PACKET_LEN);
@@ -75,12 +83,16 @@ ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
 //ESP_LOGI(TAG, "%s: Packet %d at %p with buffer %p", __func__, count, p, p->buffer);
                         release_packet(p);
                     }
-                } else {
-                    ok = false;
-                }
-                ++count;
+
+                    ++count;
+                }      
+            } else {
+                ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
             }
+        } else {
+            ESP_LOGE(TAG, "%s: Unable to allocate packet table", __func__);
         }
+
         packet_unlock();
     }
 
@@ -117,8 +129,12 @@ int deinit_packets(void)
                 while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
                     free((void*) packet->buffer);
                     packet->buffer = NULL;
-                    free((void*) packet);
                 }
+
+                /* Free the bulk store */
+                free((void*) packet_table);
+                packet_table = NULL;
+                packet_table_len = 0;
             }
 
             os_delete_queue(free_packets_queue);
@@ -151,7 +167,7 @@ static bool validate_field(const packet_t *p, size_t from, size_t length)
 /*
  * Allocate a packet of specified length.  Packet is filled with zeroes.
  */
-packet_t *allocate_packet(void)
+packet_t *allocate_packet_plain(void)
 {
     // ESP_LOGD(TAG, "allocate_packet");
 
@@ -176,6 +192,11 @@ packet_t *allocate_packet(void)
                 packet->radio_num = UNKNOWN_RADIO;
                 packet->rssi = 0;
                 packet->crc_ok = false;
+
+                /* Fill in the dummy data */
+                for (int dummy = 0; dummy < HEADER_DUMMY_LEN; ++dummy) {
+                    packet->buffer[HEADER_DUMMY_DATA + dummy] = dummy + 1;
+                }
                 ++active_packets;
             }
         }
@@ -194,7 +215,7 @@ packet_t *allocate_packet(void)
 /*
  * Create a packet from a user supplied buffer of specified length.
  */
-packet_t *create_packet(uint8_t* buf, size_t length)
+packet_t *create_packet_plain(uint8_t* buf, size_t length)
 {
     if (length > MAX_PACKET_LEN) {
        length = MAX_PACKET_LEN;
@@ -209,7 +230,7 @@ packet_t *create_packet(uint8_t* buf, size_t length)
     return p;
 }
 
-packet_t *duplicate_packet(packet_t* packet)
+packet_t *duplicate_packet_plain(packet_t* packet)
 {
     return create_packet(packet->buffer, packet->length);
 }
@@ -224,6 +245,8 @@ bool release_packet_plain(packet_t *packet)
          */
         if (free_packets_queue != NULL) {
             if (packet != NULL && --(packet->ref) == 0) {
+                packet->routed_callback = NULL;
+                packet->routed_callback_data = NULL;
                 ok = os_put_queue_with_timeout(free_packets_queue, packet, 0);
             }
             ok = true;
@@ -233,25 +256,73 @@ bool release_packet_plain(packet_t *packet)
     return ok;
 }
 
-#if CONFIG_LASTLINK_DEBUG_PACKET_RELEASE
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+packet_t *allocate_packet_debug(const char *filename, int lineno)
+{
+    packet_t *packet = allocate_packet_plain();
+    if (packet != NULL) {
+        packet->last_referenced_filename = filename;
+        packet->last_referenced_lineno = lineno;
+    }
+
+    return packet;
+}
+
+packet_t *create_packet_debug(const char* filename, int lineno, uint8_t* buf, size_t length)
+{
+    packet_t *packet = create_packet_plain(buf, length);
+    if (packet != NULL) {
+        packet->last_referenced_filename = filename;
+        packet->last_referenced_lineno = lineno;
+    }
+
+    return packet;
+}
+
+packet_t *duplicate_packet_debug(const char* filename, int lineno, packet_t* packet)
+{
+    packet_t *dup = duplicate_packet_plain(packet);
+    if (dup != NULL) {
+        dup->last_referenced_filename = filename;
+        dup->last_referenced_lineno = lineno;
+    }
+
+    return dup;
+}
+
+packet_t *ref_packet_debug(const char* filename, int lineno, packet_t *packet)
+{
+    packet->ref++;
+
+    if (packet != NULL) {
+        packet->last_referenced_filename = filename;
+        packet->last_referenced_lineno = lineno;
+    }
+
+    return packet;
+}
+
 /*
  * Decrement packet ref count and if 0, free it.
  */
 bool release_packet_debug(const char *filename, int lineno, packet_t *packet)
 {
-    bool ok;
+    bool ok = false;
 
-    if (packet != NULL && packet->ref != 0) {
-        packet->last_release_filename = filename;
-        packet->last_release_lineno = lineno;
-        ok = release_packet_plain(packet);
+    if (packet != NULL) {
+        if (packet->ref != 0) {
+            packet->last_referenced_filename = filename;
+            packet->last_referenced_lineno = lineno;
+            ok = release_packet_plain(packet);
+        } else {
+            ESP_LOGE(TAG, "********************************************************");
+            ESP_LOGE(TAG, "%s: packet_release called by %s:%d", __func__, filename, lineno);
+            ESP_LOGE(TAG, "%s: last release by %s:%d", __func__, packet->last_referenced_filename, packet->last_referenced_lineno);
+            linklayer_print_packet("Already Released", packet);
+        }
     } else {
-        ESP_LOGE(TAG, "%s: ********************************************************", __func__);
-        ESP_LOGE(TAG, "%s: packet_release called by %s:%d", __func__, filename, lineno);
-        ESP_LOGE(TAG, "%s: Packet already release by %s:%d", __func__, packet->last_release_filename, packet->last_release_lineno);
-        linklayer_print_packet("Already released", packet);
-        ESP_LOGE(TAG, "%s: ********************************************************", __func__);
-        ok = false;
+        ESP_LOGE(TAG, "********************************************************");
+        ESP_LOGE(TAG, "%s: release_packet called with NULL by %s:%d", __func__, filename, lineno);
     }
 
     return ok;
@@ -420,4 +491,69 @@ void packet_unlock(void)
 {
     os_release_mutex(packet_mutex);
 }
+
+/*
+ * Called to report success or failure on routing to this packets destination.
+ *
+ * Returns true or false.
+ */
+bool packet_tell_routed_callback(packet_t *packet, bool success)
+{
+    bool ok = true;
+
+    if (packet->routed_callback != NULL) {
+        /* Tell supplier a route exists or if failed */
+        ok = packet->routed_callback(success ? ref_packet(packet) : NULL, packet->routed_callback_data);
+        packet->routed_callback = NULL;
+    }
+
+    return ok;
+}
+
+void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t* packet, void* data), void* data)
+{
+    if (packet->routed_callback != NULL) {
+        ESP_LOGE(TAG, "%s: Already has a routed callback; overriding", __func__);
+    }
+    packet->routed_callback = callback;
+    packet->routed_callback_data = data;
+}
+
+#if CONFIG_LASTLINK_TABLE_LISTS
+int read_packet_table(packet_info_table_t *table, int table_len)
+{
+    int packets = 0;
+
+    if (packet_lock()) {
+        while (packets < table_len && packets < packet_table_len) {
+            table[packets].address                  = &packet_table[packets];
+            table[packets].ref                      = packet_table[packets].ref;
+            table[packets].radio_num                = packet_table[packets].radio_num;
+            table[packets].length                   = packet_table[packets].length;
+            table[packets].routed_callback          = packet_table[packets].routed_callback != NULL;
+            table[packets].routed_callback_data     = packet_table[packets].routed_callback_data;
+            table[packets].routeto                  = get_uint_field(&packet_table[packets], HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+            table[packets].origin                   = get_uint_field(&packet_table[packets], HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+            table[packets].dest                     = get_uint_field(&packet_table[packets], HEADER_DEST_ADDRESS, ADDRESS_LEN);
+            table[packets].sender                   = get_uint_field(&packet_table[packets], HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+
+            #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+            table[packets].last_referenced_filename = packet_table[packets].last_referenced_filename;
+            table[packets].last_referenced_lineno   = packet_table[packets].last_referenced_lineno;
+            #endif
+
+            ++packets;
+        }
+
+        packet_unlock();
+    }
+
+    return packets;
+}
+
+int get_packet_lock_count(void)
+{
+    return os_get_mutex_count(packet_mutex);
+}
+#endif
 
