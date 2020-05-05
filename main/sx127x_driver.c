@@ -250,24 +250,6 @@ static bool radio_busy(radio_t *radio)
     return (radio->read_register(radio, SX127x_REG_MODEM_STATUS) & SX127x_MODEM_STATUS_HEADER_VALID) != 0;
 }
 
-//  static void wait_if_radio_busy(radio_t *radio, int delay_seed)
-//  {
-//      /* Wait 0 to 50 ms */
-//      int r = ((esp_random() + delay_seed) % 6) * 20 + 50;
-//  ESP_LOGI(TAG, "%s: r wait %d", __func__, r);
-//      os_delay(r);
-//  
-//      uint8_t status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
-//      if ((status & SX127x_MODEM_STATUS_HEADER_VALID) != 0) {
-//          ESP_LOGI(TAG, "************************************ radio %d waiting %02x...", radio->radio_num, status);
-//          while ((radio->read_register(radio, SX127x_REG_MODEM_STATUS) & SX127x_MODEM_STATUS_HEADER_VALID) != 0) {
-//              os_delay(1);
-//              //os_delay(((esp_random() + delay_seed) % 10 + 1) * 50);
-//          }
-//          ESP_LOGI(TAG, "************************************ radio %d finished waiting", radio->radio_num);
-//      }
-//  }
-
 static bool start_packet(radio_t* radio)
 {
     return set_standby_mode(radio)
@@ -318,8 +300,6 @@ ESP_LOGI(TAG, "%s", __func__);
     if (packet != NULL) {
 
         ESP_LOGI(TAG, "%s: modem %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_STATUS));
-
-        os_delay((esp_random() % 4 + 1) * 150);
 
         start_packet(radio);
         write_packet(radio, packet);

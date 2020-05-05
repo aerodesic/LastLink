@@ -23,7 +23,6 @@ typedef struct packet {
     bool             (*routed_callback)(packet_t* packet, void* data);
     void             *routed_callback_data;
 
-    uint8_t          delay_seed;                 /* To allow staggered packet transmission by some algorithm */
     bool             transmitted;                /* TRUE if packet was transmitted (promiscuous mode status) */
     uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int8_t           rssi;                       /* Received signal strength */

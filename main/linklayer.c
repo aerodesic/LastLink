@@ -63,6 +63,13 @@ static const char* default_packet_format(const packet_t* packet);
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
 static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
+static void linklayer_transmit_packet_delayed(os_timer_t timer);
+/* item sent to delay start through timer to actually launch the packet */
+typedef struct {
+    radio_t *radio;
+    packet_t *packet;
+} start_delay_param_t;
+
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
 /* Calls from radio driver to linklayer */
@@ -1207,23 +1214,43 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
-    } else {
-        //char *info;
-        //asprintf(&info, "To Radio %d", radio->radio_num);
-        //linklayer_print_packet(info, packet);
-        //free((void*) info);
-
-        /* Use the source address as a seed to stagger transmission times */
-        packet->delay_seed = linklayer_node_address;
-
-        if (os_put_queue(radio->transmit_queue, packet)) {
-            /* See if the queue was empty */
-            if (os_items_in_queue(radio->transmit_queue) == 1) {
-                /* Start the transmission */
-                radio->transmit_start(radio);
-            }
+    } else if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+        /* Issue delayed start for broadcast packets */
+        start_delay_param_t *sdp = (start_delay_param_t*) malloc(sizeof(start_delay_param_t));
+        if (sdp != NULL) {
+            sdp->packet = packet;
+            sdp->radio = radio;
+            int delay = ((esp_random() + linklayer_node_address) % 5) * 20 + 20;
+            os_timer_t timer = os_create_timer("delay_packet", delay, sdp, linklayer_transmit_packet_delayed);
+            os_start_timer(timer);
+        } else {
+            release_packet(packet);
+            ESP_LOGE(TAG, "%s: unable to allocate delay_param", __func__);
+        }
+    } else if (os_put_queue(radio->transmit_queue, packet)) {
+        /* See if the queue was empty */
+        if (os_items_in_queue(radio->transmit_queue) == 1) {
+            /* Start the transmission */
+            radio->transmit_start(radio);
         }
     }
+}
+
+static void linklayer_transmit_packet_delayed(os_timer_t timer)
+{
+    start_delay_param_t *delay_param = (start_delay_param_t*) os_get_timer_data(timer);
+
+    if (os_put_queue(delay_param->radio->transmit_queue, delay_param->packet)) {
+        if (os_items_in_queue(delay_param->radio->transmit_queue) == 1) {
+            delay_param->radio->transmit_start(delay_param->radio);
+        }
+    } else {
+        ESP_LOGE(TAG, "%s: unable to queue packet", __func__);
+        release_packet(delay_param->packet);
+    }
+
+    free((void*) delay_param);
+    os_delete_timer(timer);
 }
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
