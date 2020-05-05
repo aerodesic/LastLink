@@ -58,9 +58,9 @@
 #define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)
 #define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)
 #define HEADER_PROTOCOL                (HEADER_SENDER_ADDRESS + ADDRESS_LEN)
-/* Throw in 100 extra bytes before TTL */
+/* Throw in some extra bytes before TTL */
   #define HEADER_DUMMY_DATA              (HEADER_PROTOCOL + PROTOCOL_LEN)
-  #define HEADER_DUMMY_LEN               100
+  #define HEADER_DUMMY_LEN               0
   #define HEADER_TTL                     (HEADER_DUMMY_DATA + HEADER_DUMMY_LEN)
 //#define HEADER_TTL                     (HEADER_PROTOCOL + PROTOCOL_LEN)
 #define HEADER_LEN                     (HEADER_TTL + TTL_LEN)

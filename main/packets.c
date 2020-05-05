@@ -193,10 +193,15 @@ packet_t *allocate_packet_plain(void)
                 packet->rssi = 0;
                 packet->crc_ok = false;
 
+#if HEADER_DUMMY_LEN != 0
                 /* Fill in the dummy data */
+                static int dummy_value;
+                extern int linklayer_node_address;
+                dummy_value = ((dummy_value + 1) & 0x0f) + (linklayer_node_address << 4);
                 for (int dummy = 0; dummy < HEADER_DUMMY_LEN; ++dummy) {
-                    packet->buffer[HEADER_DUMMY_DATA + dummy] = dummy + 1;
+                    packet->buffer[HEADER_DUMMY_DATA + dummy] = dummy_value;
                 }
+#endif
                 ++active_packets;
             }
         }
