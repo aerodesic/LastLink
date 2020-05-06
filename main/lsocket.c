@@ -141,6 +141,7 @@ typedef struct ping_table_entry {
     packet_t     *packet;
     os_timer_t   timer;
     int          retries;
+    bool         routed;
     ls_error_t   error;
 } ping_table_entry_t;
 
@@ -281,6 +282,7 @@ static bool pingreply_packet_process(packet_t *packet)
                 /* Look for ping request and deliver packet to process queue */
                 int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN));
                 if (slot >= 0 && ping_table[slot].queue != NULL) {
+                    os_stop_timer(ping_table[slot].timer);
                     os_put_queue(ping_table[slot].queue, ref_packet(packet));
                 }
 
@@ -353,21 +355,28 @@ static packet_t *wait_for_ping_reply(int slot)
 
 static void release_ping_table_entry(int slot)
 {
-    /* Release the table */
-    ping_table[slot].sequence = 0;
+    if (linklayer_lock()) {
 
-    if (ping_table[slot].timer != NULL) {
-        os_stop_timer(ping_table[slot].timer);
-        os_delete_timer(ping_table[slot].timer);
+        if (ping_table[slot].timer != NULL) {
+//            os_stop_timer(ping_table[slot].timer);
+            os_delete_timer(ping_table[slot].timer);
+            ping_table[slot].timer = NULL;
+        }
+
+        if (ping_table[slot].packet != NULL) {
+            release_packet(ping_table[slot].packet);
+        }
+
+        os_delete_queue(ping_table[slot].queue);
+        ping_table[slot].queue = NULL;
+
+        /* Release the table */
+        ping_table[slot].sequence = 0;
+
+        linklayer_unlock();
     }
-
-    if (ping_table[slot].packet != NULL) {
-        release_packet(ping_table[slot].packet);
-    }
-
-    os_delete_queue(ping_table[slot].queue);
-    ping_table[slot].queue = NULL;
 }
+
 
 /*
  * Resend the ping packet for the number of retries allowed
@@ -379,18 +388,21 @@ void ping_retry(os_timer_t timer)
     linklayer_lock();
 
     if (ping_table[slot].timer != NULL) {
-        if (ping_table[slot].timer != NULL && ping_table[slot].retries != 0) {
+        if (ping_table[slot].retries != 0) {
             ping_table[slot].retries--;
 
             /* Retransmit packet */
             linklayer_send_packet(ref_packet(ping_table[slot].packet));
         } else {
+#if 0
             /* Give up */
             os_stop_timer(timer);
             os_delete_timer(timer);
             ping_table[slot].timer = NULL;
+#endif
         
             /* Tell pinger to give up */
+            os_stop_timer(ping_table[slot].timer);
             ping_table[slot].error = LSE_TIMEOUT;
             os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
         }
@@ -403,7 +415,9 @@ void ping_retry(os_timer_t timer)
 /*
  * ping_has_been_routed.
  *
- * Remember the packet in the slot and retry a few times
+ * The original ping is passed to this function in case we need it.
+ *
+ * A NULL packet indicates the route failed.
  */
 static bool ping_has_been_routed(packet_t* packet, void* data)
 {
@@ -417,15 +431,18 @@ static bool ping_has_been_routed(packet_t* packet, void* data)
         /* Create a timer to retry trasmission for a while */
         ping_table[slot].retries = CONFIG_LASTLINK_PING_RETRIES;
         ping_table[slot].timer = os_create_repeating_timer("ping_retry", CONFIG_LASTLINK_PING_RETRY_TIMER, (void*) slot, ping_retry);
+        ping_table[slot].routed = true;
         os_start_timer(ping_table[slot].timer);
 
         /* We are done with it */
         release_packet(packet);
-    } else {
+
+    } else if (ping_table[slot].queue != NULL) {
         /* No route */
         os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
         ping_table[slot].error = LSE_NO_ROUTE;
     }
+
     linklayer_unlock();
 
     /* Allow packet to be sent */
@@ -2339,6 +2356,7 @@ int read_lsocket_ping_table(ping_info_table_t *pings, int max_pings)
             pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
             pings[num_pings].timer = ping_table[num_pings].timer != NULL;
             pings[num_pings].retries = ping_table[num_pings].retries;
+            pings[num_pings].routed = ping_table[num_pings].routed;
             pings[num_pings].error = ping_table[num_pings].error;
 
             ++num_pings;

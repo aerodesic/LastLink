@@ -155,6 +155,7 @@ typedef struct {
     int         to;
     bool        timer;
     int         retries;
+    bool        routed;
     ls_error_t  error;
 } ping_info_table_t;
 

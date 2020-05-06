@@ -63,12 +63,14 @@ static const char* default_packet_format(const packet_t* packet);
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
 static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
+#ifdef NOTUSED
 static void linklayer_transmit_packet_delayed(os_timer_t timer);
 /* item sent to delay start through timer to actually launch the packet */
 typedef struct {
     radio_t *radio;
     packet_t *packet;
 } start_delay_param_t;
+#endif
 
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
@@ -76,7 +78,10 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
 static void linklayer_on_receive(radio_t* radio, packet_t* packet);
 static void linklayer_activity_indicator(radio_t* radio, bool active);
+#if 0
 static packet_t* linklayer_on_transmit(radio_t* radio, bool first_packet);
+#endif
+
 static void reset_device(radio_t* radio);
 
 int                               linklayer_node_address;
@@ -951,7 +956,9 @@ static bool linklayer_init_radio(radio_t* radio)
 {
     radio->attach_interrupt = linklayer_attach_interrupt;
     radio->on_receive = linklayer_on_receive;
+#if 0
     radio->on_transmit = linklayer_on_transmit;
+#endif
     radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
     radio->activity_indicator = linklayer_activity_indicator;
     radio->reset_device = reset_device;
@@ -1002,7 +1009,9 @@ static bool linklayer_deinit_radio(radio_t* radio)
         if (radio->stop == NULL || (ok = radio->stop(radio))) {
            radio->attach_interrupt = NULL;
            radio->on_receive = NULL;
+#if 0
            radio->on_transmit = NULL;
+#endif
            os_delete_queue(radio->transmit_queue);
            radio->transmit_queue = NULL;
            radio->reset_device = NULL;
@@ -1088,6 +1097,8 @@ void linklayer_send_packet(packet_t* packet)
         /* If packet is destined for local address, side-step and just put into receive queue for radio 0 */
         if (get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == linklayer_node_address) {
              set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+             /* Tell caller the packet has been routed */
+             packet_tell_routed_callback(packet, true);
              linklayer_on_receive(radio_table[0], ref_packet(packet));
         } else {
 
@@ -1196,10 +1207,6 @@ linklayer_print_packet("TTL EXPIRED", packet);
  * Put the packet onto the radio send queue.  If the queue now contains one item,
  * activate the send by issuing a send_packet to the radio.
  *
- * When the on_transmit() callback fires, we discard the top packet of the queue
- * and peek to see if the queue has another item.  If so, we return that item
- * for the next transmit action.
- *
  * Entry:
  *      radio           The radio to transmit the packet
  *      packet          The packet to transmit
@@ -1214,6 +1221,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
+#ifdef NOTUSED
     } else if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
         /* Issue delayed start for broadcast packets */
         start_delay_param_t *sdp = (start_delay_param_t*) malloc(sizeof(start_delay_param_t));
@@ -1227,6 +1235,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             release_packet(packet);
             ESP_LOGE(TAG, "%s: unable to allocate delay_param", __func__);
         }
+#endif
     } else if (os_put_queue(radio->transmit_queue, packet)) {
         /* See if the queue was empty */
         if (os_items_in_queue(radio->transmit_queue) == 1) {
@@ -1236,6 +1245,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
     }
 }
 
+#ifdef NOTUSED
 static void linklayer_transmit_packet_delayed(os_timer_t timer)
 {
     start_delay_param_t *delay_param = (start_delay_param_t*) os_get_timer_data(timer);
@@ -1252,6 +1262,7 @@ static void linklayer_transmit_packet_delayed(os_timer_t timer)
     free((void*) delay_param);
     os_delete_timer(timer);
 }
+#endif
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
 {
@@ -1425,6 +1436,7 @@ ESP_LOGI(TAG, "%s: packet crc error; len %d bytesr", __func__, packet->length);
     }
 }
 
+#if 0
 /*
  * linklayer_on_transmit.
  *
@@ -1454,7 +1466,7 @@ static packet_t* linklayer_on_transmit(radio_t* radio, bool first_packet)
     /* Return next packet to send or NULL if no more. */
     return packet;
 }
-
+#endif
 static void linklayer_activity_indicator(radio_t* radio, bool active)
 {
 //ESP_LOGI(TAG, "%s: active %s", __func__, active ? "TRUE" : "FALSE");
@@ -1653,14 +1665,15 @@ void linklayer_print_lsocket_ping_table(FILE* fp, bool all)
         for (int index = 0; index < num_pings; ++index) {
             if (all || pings[index].sequence != 0) {
                 if (! header_printed) {
-                    fprintf(fp, "Sequence  Queue  To    Timer  Retries  Error\n");
+                    fprintf(fp, "Sequence  Queue  To    Timer  Routed Retries  Error\n");
                     header_printed = true;
                 }
-                fprintf(fp, "%-8d  %-5d  %-4d  %-5s  %-7d  %-5d\n",
+                fprintf(fp, "%-8d  %-5d  %-4d  %-5s  %-6s  %-7d  %-5d\n",
                         pings[index].sequence,
                         pings[index].queue,
                         pings[index].to,
                         pings[index].timer ? "YES" : "NO",
+                        pings[index].routed ? "YES" : "NO",
                         pings[index].retries,
                         pings[index].error);
             }

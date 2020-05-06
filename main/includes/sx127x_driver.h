@@ -24,6 +24,8 @@
 #define SX127x_MODE_FS_RX                  0x04
 #define SX127x_MODE_RX_CONTINUOUS          0x05
 #define SX127x_MODE_RX_SINGLE              0x06
+#define SX127x_MODE_CAD_DETECTION          0x07
+#define SX127x_MODE_MASK                   0x07
 /* 0x02 through 0x05 not used */
 #define SX127x_REG_FREQ_MSB             0x06     /* Carrier MSB */
 #define SX127x_REG_FREQ_MID             0x07     /* Carrier Middle */
