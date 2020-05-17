@@ -67,7 +67,7 @@
 
 /* The generic payload part of the packet */
 #define DATA_PAYLOAD                   (HEADER_LEN + 0)
-#define DATA_LEN                       (MAX_PACKET_LEN - HEADER_LEN)
+#define DATA_LEN                       (MAX_USABLE_PACKET_LEN - HEADER_LEN)
 
 packet_t* generic_packet_create(int address, int protocol, int length);
 

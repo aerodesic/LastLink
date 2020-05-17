@@ -21,6 +21,10 @@
 #include "sx127x_driver.h"
 #include "linklayer.h"
 
+#if CONFIG_LASTLINK_CRC16_PACKETS
+#include "crc16.h"
+#endif
+
 #define TAG "sx127x_driver"
 
 static bool radio_stop(radio_t* radio);                              /* Stop and disassemble the radio */
@@ -210,9 +214,19 @@ static void rx_handle_interrupt(radio_t* radio)
         if (packet != NULL) {
 
             if (radio->read_buffer(radio, SX127x_REG_FIFO, packet->buffer, length)) {
+#if CONFIG_LASTLINK_CRC16_PACKETS
+                bool crcok = false;
+                if (length >= 3) {
+                    /* Check the add crc on the packets */
+                    crcok = calc_crc16(CRC16_SEED, packet->buffer, packet->length) == CRC16_SEED;
+                    if (crcok) {
+                       length = length - 2;
+                    }
+                }
+#endif
                 /* Buffer has been read.  Set length */
                 packet->length = length;
-                packet->crc_ok = true;
+                packet->crc_ok = crcok;
                 packet->rssi = get_packet_rssi(radio);
                 packet->snr = get_packet_snr(radio);
                 packet->radio_num = radio->radio_num;
@@ -276,10 +290,25 @@ static bool write_packet(radio_t* radio, packet_t* packet)
         radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0);
     }
 
+#if CONFIG_LASTLINK_CRC16_PACKETS
+    /* Compute crc to add to message.  Can't modify packet as it may be sent more
+     * than one place.  Need to compute and send crc separately.
+     */
+    unsigned short crc = calc_crc16(CRC16_SEED, packet->buffer, packet->length);
+    unsigned char crcbuf[2];
+
+    crcbuf[0] = crc >> 8;
+    crcbuf[1] = crc & 0xFF;
+
     radio->write_buffer(radio, SX127x_REG_FIFO, packet->buffer, packet->length);
+    radio->write_buffer(radio, SX127x_REG_FIFO, crcbuf, sizeof(crcbuf));
 
     /* Set the new length of the payload in process */
+    radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, packet->length + 2);
+#else
+    radio->write_buffer(radio, SX127x_REG_FIFO, packet->buffer, packet->length);
     radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, packet->length);
+#endif
 
     ok = true;
 

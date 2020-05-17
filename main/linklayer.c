@@ -1433,7 +1433,7 @@ dump_buffer("PACKET", (const uint8_t*) packet->buffer, packet->length);
                 }
            }
         } else {
-ESP_LOGI(TAG, "%s: packet crc error; len %d bytesr", __func__, packet->length);
+ESP_LOGI(TAG, "%s: packet crc error; len %d bytes", __func__, packet->length);
             packet_errors_crc++;
         }
 

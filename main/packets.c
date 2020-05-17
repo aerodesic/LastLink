@@ -222,8 +222,8 @@ packet_t *allocate_packet_plain(void)
  */
 packet_t *create_packet_plain(uint8_t* buf, size_t length)
 {
-    if (length > MAX_PACKET_LEN) {
-       length = MAX_PACKET_LEN;
+    if (length > MAX_USABLE_PACKET_LEN) {
+       length = MAX_USABLE_PACKET_LEN;
     }
 
     packet_t *p = allocate_packet();

@@ -167,7 +167,14 @@ menu "LastLink Configuration"
             default 255
             help
                 Warning: Hardware in most cases limits this to 255.
-                Change with caution...
+                Change with caution...  Note that adding CRC will limit
+                the useful payload by 2 bytes.
+
+        config LASTLINK_CRC16_PACKETS
+            bool "Add 2 byte crc16 to packet data payload."
+            default y
+            help
+                "This shortens the useful payload by two bytes."
 
         config LASTLINK_ADDRESS_LENGTH
             int "Length of an address"

@@ -8,6 +8,11 @@
 #include <stdbool.h>
 
 #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
+#if CONFIG_LASTLINK_CRC16_PACKETS
+  #define MAX_USABLE_PACKET_LEN       (MAX_PACKET_LEN - 2)
+#else
+  #define MAX_USABLE_PACKET_LEN       MAX_PACKET_LEN
+#endif
 
 #define UNKNOWN_RADIO        -1
 
