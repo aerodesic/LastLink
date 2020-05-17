@@ -109,37 +109,8 @@ packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
 #define ROUTEREQUEST_LEN               (ROUTEREQUEST_METRIC + METRIC_LEN - HEADER_LEN)
 #define ROUTEREQUEST_PROTOCOL          2
 
-#define NAMELOOKUP_NAME_LEN            16
-
 packet_t* routerequest_packet_create(int address);
 
-/*******************************************************************************************
- *                                                                                         *
- *  Announce node address lookup by name.  Always a directed reply to a broadcast          *
- *  NAME REQUEST                                                                           *
- *                                                                                         *
- *******************************************************************************************/
-#define NAMEANNOUNCE_SEQUENCE          (DATA_PAYLOAD)
-#define NAMEANNOUNCE_NAME              (NAMEANNOUNCE_SEQUENCE + SEQUENCE_NUMBER_LEN)
-#define NAMEANNOUNCE_LEN               (NAMEANNOUNCE_NAME + NAMEANNOUNCE_NAME_LEN - HEADER_LEN)
-
-#define NAMEANNOUNCE_PROTOCOL       3
-
-
-/*******************************************************************************************
- *                                                                                         *
- *  Request port of service by type and name.                                              *
- *                                                                                         *
- *  Can be sent to a speecific node (and will always receive a reply even if none) or to   *
- *  BROADCAST, all nodes having the service will respond with a message.  If none, no      *
- *  responses will be received.                                                            *
- *                                                                                         *
- *******************************************************************************************/
-#define NAMEREQUEST_SEQUENCE           (DATA_PAYLOAD)
-#define NAMEREQUEST_NAME               (NAMEREQUEST_SEQUENCE + SEQUENCE_NUMBER_LEN)
-#define NAMEREQUEST_LEN                (NAMEREQUEST_NAME + NAMELOOKUP_NAME_LEN - HEADER_LEN)
-
-#define NAMEREQUEST_PROTOCOL           4
 
 /*******************************************************************************************
  *                                                                                         *
@@ -151,9 +122,9 @@ packet_t* routerequest_packet_create(int address);
 #define ROUTEERROR_REASON              (ROUTEERROR_SEQUENCE + SEQUENCE_NUMBER_LEN)
 #define ROUTEERROR_LEN                 (ROUTEERROR_REASON + REASON_LEN - HEADER_LEN)
 
-#define ROUTEERROR_PROTOCOL            5
+#define ROUTEERROR_PROTOCOL            3
 
-#define FIRST_DATA_PROTOCOL            6
+#define FIRST_DATA_PROTOCOL            4
 
 packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
 
