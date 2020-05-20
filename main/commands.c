@@ -15,6 +15,7 @@
 #include "configdata.h"
 
 #include "display.h"
+#include "listops.h"
 
 #define TAG "commands"
 
@@ -134,9 +135,9 @@ os_thread_t start_commands(FILE* in, FILE* out)
 
 #define HELP_CMD_FIELD_LEN   30
 
-static void show_help(const char* command, const char *params, const char *description)
+void show_help(const char* name, const char *params, const char *description)
 {
-    printf("%s %-*s %s\n", command, HELP_CMD_FIELD_LEN - strlen(command), params, description);
+    printf("%s %-*s %s\n", name, HELP_CMD_FIELD_LEN - strlen(name), params, description);
 }
 
 typedef struct {
@@ -482,32 +483,6 @@ static int stconnect_command(int argc, const char **argv)
 }
 
 /**********************************************************************/
-/* status                                                             */
-/**********************************************************************/
-static int status_command(int argc, const char **argv)
-{
-    if (argc == 0) {
-        show_help(argv[0], "", "Show system status");
-    } else {
-        bool all = argc > 1 ? strcmp(argv[1], "-a") == 0 : false;
-
-        printf("free packets %d\n", available_packets());
-#if CONFIG_LASTLINK_TABLE_LISTS
-        printf("\nPacket status:\n");
-        linklayer_print_packet_status(stdout, CONFIG_LASTLINK_NUM_PACKETS, all);
-        printf("\nLock status:\n");
-        linklayer_print_lock_status(stdout);
-        printf("\nRoute table:\n");
-        linklayer_print_route_table(stdout, CONFIG_LASTLINK_MAX_ROUTES, all);
-        printf("\nPing table:\n");
-        linklayer_print_lsocket_ping_table(stdout, all);
-#endif
-    }
-
-    return 0;
-}
-
-/**********************************************************************/
 /* contrast <val>                                                     */
 /**********************************************************************/
 static int contrast_command(int argc, const char **argv)
@@ -544,30 +519,42 @@ static int reboot_command(int argc, const char **argv)
     return 0;
 }
 
+typedef struct command_entry command_entry_t;
 typedef struct command_entry {
-    const char*    name;
-    int            (*function)(int argc, const char **argv);
+    command_entry_t *next; 
+    command_entry_t *prev;
+    const char*      name;
+    int              (*function)(int argc, const char **argv);
 } command_entry_t;
 
-static int help_command(int argc, const char **argv);
 
-static command_entry_t  command_table[] = {
-    { .name = "help",       .function = help_command      },
-    { .name = "?",          .function = help_command      },
-    { .name = "contrast",   .function = contrast_command  },
-    { .name = "echo",       .function = echo_command      },
-    { .name = "ping",       .function = ping_command      },
-    { .name = "address",    .function = address_command   },
-    { .name = "loglevel",   .function = loglevel_command  },
-    { .name = "config",     .function = config_command    },
-    { .name = "dglisten",   .function = dglisten_command  },
-    { .name = "dgsend",     .function = dgsend_command    },
-    { .name = "reboot",     .function = reboot_command    },
-    { .name = "stlisten",   .function = stlisten_command  },
-    { .name = "stconnect",  .function = stconnect_command },
-    { .name = "status",     .function = status_command    },
-    { .name = "s",          .function = status_command    },
-};
+static list_head_t     command_table;
+static os_mutex_t      command_lock;
+
+
+static command_entry_t *find_command(const char *name)
+{
+    command_entry_t *command_entry = NULL;
+
+    os_acquire_recursive_mutex(command_lock);
+
+    if (! IS_LIST_EMPTY(&command_table)) {
+        command_entry_t* first = (command_entry_t*) HEAD_OF_LIST(&command_table);
+        command_entry_t* command = first;
+
+        do {
+            if (strcmp(command->name, name) == 0) {
+                command_entry = command;
+            } else {
+                command = command->next;
+            }
+        } while (command_entry == NULL && command != first);
+    }
+
+    os_release_recursive_mutex(command_lock);
+
+    return command_entry;
+}
 
 /**********************************************************************/
 /* help                                                               */
@@ -577,10 +564,20 @@ static int help_command(int argc, const char **argv)
     if (argc == 0) {
         show_help(argv[0], "", "Show help");
     } else {
-        for (int command = 0; command < ELEMENTS_OF(command_table); ++command) {
-            const char *table[2] = { command_table[command].name, NULL };
-            command_table[command].function(0, table);
+        os_acquire_recursive_mutex(command_lock);
+
+        if (! IS_LIST_EMPTY(&command_table)) {
+            command_entry_t* first = (command_entry_t*) HEAD_OF_LIST(&command_table);
+            command_entry_t* command = first;
+
+            do {
+                const char *argv[2] = { command->name, NULL };
+                command->function(0, argv);
+                command = command->next;
+            } while (command != first);
         }
+
+        os_release_recursive_mutex(command_lock);
     }
 
     return 0;
@@ -622,33 +619,25 @@ void CommandProcessor(void* params)
             const char* args[MAX_ARGS];
             int argc = tokenize(buffer, args, MAX_ARGS);
 
-#if 0
-            char *savep;
+            int (*function)(int argc, const char **argv) = NULL;
 
-            args[argc++] = strtok_r(buffer, " ", &savep);
-            
-            while ((argc < MAX_ARGS) && ((args[argc] = strtok_r(NULL, "\"\' ", &savep)) != NULL)) {
-                ++argc;
-            }
-            args[argc] = NULL;
-#endif
+            os_acquire_recursive_mutex(command_lock);
 
-            command_entry_t* command = NULL;
-
-            for (int entry = 0; command == NULL && entry < ELEMENTS_OF(command_table); ++entry) {
-                if (strcmp(args[0], command_table[entry].name) == 0) {
-                    command = &command_table[entry];
-                }
-            }
-
+            command_entry_t *command = find_command(args[0]);
             if (command != NULL) {
-                int rc = command->function(argc, args);
+                function = command->function;
+            }
+            os_release_recursive_mutex(command_lock);
+
+            if (function != NULL) {
+                int rc = (*function)(argc, args);
                 if (rc != 0) {
                      printf("Error: %d\n", rc);
                 }
             } else {
                 printf("Invalid command: %s\n", args[0]);
             }
+
         } else if (len < 0) {
             running = false;
         }
@@ -660,3 +649,79 @@ void CommandProcessor(void* params)
 
     os_exit_thread();
 }
+
+bool add_command(const char* name, int (*function)(int argc, const char **argv))
+{
+    command_entry_t *entry = (command_entry_t*) malloc(sizeof(command_entry_t));
+    if (entry != NULL) {
+        entry->name = name;
+        entry->function = function;
+
+        ADD_TO_LIST(&command_table, entry);
+    }
+
+    return entry != NULL;
+}
+ 
+static void delete_command(command_entry_t *command_entry)
+{
+    if (command_entry != NULL) {
+        /* Remove from list */
+        REMOVE_FROM_LIST(&command_table, command_entry);
+        free((void*) command_entry);
+    }
+}
+
+bool remove_command(const char *name)
+{
+    os_acquire_recursive_mutex(command_lock);
+
+    command_entry_t *command_entry = find_command(name);
+    if (command_entry != NULL) {
+        delete_command(command_entry);
+    }
+    
+    os_release_recursive_mutex(command_lock);
+
+    return command_entry != NULL;
+}
+
+void init_commands(void)
+{
+    command_lock = os_create_recursive_mutex();
+
+    os_acquire_recursive_mutex(command_lock);
+
+    add_command("help",       help_command);
+    add_command("?",          help_command);
+    add_command("contrast",   contrast_command);
+    add_command("echo",       echo_command);
+    add_command("ping",       ping_command);
+    add_command("address",    address_command);
+    add_command("loglevel",   loglevel_command);
+    add_command("config",     config_command);
+    add_command("dglisten",   dglisten_command);
+    add_command("dgsend",     dgsend_command);
+    add_command("reboot",     reboot_command);
+    add_command("stlisten",   stlisten_command);
+    add_command("stconnect",  stconnect_command);
+
+    os_release_recursive_mutex(command_lock);
+}
+
+void deinit_commands(void)
+{
+    os_acquire_recursive_mutex(command_lock);
+
+    while (!IS_LIST_EMPTY(&command_table)) {
+        delete_command((command_entry_t*) HEAD_OF_LIST(&command_table));
+    }
+
+    os_release_recursive_mutex(command_lock);
+
+    os_delete_mutex(command_lock);
+
+    command_lock = NULL;
+}
+
+

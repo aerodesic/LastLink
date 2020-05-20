@@ -86,6 +86,11 @@ void app_main(void)
         /* pass */
     }
 
+
+#if 1 
+    init_commands();
+#endif
+
     display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
     display->contrast(display, get_config_int("display.contrast", 128));
 
@@ -113,12 +118,11 @@ void app_main(void)
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
 
-    linklayer_set_debug(true);
+    // linklayer_set_debug(true);
     linklayer_set_listen_only(get_config_int("lastlink.listen_only", 0));
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
     linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));
-
 #endif
 
 #if 1
@@ -138,6 +142,10 @@ void app_main(void)
     display->draw_text(display, 0, 0, "LastLink %s", VERSION);
 #endif
     
+#if 0
+    wifi_init_softap();
+#endif
+
     os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
     uint64_t starting_tick_count  = get_milliseconds();

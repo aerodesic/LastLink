@@ -72,6 +72,10 @@
 #include "packets.h"
 #include "linklayer.h"
 
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+#include "commands.h"
+#endif
+
 #define TAG "lsocket"
 
 /* PING support */
@@ -152,29 +156,19 @@ static ls_socket_t  socket_table[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 /*
  * Ping packet create
  */
-packet_t *ping_packet_create(int dest)
+packet_t *ping_packet_create(int dest, int ping_sequence)
 {
-    packet_t *packet = linklayer_create_generic_packet(dest, PING_PROTOCOL, PING_LEN);
-
-    if (packet != NULL) {
-        /* Generate sequence number */
-        set_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
-
-#if 0
-        /* Put starting address in the table */
-        set_uint_field(packet, PING_ROUTE_TABLE, ADDRESS_LEN, linklayer_node_address);
-#endif
-    }
+    packet_t* packet = linklayer_create_generic_packet(dest, PING_PROTOCOL, PING_LEN);
+    set_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, ping_sequence);
 
     return packet;
 }
 
 static bool ping_packet_process(packet_t *packet)
 {
-    bool processed = false;
+    bool consumed = false;
 
     if (packet != NULL) {
-//linklayer_print_packet("PING RECEIVED", packet);
 
         if (linklayer_lock()) {
             /* Sanity check - reuse last entry if full */
@@ -185,7 +179,6 @@ static bool ping_packet_process(packet_t *packet)
             /* Add our address to the chain of addresses */
             packet->length += ADDRESS_LEN;
             set_uint_field(packet, packet->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
-            //set_uint_field(packet, packet->length, ADDRESS_LEN, linklayer_node_address);
 
             /* If for us, turn packet into PING_REPLY */
             if (linklayer_packet_is_for_this_node(packet)) {
@@ -198,14 +191,12 @@ static bool ping_packet_process(packet_t *packet)
                 set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
                 set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);   /* Force packet to be routed */
 
-                /* Rewind TTL */
-                set_uint_field(packet, HEADER_TTL, TTL_LEN, TTL_DEFAULT);
-
-//linklayer_print_packet("SEND PING REPLY", packet);
+                /* Rewind Metric */
+                set_uint_field(packet, HEADER_METRIC, METRIC_LEN, 0);
 
                 linklayer_send_packet(ref_packet(packet));
 
-                processed = true;
+                consumed = true;
             }
 
             linklayer_unlock();
@@ -213,10 +204,11 @@ static bool ping_packet_process(packet_t *packet)
         } else {
             /* Cannot get mutex */
         }
+
         release_packet(packet);
     }
 
-    return processed;
+    return consumed;
 }
 
 static const char* ping_format_routes(const packet_t *packet)
@@ -244,10 +236,10 @@ static const char* ping_packet_format(const packet_t *packet)
 {
     char* info;
 
-    int sequence = get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    int sequence = get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
     const char* routes = ping_format_routes(packet);
 
-    asprintf(&info, "Ping: Seq: %d Routes %s", sequence, routes);
+    asprintf(&info, "Ping: Seq %d Routes %s", sequence, routes);
 
     free((void*) routes);
 
@@ -258,10 +250,10 @@ static const char* pingreply_packet_format(const packet_t *packet)
 {
     char* info;
 
-    int sequence = get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+    int sequence = get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
     const char* routes = ping_format_routes(packet);
 
-    asprintf(&info, "Ping Reply: Seq: %d Routes %s", sequence, routes);
+    asprintf(&info, "Ping Reply: Seq %d Routes %s", sequence, routes);
 
     free((void*) routes);
 
@@ -270,17 +262,14 @@ static const char* pingreply_packet_format(const packet_t *packet)
 
 static bool pingreply_packet_process(packet_t *packet)
 {
-    bool processed = false;
+    bool consumed = false;
 
     if (packet != NULL) {
         if (linklayer_lock()) {
 
-//linklayer_print_packet("PING REPLY RECEIVED", packet);
-
-            /* If reply is for us, we do not add our address - but deliver it */
             if (linklayer_packet_is_for_this_node(packet)) {
                 /* Look for ping request and deliver packet to process queue */
-                int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN));
                 if (slot >= 0 && ping_table[slot].queue != NULL) {
                     os_stop_timer(ping_table[slot].timer);
                     os_put_queue(ping_table[slot].queue, ref_packet(packet));
@@ -292,16 +281,11 @@ static bool pingreply_packet_process(packet_t *packet)
                     packet->length = MAX_PACKET_LEN - ADDRESS_LEN;
                 }
 
-                /* Force a reroute */
-                set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS); 
-
                 packet->length += ADDRESS_LEN;
                 set_uint_field(packet, packet->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
-
-                linklayer_send_packet_update_ttl(ref_packet(packet));
             }
 
-            processed = true;
+            consumed = true;
 
             linklayer_unlock();
 
@@ -312,7 +296,7 @@ static bool pingreply_packet_process(packet_t *packet)
         release_packet(packet);
     }
 
-    return processed;
+    return consumed;
 }
 
 static int find_ping_table_entry(int sequence)
@@ -334,7 +318,7 @@ static int register_ping(packet_t *packet)
     if (slot >= 0) {
         /* Remember we are waiting on this sequence return */
         ping_table[slot].queue = os_create_queue(1, sizeof(packet_t*));
-        ping_table[slot].sequence = get_uint_field(packet, PING_SEQUENCE, SEQUENCE_NUMBER_LEN);
+        ping_table[slot].sequence = get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
         ping_table[slot].packet = ref_packet(packet);
         ping_table[slot].error = 0;
     }
@@ -391,7 +375,8 @@ void ping_retry(os_timer_t timer)
         if (ping_table[slot].retries != 0) {
             ping_table[slot].retries--;
 
-            /* Retransmit packet */
+            /* Retransmit packet with new sequence number */
+            set_uint_field(ping_table[slot].packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
             linklayer_send_packet(ref_packet(ping_table[slot].packet));
         } else {
 #if 0
@@ -456,7 +441,9 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen)
 {
     ls_error_t err = 0;
 
-    packet_t *packet = ping_packet_create(address);
+    static int ping_sequence_number;
+
+    packet_t *packet = ping_packet_create(address, ++ping_sequence_number);
 
     if (packet != NULL) {
         linklayer_lock();
@@ -563,8 +550,8 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
 {
     ls_socket_t *socket = NULL;
 
-    ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
-    ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
+    ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN);
+    ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
     int dest_addr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
 printf("find_socket_from_packet: addr %d src port %d dest port %d\n", dest_addr, src_port, dest_port);
@@ -590,7 +577,7 @@ static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
 {
     ls_socket_t *socket = NULL;
 
-    ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN);
+    ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN);
 
     for (int index = 0; socket == NULL && index < ELEMENTS_OF(socket_table); ++index) {
         /* A socket listening on the specified port is all we need */
@@ -609,8 +596,8 @@ static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
                                                            DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
 
     if (new_packet != NULL) {
-        set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN));
-        set_uint_field(new_packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN));
+        set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN));
+        set_uint_field(new_packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN));
     }
 
     return new_packet;
@@ -621,8 +608,8 @@ static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
     packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
 
     if (packet != NULL) {
-        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
-        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, socket->local_port);
+        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->local_port);
     }
 
     return packet;
@@ -659,8 +646,8 @@ static const char* datagram_packet_format(const packet_t *packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + DATAGRAM_PAYLOAD, packet->length - DATAGRAM_PAYLOAD);
 
     asprintf(&info, "Datagram: Src Port %d Dest Port %d \"%s\"",
-            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN),
-            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN),
+            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN),
             data);
 
      free((void*) data);
@@ -674,8 +661,8 @@ static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_
                                                            STREAM_PROTOCOL, STREAM_PAYLOAD);
 
     if (new_packet != NULL) {
-        set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN));
-        set_uint_field(new_packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN));
+        set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN));
+        set_uint_field(new_packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN));
         set_uint_field(new_packet, STREAM_FLAGS, FLAGS_LEN, flags);
     }
 
@@ -687,8 +674,8 @@ static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uin
     packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_PAYLOAD);
 
     if (packet != NULL) {
-        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN, socket->dest_port);
-        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN, socket->local_port);
+        set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->local_port);
         /* The connection sequence number rides on the STREAM sequence number field until data flows */
         set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, socket->serial_number);
         set_uint_field(packet, STREAM_FLAGS, FLAGS_LEN, flags);
@@ -765,7 +752,7 @@ linklayer_print_packet("stream packet", packet);
                             new_connection->serial_number = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
                             new_connection->state = LS_STATE_INBOUND_CONNECT;
                             new_connection->local_port = listen_socket->local_port;
-                            new_connection->dest_port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
+                            new_connection->dest_port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
                             new_connection->dest_addr = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
                             new_connection->parent = listen_socket;
                             new_connection->input_window = allocate_packet_window(CONFIG_LASTLINK_STREAM_WINDOW_SIZE, 0);
@@ -895,8 +882,8 @@ static const char* stream_packet_format(const packet_t *packet)
     const char* data = linklayer_escape_raw_data(packet->buffer + STREAM_PAYLOAD, packet->length - STREAM_PAYLOAD);
 
     asprintf(&info, "Stream: Src Port %d Dest Port %d Ack %d Seq %d Flags %02x \"%s\"",
-            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUM_LEN),
-            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN),
+            get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN),
+            get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN),
             get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN),
             get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN),
             get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN),
@@ -908,94 +895,6 @@ static const char* stream_packet_format(const packet_t *packet)
 }
 
 
-
-/*
- * Initialize ls_socket layer.
- */
-ls_error_t ls_socket_init(void)
-{
-    ls_error_t err = 0;
-
-    /* Register stream and datagram protocols */
-    if (linklayer_register_protocol(PING_PROTOCOL,           ping_packet_process,          ping_packet_format)        &&
-        linklayer_register_protocol(PINGREPLY_PROTOCOL,      pingreply_packet_process,     pingreply_packet_format)   &&
-        linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
-        linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
-
-        /* Create the timer but don't start it */
-        socket_timer = os_create_timer("socket_timer", 5, NULL, socket_timer_scanner);
-
-        esp_vfs_t vfs = {
-            .flags    = ESP_VFS_FLAG_DEFAULT,
-            .read = &ls_read,
-            .write = &ls_write,
-            .open = NULL,
-            .close = &ls_close,
-            .fstat = &ls_fstat,
-            .fcntl = &ls_fcntl,
-            .ioctl = &ls_ioctl_r_wrapper,
-            // 'select' / 'poll' will come later
-            // .socket_select = &lwip_select,
-            // .get_socket_select_semaphore = &lwip_get_socket_select_semaphore,
-            // .stop_socket_select = &lwip_stop_socket_select,
-            // .stop_socket_select_isr = &lwip_stop_socket_select_isr,
-        };
-
-        
-        /* Initialize vfs for socket range */ 
-        err = esp_vfs_register_fd_range(&vfs, NULL, FIRST_LASTLINK_FD, LAST_LASTLINK_FD);
-
-    } else {
-        err = LSE_CANNOT_REGISTER;
-    }
-
-    return err;
-}
-
-ls_error_t ls_socket_deinit(void)
-{
-    linklayer_lock();
-
-    /* Kill socket timer */
-    os_stop_timer(socket_timer);
-    os_delete_timer(socket_timer);
-    socket_timer = NULL;
-
-    /* Purge all waiting pings */
-    for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
-        if (ping_table[ping].sequence != 0) {
-            ping_table[ping].sequence = 0;
-            if (ping_table[ping].queue != NULL) {
-                os_delete_queue(ping_table[ping].queue);
-                ping_table[ping].queue = NULL;
-            }
-        }
-    }
-
-    /* Close all sockets */
-    for (int s = 0; s < ELEMENTS_OF(socket_table); ++s) {
-        (void) release_socket(&socket_table[s]);
-    }
-
-    /* De-register protocols */
-    ls_error_t err = 0;
-
-    /* Register stream and datagram protocols */
-    if (linklayer_unregister_protocol(PING_PROTOCOL)        &&
-        linklayer_unregister_protocol(PINGREPLY_PROTOCOL)   &&
-        linklayer_unregister_protocol(STREAM_PROTOCOL)      &&
-        linklayer_unregister_protocol(DATAGRAM_PROTOCOL)) {
-
-        /* OK */
-
-    } else {
-        err = LSE_CANNOT_REGISTER;
-    }
-
-    linklayer_unlock();
-
-    return err;
-}
 
 static ssize_t release_socket(ls_socket_t* socket)
 {
@@ -1615,7 +1514,7 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
                 *address = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
             }
             if (port != NULL) {
-                *port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUM_LEN);
+                *port = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
             }
             err = packet_data_length;
             release_packet(packet);
@@ -2345,27 +2244,165 @@ static void stop_socket_timer(socket_timer_t *timer)
 }
 
 
-int read_lsocket_ping_table(ping_info_table_t *pings, int max_pings)
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+typedef struct {
+    int         sequence;
+    int         queue;
+    int         to;
+    bool        timer;
+    int         retries;
+    bool        routed;
+    ls_error_t  error;
+} ping_info_table_t;
+
+static int print_lsocket_ping_table(int argc, const char **argv)
 {
-    int num_pings = 0;
+    if (argc == 0) {
+        show_help(argv[0], "[ -a ]", "Show ping table");
+    } else {
+        ping_info_table_t  pings[CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS];
 
-    if (linklayer_lock()) {
-        while (num_pings < CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS && num_pings < max_pings) {
-            pings[num_pings].queue = (ping_table[num_pings].queue != NULL) ? os_items_in_queue(ping_table[num_pings].queue) : -1;
-            pings[num_pings].sequence = ping_table[num_pings].sequence;
-            pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
-            pings[num_pings].timer = ping_table[num_pings].timer != NULL;
-            pings[num_pings].retries = ping_table[num_pings].retries;
-            pings[num_pings].routed = ping_table[num_pings].routed;
-            pings[num_pings].error = ping_table[num_pings].error;
+        int num_pings = 0;
 
-            ++num_pings;
+        if (linklayer_lock()) {
+            while (num_pings < ELEMENTS_OF(pings)) {
+                pings[num_pings].queue = (ping_table[num_pings].queue != NULL) ? os_items_in_queue(ping_table[num_pings].queue) : -1;
+                pings[num_pings].sequence = ping_table[num_pings].sequence;
+                pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
+                pings[num_pings].timer = ping_table[num_pings].timer != NULL;
+                pings[num_pings].retries = ping_table[num_pings].retries;
+                pings[num_pings].routed = ping_table[num_pings].routed;
+                pings[num_pings].error = ping_table[num_pings].error;
+
+                ++num_pings;
+            }
+
+            linklayer_unlock();
         }
 
-        linklayer_unlock();
+        bool all = argc > 1 && strcmp(argv[0], "-a") == 0;
+
+        if (num_pings != 0) {
+            bool header_printed = false;
+
+            for (int index = 0; index < num_pings; ++index) {
+                if (all || pings[index].sequence != 0) {
+                    if (! header_printed) {
+                        printf("Sequence  Queue  To    Timer  Routed Retries  Error\n");
+                        header_printed = true;
+                    }
+                    printf("%-8d  %-5d  %-4d  %-5s  %-6s  %-7d  %-5d\n",
+                            pings[index].sequence,
+                            pings[index].queue,
+                            pings[index].to,
+                            pings[index].timer ? "YES" : "NO",
+                            pings[index].routed ? "YES" : "NO",
+                            pings[index].retries,
+                            pings[index].error);
+                }
+            }
+        }
     }
 
-    return num_pings;
+    return 0;
+}
+#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+
+/*
+ * Initialize ls_socket layer.
+ */
+ls_error_t ls_socket_init(void)
+{
+    ls_error_t err = 0;
+
+    /* Register stream and datagram protocols */
+    if (linklayer_register_protocol(PING_PROTOCOL,           ping_packet_process,          ping_packet_format)        &&
+        linklayer_register_protocol(PINGREPLY_PROTOCOL,      pingreply_packet_process,     pingreply_packet_format)   &&
+        linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
+        linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
+
+        /* Create the timer but don't start it */
+        socket_timer = os_create_timer("socket_timer", 5, NULL, socket_timer_scanner);
+
+        esp_vfs_t vfs = {
+            .flags    = ESP_VFS_FLAG_DEFAULT,
+            .read = &ls_read,
+            .write = &ls_write,
+            .open = NULL,
+            .close = &ls_close,
+            .fstat = &ls_fstat,
+            .fcntl = &ls_fcntl,
+            .ioctl = &ls_ioctl_r_wrapper,
+            // 'select' / 'poll' will come later
+            // .socket_select = &lwip_select,
+            // .get_socket_select_semaphore = &lwip_get_socket_select_semaphore,
+            // .stop_socket_select = &lwip_stop_socket_select,
+            // .stop_socket_select_isr = &lwip_stop_socket_select_isr,
+        };
+
+        
+        /* Initialize vfs for socket range */ 
+        err = esp_vfs_register_fd_range(&vfs, NULL, FIRST_LASTLINK_FD, LAST_LASTLINK_FD);
+
+    } else {
+        err = LSE_CANNOT_REGISTER;
+    }
+
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+    add_command("pt", print_lsocket_ping_table);
+#endif
+
+    return err;
+}
+
+ls_error_t ls_socket_deinit(void)
+{
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+    remove_command("pt");
+#endif
+
+    linklayer_lock();
+
+    /* Kill socket timer */
+    os_stop_timer(socket_timer);
+    os_delete_timer(socket_timer);
+    socket_timer = NULL;
+
+    /* Purge all waiting pings */
+    for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
+        if (ping_table[ping].sequence != 0) {
+            ping_table[ping].sequence = 0;
+            if (ping_table[ping].queue != NULL) {
+                os_delete_queue(ping_table[ping].queue);
+                ping_table[ping].queue = NULL;
+            }
+        }
+    }
+
+    /* Close all sockets */
+    for (int s = 0; s < ELEMENTS_OF(socket_table); ++s) {
+        (void) release_socket(&socket_table[s]);
+    }
+
+    /* De-register protocols */
+    ls_error_t err = 0;
+
+    /* Register stream and datagram protocols */
+    if (linklayer_unregister_protocol(PING_PROTOCOL)        &&
+        linklayer_unregister_protocol(PINGREPLY_PROTOCOL)   &&
+        linklayer_unregister_protocol(STREAM_PROTOCOL)      &&
+        linklayer_unregister_protocol(DATAGRAM_PROTOCOL)) {
+
+        /* OK */
+
+    } else {
+        err = LSE_CANNOT_REGISTER;
+    }
+
+    linklayer_unlock();
+
+
+    return err;
 }
 
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */

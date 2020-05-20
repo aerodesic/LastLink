@@ -231,7 +231,7 @@ static void rx_handle_interrupt(radio_t* radio)
                 packet->snr = get_packet_snr(radio);
                 packet->radio_num = radio->radio_num;
 
-ESP_LOGI(TAG, "%s: packet len %d rssi %d radio %d", __func__, packet->length, packet->rssi, packet->radio_num);
+//ESP_LOGI(TAG, "%s: packet len %d rssi %d radio %d", __func__, packet->length, packet->rssi, packet->radio_num);
 
                 set_standby_mode(radio);
                 set_receive_mode(radio);

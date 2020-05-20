@@ -16,18 +16,17 @@
 /*
  * Pings are always directed to a target node, but routed as all data packets.
  */
-#define PING_SEQUENCE                  (HEADER_LEN + 0)
-#define PING_ROUTE_TABLE               (PING_SEQUENCE + SEQUENCE_NUMBER_LEN)
+#define PING_SEQUENCE_NUMBER           (DATA_PAYLOAD)
+#define PING_ROUTE_TABLE               (PING_SEQUENCE_NUMBER + SEQUENCE_NUMBER_LEN)
 #define PING_LEN                       (PING_ROUTE_TABLE - HEADER_LEN)             /* Length with a no addresses in route table */
 
 #define PING_PROTOCOL                  (FIRST_DATA_PROTOCOL+0)
 
-/* When ping packet is returned, it is simply renamed with PING_REPLY and the return hops are recorded */
 #define PINGREPLY_PROTOCOL             (FIRST_DATA_PROTOCOL+1)
 
-#define DATAGRAM_DEST_PORT             (DATA_PAYLOAD + 0)
-#define DATAGRAM_SRC_PORT              (DATAGRAM_DEST_PORT + PORT_NUM_LEN)
-#define DATAGRAM_HEADER_END            (DATAGRAM_SRC_PORT + PORT_NUM_LEN)
+#define DATAGRAM_DEST_PORT             (DATA_PAYLOAD)
+#define DATAGRAM_SRC_PORT              (DATAGRAM_DEST_PORT + PORT_NUMBER_LEN)
+#define DATAGRAM_HEADER_END            (DATAGRAM_SRC_PORT + PORT_NUMBER_LEN)
 #define DATAGRAM_PAYLOAD               (DATAGRAM_HEADER_END)
 #define DATAGRAM_LEN                   (MAX_PACKET_LEN - DATAGRAM_PAYLOAD)
 

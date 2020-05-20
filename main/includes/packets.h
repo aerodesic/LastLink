@@ -6,6 +6,7 @@
 #ifndef __packets_h_included
 #define __packets_h_included
 #include <stdbool.h>
+#include <unistd.h>
 
 #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 #if CONFIG_LASTLINK_CRC16_PACKETS
@@ -139,27 +140,5 @@ bool packet_lock(void);
 void packet_unlock(void);
 bool packet_tell_routed_callback(packet_t *packet, bool success);
 void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *packet, void* data), void* data);
-
-#if CONFIG_LASTLINK_TABLE_LISTS
-typedef struct {
-    void*         address;
-    int           ref;
-    int           radio_num;
-    int           length;
-    bool          routed_callback;
-    void*         routed_callback_data;
-    int           routeto;
-    int           origin;
-    int           dest;
-    int           sender;
-#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-    const char    *last_referenced_filename;
-    unsigned int  last_referenced_lineno;
-#endif
-} packet_info_table_t;
-
-int read_packet_table(packet_info_table_t* table, int table_len);
-int get_packet_lock_count(void);
-#endif
 
 #endif /* __packets_h_included */

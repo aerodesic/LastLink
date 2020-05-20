@@ -17,6 +17,10 @@
 #include "linklayer.h" /*DEBUG*/
 #include "packets.h"
 
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+#include "commands.h"
+#endif
+
 /* Where freed packets go - where we look first */
 static packet_t          *packet_table;
 static int               packet_table_len;
@@ -28,129 +32,6 @@ static int               dropped_allocations;
 static bool validate_field(const packet_t *p, size_t from, size_t length);
 
 #define TAG     "packets"
-
-/*
- * init_packets
- *
- * Initialize the packet store.
- *
- * Entry:
- *     num_packets     Number of available packets to allocate
- *
- * Returns true if successful.  If false, any partially constructed stuff will have been removed.
- */
-bool init_packets(int num_packets)
-{
-    bool ok = false;
-
-    // ESP_LOGD(TAG, "init_packets: %d", num_packets);
-
-    packet_mutex = os_create_recursive_mutex();
-
-    if (packet_mutex != NULL) {
-        // ESP_LOGD(TAG, "packet_mutex created");
-
-        packet_lock();
-
-        /* Create the bulk table */
-        packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
-        if (packet_table != NULL) {
-            
-            /* Zero the table */
-            memset(packet_table, 0, num_packets * sizeof(packet_t));
-
-            packet_table_len = num_packets;
-            free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
-
-            if (free_packets_queue != NULL) {
-                // ESP_LOGD(TAG, "free_packets_queue created");
-    
-                ok = true;
-
-                int count = 0;
-
-                while(ok && count < num_packets) {
-                    packet_t *p = &packet_table[count];
-                    memset(p, 0, sizeof(packet_t));
-                    p->ref = 1;
-                    p->buffer = (uint8_t*) os_alloc_dma_memory(MAX_PACKET_LEN);
-                    if (p->buffer == NULL) {
-ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
-                        /* Failed */
-                        free((void*) p);
-                        ok = false;
-                    } else {
-//ESP_LOGI(TAG, "%s: Packet %d at %p with buffer %p", __func__, count, p, p->buffer);
-                        release_packet(p);
-                    }
-
-                    ++count;
-                }      
-            } else {
-                ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
-            }
-        } else {
-            ESP_LOGE(TAG, "%s: Unable to allocate packet table", __func__);
-        }
-
-        packet_unlock();
-    }
-
-    if (!ok) {
-        /* Undo failed initialization */
-        deinit_packets();
-    }
-
-    return ok;
-}
-
-/*
- * Deinitialize packet handler.
- *
- * If packets are still outstanding, returns the number other all packets are freed
- * and the semaphore is released.
- *
- * If 0 is returned, all items created by init_packets will have been released.
- */
-int deinit_packets(void)
-{
-    int packets_left = 0;
-
-    if (packet_mutex != NULL) {
-        packet_lock();
-
-        if (free_packets_queue != NULL) {
-
-            if (active_packets != 0) {
-                packets_left = active_packets;
-            } else {
-                /* Release free packets */
-                packet_t* packet;
-                while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
-                    free((void*) packet->buffer);
-                    packet->buffer = NULL;
-                }
-
-                /* Free the bulk store */
-                free((void*) packet_table);
-                packet_table = NULL;
-                packet_table_len = 0;
-            }
-
-            os_delete_queue(free_packets_queue);
-            free_packets_queue = NULL;
-        }
-
-        packet_unlock();
-
-        if (packets_left == 0) {
-            os_delete_mutex(packet_mutex);
-            packet_mutex = NULL;
-        }
-    }
-
-    return packets_left;
-}
 
 /*
  * Validate the from and length fields of packet.
@@ -237,7 +118,17 @@ packet_t *create_packet_plain(uint8_t* buf, size_t length)
 
 packet_t *duplicate_packet_plain(packet_t* packet)
 {
-    return create_packet(packet->buffer, packet->length);
+    packet_t *new_packet = create_packet(packet->buffer, packet->length);
+
+    if (new_packet != NULL) {
+        new_packet->transmitted = packet->transmitted;
+        new_packet->radio_num   = packet->radio_num;
+        new_packet->rssi        = packet->rssi;
+        new_packet->snr         = packet->snr;
+        new_packet->crc_ok      = packet->crc_ok;
+    }
+
+    return new_packet;
 }
 
 bool release_packet_plain(packet_t *packet)
@@ -332,7 +223,7 @@ bool release_packet_debug(const char *filename, int lineno, packet_t *packet)
 
     return ok;
 }
-#endif
+#endif /* CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION */
 
 int available_packets(void)
 {
@@ -524,41 +415,239 @@ void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t* pac
     packet->routed_callback_data = data;
 }
 
-#if CONFIG_LASTLINK_TABLE_LISTS
-int read_packet_table(packet_info_table_t *table, int table_len)
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+typedef struct {
+    void*         address;
+    int           ref;
+    int           radio_num;
+    int           length;
+    bool          routed_callback;
+    void*         routed_callback_data;
+    int           routeto;
+    int           origin;
+    int           dest;
+    int           sender;
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+    const char    *last_referenced_filename;
+    unsigned int  last_referenced_lineno;
+#endif
+} packet_info_table_t;
+
+int print_packet_table(int argc, const char **argv)
 {
-    int packets = 0;
+    if (argc == 0) {
+        show_help(argv[0], "", "Show packet table");
+    } else {
+        int num_packets = 0;
 
-    if (packet_lock()) {
-        while (packets < table_len && packets < packet_table_len) {
-            table[packets].address                  = &packet_table[packets];
-            table[packets].ref                      = packet_table[packets].ref;
-            table[packets].radio_num                = packet_table[packets].radio_num;
-            table[packets].length                   = packet_table[packets].length;
-            table[packets].routed_callback          = packet_table[packets].routed_callback != NULL;
-            table[packets].routed_callback_data     = packet_table[packets].routed_callback_data;
-            table[packets].routeto                  = get_uint_field(&packet_table[packets], HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-            table[packets].origin                   = get_uint_field(&packet_table[packets], HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
-            table[packets].dest                     = get_uint_field(&packet_table[packets], HEADER_DEST_ADDRESS, ADDRESS_LEN);
-            table[packets].sender                   = get_uint_field(&packet_table[packets], HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+        packet_info_table_t table[CONFIG_LASTLINK_NUM_PACKETS];
 
-            #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-            table[packets].last_referenced_filename = packet_table[packets].last_referenced_filename;
-            table[packets].last_referenced_lineno   = packet_table[packets].last_referenced_lineno;
-            #endif
+        if (packet_lock()) {
+            /* Make a static copy of the table */
+            while (num_packets < ELEMENTS_OF(table)) {
+                table[num_packets].address                  = &packet_table[num_packets];
+                table[num_packets].ref                      = packet_table[num_packets].ref;
+                table[num_packets].radio_num                = packet_table[num_packets].radio_num;
+                table[num_packets].length                   = packet_table[num_packets].length;
+                table[num_packets].routed_callback          = packet_table[num_packets].routed_callback != NULL;
+                table[num_packets].routed_callback_data     = packet_table[num_packets].routed_callback_data;
+                table[num_packets].routeto                  = get_uint_field(&packet_table[num_packets], HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+                table[num_packets].origin                   = get_uint_field(&packet_table[num_packets], HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+                table[num_packets].dest                     = get_uint_field(&packet_table[num_packets], HEADER_DEST_ADDRESS, ADDRESS_LEN);
+                table[num_packets].sender                   = get_uint_field(&packet_table[num_packets], HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
-            ++packets;
+                #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+                table[num_packets].last_referenced_filename = packet_table[num_packets].last_referenced_filename;
+                table[num_packets].last_referenced_lineno   = packet_table[num_packets].last_referenced_lineno;
+                #endif
+
+                ++num_packets;
+            }
+
+            packet_unlock();
+        }
+
+        bool all = argc > 1 && strcmp(argv[1], "-a") == 0;
+
+        if (num_packets != 0) {
+            bool header_printed = false;
+
+            for (int index = 0; index < num_packets; ++index) {
+                if (all || table[index].ref != 0) {
+                    if (! header_printed) {
+                        #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+                        printf("Packet      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data     Last Accessed\n");
+                        #else
+                        printf("Packet      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data\n");
+                        #endif
+                        header_printed = true;
+                    }
+                    #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+                    printf("%-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %-10p  %s:%d\n",
+                            table[index].address,
+                            table[index].ref,
+                            table[index].radio_num,
+                            table[index].length,
+                            table[index].routeto,
+                            table[index].origin,
+                            table[index].dest,
+                            table[index].sender,
+                            table[index].routed_callback ? "YES" : "NO",
+                            table[index].routed_callback_data,
+                            table[index].last_referenced_filename,
+                            table[index].last_referenced_lineno);
+                    #else
+                    printf("%-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %p\n",
+                            table[index].address,
+                            table[index].ref,
+                            table[index].radio_num,
+                            table[index].length,
+                            table[index].routeto,
+                            table[index].origin,
+                            table[index].dest,
+                            table[index].sender,
+                            table[index].routed_callback ? "YES" : "NO",
+                            table[index].routed_callback_data);
+                    #endif
+                }
+            }
+        }
+
+        printf("\nPacket lock count: %d\n", os_get_mutex_count(packet_mutex));
+    }
+
+    return 0;
+}
+#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+
+/*
+ * init_packets
+ *
+ * Initialize the packet store.
+ *
+ * Entry:
+ *     num_packets     Number of available packets to allocate
+ *
+ * Returns true if successful.  If false, any partially constructed stuff will have been removed.
+ */
+bool init_packets(int num_packets)
+{
+    bool ok = false;
+
+    // ESP_LOGD(TAG, "init_packets: %d", num_packets);
+
+    packet_mutex = os_create_recursive_mutex();
+
+    if (packet_mutex != NULL) {
+        // ESP_LOGD(TAG, "packet_mutex created");
+
+        packet_lock();
+
+        /* Create the bulk table */
+        packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
+        if (packet_table != NULL) {
+            
+            /* Zero the table */
+            memset(packet_table, 0, num_packets * sizeof(packet_t));
+
+            packet_table_len = num_packets;
+            free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
+
+            if (free_packets_queue != NULL) {
+                // ESP_LOGD(TAG, "free_packets_queue created");
+    
+                ok = true;
+
+                int count = 0;
+
+                while(ok && count < num_packets) {
+                    packet_t *p = &packet_table[count];
+                    memset(p, 0, sizeof(packet_t));
+                    p->ref = 1;
+                    p->buffer = (uint8_t*) os_alloc_dma_memory(MAX_PACKET_LEN);
+                    if (p->buffer == NULL) {
+ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
+                        /* Failed */
+                        free((void*) p);
+                        ok = false;
+                    } else {
+//ESP_LOGI(TAG, "%s: Packet %d at %p with buffer %p", __func__, count, p, p->buffer);
+                        release_packet(p);
+                    }
+
+                    ++count;
+                }      
+            } else {
+                ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
+            }
+        } else {
+            ESP_LOGE(TAG, "%s: Unable to allocate packet table", __func__);
         }
 
         packet_unlock();
     }
 
-    return packets;
+    if (!ok) {
+        /* Undo failed initialization */
+        deinit_packets();
+    } else {
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+        add_command("p", print_packet_table);
+#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+    }
+
+    return ok;
 }
 
-int get_packet_lock_count(void)
+/*
+ * Deinitialize packet handler.
+ *
+ * If packets are still outstanding, returns the number other all packets are freed
+ * and the semaphore is released.
+ *
+ * If 0 is returned, all items created by init_packets will have been released.
+ */
+int deinit_packets(void)
 {
-    return os_get_mutex_count(packet_mutex);
+    int packets_left = 0;
+
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+    remove_command("p");
+#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+
+    if (packet_mutex != NULL) {
+        packet_lock();
+
+        if (free_packets_queue != NULL) {
+
+            if (active_packets != 0) {
+                packets_left = active_packets;
+            } else {
+                /* Release free packets */
+                packet_t* packet;
+                while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
+                    free((void*) packet->buffer);
+                    packet->buffer = NULL;
+                }
+
+                /* Free the bulk store */
+                free((void*) packet_table);
+                packet_table = NULL;
+                packet_table_len = 0;
+            }
+
+            os_delete_queue(free_packets_queue);
+            free_packets_queue = NULL;
+        }
+
+        packet_unlock();
+
+        if (packets_left == 0) {
+            os_delete_mutex(packet_mutex);
+            packet_mutex = NULL;
+        }
+    }
+
+    return packets_left;
 }
-#endif
 

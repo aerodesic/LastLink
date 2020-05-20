@@ -148,18 +148,4 @@ ls_error_t ping(int address, int* routelist, int routelistlen);
  */
 ls_error_t ls_dump_socket(const char* msg, int socket);
 
-#if CONFIG_LASTLINK_TABLE_LISTS
-typedef struct {
-    int         sequence;
-    int         queue;
-    int         to;
-    bool        timer;
-    int         retries;
-    bool        routed;
-    ls_error_t  error;
-} ping_info_table_t;
-
-int read_lsocket_ping_table(ping_info_table_t *table, int max_pings);
-#endif
-
 #endif /* __lsocket_h_include */

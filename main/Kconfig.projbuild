@@ -10,7 +10,7 @@ menu "LastLink Configuration"
 
             The contents of this table is filled from a configuration variable.
 
-    config LASTLINK_TABLE_LISTS
+    config LASTLINK_TABLE_COMMANDS
         bool "Add table lists"
         default y
         help
@@ -42,7 +42,7 @@ menu "LastLink Configuration"
         bool "Enable SX127x Driver"
         default y
 
-    config LINKLAYER_LED_ACTIVITY_GPIO
+    config LASTLINK_LED_ACTIVITY_GPIO
         int "Activity (TRANSMIT) led GPIO"
         default 0
 
@@ -144,6 +144,57 @@ menu "LastLink Configuration"
                 to the SOURCE via the SENDER, marking with invalid
                 SEQUENCE and impossibly high METRIC.
 
+        config LASTLINK_SERVICE_NAME_ENABLE
+            bool "Enable service names"
+            default true
+            help
+                Enable service names.  These are names published by
+                a node that refer to a published service on a specific
+                port type and port number.
+
+        config LASTLINK_SERVICE_NAME_MAX_LEN
+            int "Maximum length of sevice name"
+            default 16
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                The maximum characters in a service name.
+
+        config LASTLINK_SERVICE_NAME_REPLY_TIMEOUT
+            int "Timeout in mS waiting for service reply"
+            default 10000
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                "This is the timeout while waiting for a service name lookup."
+
+        config LASTLINK_SERVICE_NAME_RETRIES
+            int "Number of retries on servicerequest before giving up."
+            default 5
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                "Service request will issue this many retries before giving up."
+
+        config LASTLINK_SERVICE_NAME_ROUTED_TIME
+            int "Timeout if in anti-forward routed state."
+            default 3000
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                "This timeout prevents re-sending already forwarded service requests.
+
+        config LASTLINK_SERVICE_NAME_LIFETIME
+            int "Timeout of a service entry after publishing"
+            default 120000
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                This is the timeout after which a local service name
+                entry will be deleted after received.
+
+        config LASTLINK_SERVICE_NAME_TICK
+            int "Granularity of SERVICE NAME timers."
+            default 500
+            depends on LASTLINK_SERVICE_NAME_ENABLE
+            help
+                How often service name scanning is performed.
+
     endmenu
 
     menu "Packet Configuration"
@@ -225,33 +276,19 @@ menu "LastLink Configuration"
             help
                 The length of a interval field in the packet.
 
-        config LASTLINK_TTL_LENGTH
-            int "Length of a metric field"
-            default 1
-            range 1 4
-            help
-                The length of a ttl (time to live) field in the packet.
-
-        config LASTLINK_TTL_DEFAULT
-            int "Default TTL value"
-            default 64
-            range 1 256
-            help
-                The default value of a ttl (time to live) field in the packet.
-
         config LASTLINK_METRIC_LENGTH
-            int "Length of a metric field"
+            int "Length of a metric field in bytes"
             default 1
             range 1 4
             help
-                The length of a metric field in the packet.
+                The length of a metric field.
 
         config LASTLINK_MAX_METRIC
             int "Maximum value of a metric"
             default 64
             range 1 256
             help
-                The maximum metric value
+                The maximum metric value (distance from origin)
 
         config LASTLINK_BEACON_NAME_LENGTH
            int "Length of name in beacon packet"

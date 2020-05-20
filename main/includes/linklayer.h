@@ -39,31 +39,27 @@
 #define NULL_ADDRESS                   CONFIG_LASTLINK_NULL_ADDRESS
 #define SEQUENCE_NUMBER_LEN            CONFIG_LASTLINK_SEQUENCE_NUMBER_LENGTH
 #define INTERVAL_LEN                   CONFIG_LASTLINK_INTERVAL_LENGTH
-#define MAX_METRIC                     (TTL_DEFAULT+1)
-#define TTL_LEN                        CONFIG_LASTLINK_TTL_LENGTH
-#define TTL_DEFAULT                    CONFIG_LASTLINK_TTL_DEFAULT
+#define MAX_METRIC                     CONFIG_LASTLINK_MAX_METRIC
 #define METRIC_LEN                     CONFIG_LASTLINK_METRIC_LENGTH
 #define BEACON_NAME_LEN                CONFIG_LASTLINK_BEACON_NAME_LENGTH
 #define REASON_LEN                     CONFIG_LASTLINK_REASON_LENGTH
-#define PORT_NUM_LEN                   2
+#define SOCKET_TYPE_LEN                1
+#define PORT_NUMBER_LEN                2
 
 /*******************************************************************************************
  *                                                                                         *
  *  A Header common to all packet types.                                                   *
  *                                                                                         *
  *******************************************************************************************/
-#define HEADER_ROUTETO_ADDRESS         0
-#define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)
-#define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)
-#define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)
-#define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)
-#define HEADER_PROTOCOL                (HEADER_SENDER_ADDRESS + ADDRESS_LEN)
-/* Throw in some extra bytes before TTL */
-  #define HEADER_DUMMY_DATA              (HEADER_PROTOCOL + PROTOCOL_LEN)
-  #define HEADER_DUMMY_LEN               0
-  #define HEADER_TTL                     (HEADER_DUMMY_DATA + HEADER_DUMMY_LEN)
-//#define HEADER_TTL                     (HEADER_PROTOCOL + PROTOCOL_LEN)
-#define HEADER_LEN                     (HEADER_TTL + TTL_LEN)
+#define HEADER_ROUTETO_ADDRESS         0                                              // Node to receive packet
+#define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)         // Flags from origin.
+#define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)                     // Original sender
+#define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)          // Final destination
+#define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)            // Last sender
+#define HEADER_SEQUENCE_NUMBER         (HEADER_SENDER_ADDRESS + ADDRESS_LEN)          // Unique sequence from origin
+#define HEADER_METRIC                  (HEADER_SEQUENCE_NUMBER + SEQUENCE_NUMBER_LEN) // Distance from origin
+#define HEADER_PROTOCOL                (HEADER_METRIC + METRIC_LEN)                   // Protocol ID
+#define HEADER_LEN                     (HEADER_PROTOCOL + PROTOCOL_LEN)               // Length of header
 
 /* The generic payload part of the packet */
 #define DATA_PAYLOAD                   (HEADER_LEN + 0)
@@ -90,12 +86,10 @@ packet_t* beacon_packet_create(const char*name);
  *******************************************************************************************/
 #define ROUTEANNOUNCE_FLAGS            (DATA_PAYLOAD)
 #define    ROUTEANNOUNCE_FLAGS_GATEWAY    = 0x01
-#define ROUTEANNOUNCE_SEQUENCE         (ROUTEANNOUNCE_FLAGS + FLAGS_LEN)
-#define ROUTEANNOUNCE_METRIC           (ROUTEANNOUNCE_SEQUENCE + SEQUENCE_NUMBER_LEN)
-#define ROUTEANNOUNCE_LEN              (ROUTEANNOUNCE_METRIC + METRIC_LEN - HEADER_LEN)
+#define ROUTEANNOUNCE_LEN              (ROUTEANNOUNCE_FLAGS + FLAGS_LEN - HEADER_LEN)
 #define ROUTEANNOUNCE_PROTOCOL         1
 
-packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
+packet_t* routeannounce_packet_create(int dest);
 
 /*******************************************************************************************
  *                                                                                         *
@@ -104,9 +98,7 @@ packet_t* routeannounce_packet_create(int dest, int sequence, int metric);
  *******************************************************************************************/
 #define ROUTEREQUEST_FLAGS             (DATA_PAYLOAD)
 #define    ROUTEREQUEST_FLAGS_GATEWAY     = 0x01
-#define ROUTEREQUEST_SEQUENCE          (ROUTEREQUEST_FLAGS + FLAGS_LEN)
-#define ROUTEREQUEST_METRIC            (ROUTEREQUEST_SEQUENCE + SEQUENCE_NUMBER_LEN)
-#define ROUTEREQUEST_LEN               (ROUTEREQUEST_METRIC + METRIC_LEN - HEADER_LEN)
+#define ROUTEREQUEST_LEN               (ROUTEREQUEST_FLAGS + FLAGS_LEN - HEADER_LEN)
 #define ROUTEREQUEST_PROTOCOL          2
 
 packet_t* routerequest_packet_create(int address);
@@ -118,15 +110,14 @@ packet_t* routerequest_packet_create(int address);
  *                                                                                         *
  *******************************************************************************************/
 #define ROUTEERROR_ADDRESS             (DATA_PAYLOAD)
-#define ROUTEERROR_SEQUENCE            (ROUTEERROR_ADDRESS + ADDRESS_LEN)
-#define ROUTEERROR_REASON              (ROUTEERROR_SEQUENCE + SEQUENCE_NUMBER_LEN)
+#define ROUTEERROR_REASON              (ROUTEERROR_ADDRESS + ADDRESS_LEN)
 #define ROUTEERROR_LEN                 (ROUTEERROR_REASON + REASON_LEN - HEADER_LEN)
 
 #define ROUTEERROR_PROTOCOL            3
 
 #define FIRST_DATA_PROTOCOL            4
 
-packet_t* routeerror_packet_create(int dest, int address, int sequence, const char* reason);
+packet_t* routeerror_packet_create(int dest, int address, const char* reason);
 
 /*************************************************************************
  * This level maintains handles the routing protocol
@@ -204,7 +195,7 @@ bool linklayer_set_debug(bool enable);
 bool linklayer_set_listen_only(bool enabled);
 
 void linklayer_send_packet(packet_t* packet);
-void linklayer_send_packet_update_ttl(packet_t* packet);
+void linklayer_send_packet_update_metric(packet_t* packet);
 
 int linklayer_get_node_address(void);
 void linklayer_print_packet(const char* reason, packet_t* packet);
@@ -227,14 +218,6 @@ bool sx127x_radio(radio_t* radio);
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
 void linklayer_set_receive_only_from(const char* addresses);
-#endif
-
-
-#if CONFIG_LASTLINK_TABLE_LISTS
-void linklayer_print_route_table(FILE *fp, int max_view_route_table, bool all);
-void linklayer_print_packet_status(FILE* fp, int max_packet_info, bool all);
-void linklayer_print_lock_status(FILE* fp);
-void linklayer_print_lsocket_ping_table(FILE* fp, bool all);
 #endif
 
 #endif /* __linklayer_h_included */
