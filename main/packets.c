@@ -103,8 +103,8 @@ packet_t *allocate_packet_plain(void)
  */
 packet_t *create_packet_plain(uint8_t* buf, size_t length)
 {
-    if (length > MAX_USABLE_PACKET_LEN) {
-       length = MAX_USABLE_PACKET_LEN;
+    if (length > MAX_PACKET_LEN) {
+       length = MAX_PACKET_LEN;
     }
 
     packet_t *p = allocate_packet();
@@ -418,6 +418,7 @@ void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t* pac
 #if CONFIG_LASTLINK_TABLE_COMMANDS
 typedef struct {
     void*         address;
+    void*         buffer;
     int           ref;
     int           radio_num;
     int           length;
@@ -446,6 +447,7 @@ int print_packet_table(int argc, const char **argv)
             /* Make a static copy of the table */
             while (num_packets < ELEMENTS_OF(table)) {
                 table[num_packets].address                  = &packet_table[num_packets];
+                table[num_packets].buffer                   = packet_table[num_packets].buffer;
                 table[num_packets].ref                      = packet_table[num_packets].ref;
                 table[num_packets].radio_num                = packet_table[num_packets].radio_num;
                 table[num_packets].length                   = packet_table[num_packets].length;
@@ -476,36 +478,38 @@ int print_packet_table(int argc, const char **argv)
                 if (all || table[index].ref != 0) {
                     if (! header_printed) {
                         #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                        printf("Packet      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data     Last Accessed\n");
+                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data     Last Accessed\n");
                         #else
-                        printf("Packet      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data\n");
+                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data\n");
                         #endif
                         header_printed = true;
                     }
                     #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                    printf("%-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %-10p  %s:%d\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %-10p  %s:%d\n",
                             table[index].address,
+                            table[index].buffer,
                             table[index].ref,
                             table[index].radio_num,
                             table[index].length,
-                            table[index].routeto,
-                            table[index].origin,
-                            table[index].dest,
-                            table[index].sender,
+                            table[index].routeto & 0xFFFF,
+                            table[index].origin & 0xFFFF,
+                            table[index].dest & 0xFFFF,
+                            table[index].sender & 0xFFFF,
                             table[index].routed_callback ? "YES" : "NO",
                             table[index].routed_callback_data,
                             table[index].last_referenced_filename,
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %p\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %p\n",
                             table[index].address,
+                            table[index].buffer,
                             table[index].ref,
                             table[index].radio_num,
                             table[index].length,
-                            table[index].routeto,
-                            table[index].origin,
-                            table[index].dest,
-                            table[index].sender,
+                            table[index].routeto & 0xFFFF,
+                            table[index].origin & 0xFFFF,
+                            table[index].dest & 0xFFFF,
+                            table[index].sender & 0xFFFF,
                             table[index].routed_callback ? "YES" : "NO",
                             table[index].routed_callback_data);
                     #endif

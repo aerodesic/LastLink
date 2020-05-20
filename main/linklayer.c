@@ -960,6 +960,13 @@ void linklayer_send_packet(packet_t* packet)
         /* In listen-only mode, just discard sending packets */
         release_packet(packet);
     } else {
+#if 11111111111
+        int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+        if (dest != BROADCAST_ADDRESS && dest > 6) {
+            linklayer_print_packet("BAD DEST", packet);
+        }
+#endif /* 11111111111 */
+
         /*
          * A packet with a origin and destination is ready to transmit.
          * Label the from address and if no to address, attempt to route
@@ -1252,7 +1259,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                 }
     
                 /* Check for packets arriving with the same sequence number - ignore them */
-                if (!is_duplicate_packet(&duplicate_packets, packet)) {
+                if (is_internal_packet(packet) || !is_duplicate_packet(&duplicate_packets, packet)) {
                     bool consumed = false;
     
                     /* If the packet is for us or routed through us, process it, if it's the first time through */
@@ -1291,8 +1298,8 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                     if (!consumed) {
                         int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
     
-                        /* If not addressed to this node, then send onward by routing or rebroadcasting */
-                        if (routeto != linklayer_node_address) {
+                        /* If routed to this node, then send onward by routing or rebroadcasting */
+                        if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
                             /* re-route if not broadcast */
                             if (routeto != BROADCAST_ADDRESS) {
                                 set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
@@ -1385,7 +1392,11 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
 
     if (buffer != NULL) {
 
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+        ESP_LOGE(TAG, "%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
+#else
         ESP_LOGE(TAG, "%s: (%p) %s", reason, packet, buffer);
+#endif
 
         free((void*) buffer);
 

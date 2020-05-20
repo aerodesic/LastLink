@@ -186,6 +186,9 @@ static bool ping_packet_process(packet_t *packet)
                 /* Alter the protocol */
                 set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, PINGREPLY_PROTOCOL);
 
+                /* Give it a new serial number */
+                set_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+
                 /* Turn the packet around */
                 set_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
                 set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);

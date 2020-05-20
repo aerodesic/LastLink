@@ -223,6 +223,8 @@ static void rx_handle_interrupt(radio_t* radio)
                        length = length - 2;
                     }
                 }
+#else
+                bool crcok = true;
 #endif
                 /* Buffer has been read.  Set length */
                 packet->length = length;

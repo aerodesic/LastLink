@@ -8,11 +8,11 @@
 #include <stdbool.h>
 #include <unistd.h>
 
-#define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 #if CONFIG_LASTLINK_CRC16_PACKETS
-  #define MAX_USABLE_PACKET_LEN       (MAX_PACKET_LEN - 2)
+  /* If CRC enabled, two bytes are taken to support crc transfer */
+  #define MAX_PACKET_LEN       (CONFIG_LASTLINK_MAX_PACKET_LENGTH - 2)
 #else
-  #define MAX_USABLE_PACKET_LEN       MAX_PACKET_LEN
+  #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 #endif
 
 #define UNKNOWN_RADIO        -1

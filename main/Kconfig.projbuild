@@ -164,21 +164,21 @@ menu "LastLink Configuration"
             default 10000
             depends on LASTLINK_SERVICE_NAME_ENABLE
             help
-                "This is the timeout while waiting for a service name lookup."
+                This is the timeout while waiting for a service name lookup.
 
         config LASTLINK_SERVICE_NAME_RETRIES
             int "Number of retries on servicerequest before giving up."
             default 5
             depends on LASTLINK_SERVICE_NAME_ENABLE
             help
-                "Service request will issue this many retries before giving up."
+                Service request will issue this many retries before giving up.
 
         config LASTLINK_SERVICE_NAME_ROUTED_TIME
             int "Timeout if in anti-forward routed state."
             default 3000
             depends on LASTLINK_SERVICE_NAME_ENABLE
             help
-                "This timeout prevents re-sending already forwarded service requests.
+                This timeout prevents re-sending already forwarded service requests.
 
         config LASTLINK_SERVICE_NAME_LIFETIME
             int "Timeout of a service entry after publishing"
@@ -205,6 +205,7 @@ menu "LastLink Configuration"
                 Adds test code in packet allocation and release to
                 determine who the last referenced caller that
                 allocated or released the packet.  
+
         config LASTLINK_NUM_PACKETS
             int "Number of available packets"
             default 10
@@ -225,7 +226,9 @@ menu "LastLink Configuration"
             bool "Add 2 byte crc16 to packet data payload."
             default y
             help
-                "This shortens the useful payload by two bytes."
+                This shortens the useful payload by two bytes at the
+                expense of validating transfers to and from the radio
+                buffers.
 
         config LASTLINK_ADDRESS_LENGTH
             int "Length of an address"
