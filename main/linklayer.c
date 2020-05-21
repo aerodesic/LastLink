@@ -68,12 +68,14 @@ static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
 static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
 
+#ifdef NOTUSED
 static void linklayer_transmit_packet_delayed(os_timer_t timer);
 /* item sent to delay start through timer to actually launch the packet */
 typedef struct {
     radio_t *radio;
     packet_t *packet;
 } start_delay_param_t;
+#endif
 
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
@@ -614,7 +616,7 @@ static const char* routeerror_packet_format(const packet_t* packet)
     int address = get_uint_field(packet, ROUTEERROR_ADDRESS, ADDRESS_LEN);
     const char* reason = get_str_field(packet, ROUTEERROR_REASON, REASON_LEN);
 
-    asprintf(&info, "Route Error: address %x '\"%20.20s\"", address, reason);
+    asprintf(&info, "Route Error: address %x \"%s\"", address, reason);
 
     free((void*) reason);
 
@@ -674,33 +676,37 @@ const char* linklayer_escape_raw_data(const uint8_t* data, size_t length)
     char *outdata = (char*) malloc(outlen + 1);
     if (outdata != NULL) {
         char* outp = outdata;
-        for (const uint8_t* p = data; *p != '\0'; ++p) {
-            if (isprint(*p)) {
-                *outp++ = *p;
-            } else if (*p == '\n') {
+        for (int index = 0; index < length; ++index) {
+            if (isprint(data[index])) {
+                *outp++ = data[index];
+            } else if (data[index] == '\n') {
                 *outp++ = '\\';
                 *outp++ = 'n';
-            } else if (*p == '\r') {
+            } else if (data[index] == '\r') {
                 *outp++ = '\\';
                 *outp++ = 'r';
-            } else if (*p == '\a') {
+            } else if (data[index] == '\a') {
                 *outp++ = '\\';
                 *outp++ = 'a';
-            } else if (*p == '\t') {
+            } else if (data[index] == '\t') {
                 *outp++ = '\\';
                 *outp++ = 't';
-            } else if (*p == '\f') {
+            } else if (data[index] == '\f') {
                 *outp++ = '\\';
                 *outp++ = 'f';
+            } else if (data[index] == '\b') {
+                *outp++ = '\\';
+                *outp++ = 'b';
             } else {
                 *outp++ = '\\';
                 *outp++ = 'x';
-                *outp++ = tohex(*p >> 4);
-                *outp++ = tohex(*p);
+                *outp++ = tohex(data[index] >> 4);
+                *outp++ = tohex(data[index]);
             }
         }
         *outp = '\0';
     }
+
     return outdata;
 }
 
@@ -960,8 +966,9 @@ void linklayer_send_packet(packet_t* packet)
         /* In listen-only mode, just discard sending packets */
         release_packet(packet);
     } else {
-#if 11111111111
         int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+
+#if 11111111111
         if (dest != BROADCAST_ADDRESS && dest > 6) {
             linklayer_print_packet("BAD DEST", packet);
         }
@@ -986,7 +993,7 @@ void linklayer_send_packet(packet_t* packet)
         //}
 
         /* If packet is destined for local address, side-step and just put into receive queue for radio 0 */
-        if (get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == linklayer_node_address) {
+        if (dest == linklayer_node_address) {
              set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, linklayer_node_address);
              /* Tell caller the packet has been routed */
              packet_tell_routed_callback(packet, true);
@@ -1001,9 +1008,11 @@ void linklayer_send_packet(packet_t* packet)
 
             radio_t* radio = NULL;  /* Gets the target radio device address */
 
-            if (routeto == NULL_ADDRESS) {
+            if (dest == BROADCAST_ADDRESS) {
+                /* Route to broadcast as well */
+                set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
 
-                unsigned int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+            } else if (routeto == NULL_ADDRESS) {
 
                 route_table_lock();
 
@@ -1132,6 +1141,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
+#ifdef NOTUSED
     } else if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
         /* Issue delayed start for broadcast packets */
         start_delay_param_t *sdp = (start_delay_param_t*) malloc(sizeof(start_delay_param_t));
@@ -1145,15 +1155,23 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             release_packet(packet);
             ESP_LOGE(TAG, "%s: unable to allocate delay_param", __func__);
         }
-    } else if (os_put_queue(radio->transmit_queue, packet)) {
-        /* See if the queue was empty */
-        if (os_items_in_queue(radio->transmit_queue) == 1) {
-            /* Start the transmission */
-            radio->transmit_start(radio);
+#endif
+    } else {
+        if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+            /* Issue a random delay on each transmit request */
+            packet->delay = true;
+        }
+        if (os_put_queue(radio->transmit_queue, packet)) {
+            /* See if the queue was empty */
+            if (os_items_in_queue(radio->transmit_queue) == 1) {
+                /* Start the transmission */
+                radio->transmit_start(radio);
+            }
         }
     }
 }
 
+#ifdef NOTUSED
 static void linklayer_transmit_packet_delayed(os_timer_t timer)
 {
     start_delay_param_t *delay_param = (start_delay_param_t*) os_get_timer_data(timer);
@@ -1170,6 +1188,7 @@ static void linklayer_transmit_packet_delayed(os_timer_t timer)
     free((void*) delay_param);
     os_delete_timer(timer);
 }
+#endif
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
 {
@@ -1287,10 +1306,14 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                 consumed = protocol_table[protocol].process(ref_packet(packet));
     
                             } else {
-                                ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                                linklayer_print_packet("NOT REGISTERED", packet);
+                                //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                                consumed = true;
                             }
                         } else {
-                            ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
+                            linklayer_print_packet("BAD PROTOCOL", packet);
+                            //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
+                            consumed = true;
                         }
                     } 
 

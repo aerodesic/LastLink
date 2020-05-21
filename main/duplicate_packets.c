@@ -23,22 +23,18 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
 
     bool found = false;
 
-    if (!IS_LIST_EMPTY(list_head)) {
-        duplicate_sequence_t *first = (duplicate_sequence_t *) HEAD_OF_LIST(list_head);
-        duplicate_sequence_t *dupinfo = first;
+    duplicate_sequence_t *dupinfo = (duplicate_sequence_t *) FIRST_LIST_ITEM(list_head);
 
-        do {
-            if (dupinfo->origin == origin) {
-                /* Return true if duplicate */
-                duplicate = dupinfo->sequence == sequence;
-                /* Remember the new one now */
-                dupinfo->sequence = sequence;
-                /* End the search when we find an address match */
-                found = true;
-            } else {
-                dupinfo = dupinfo->next;
-            }
-        } while (!found && dupinfo != first);
+    while (!found && dupinfo != NULL) {
+        if (dupinfo->origin == origin) {
+            /* Return true if duplicate */
+            duplicate = dupinfo->sequence == sequence;
+            /* Remember the new one now */
+            dupinfo->sequence = sequence;
+            /* End the search when we find an address match */
+            found = true;
+        }
+        dupinfo = NEXT_LIST_ITEM(dupinfo, list_head);
     }
 
     if (!found) {

@@ -341,7 +341,9 @@ static void tx_handle_interrupt(radio_t* radio, bool from_interrupt)
 
     if (data->current_packet != NULL) {
 
-        // os_delay((esp_random() % 5 + 1) * 50 );
+        if (data->current_packet->delay) {
+            os_delay((esp_random() % 5 + 1) * 50 );
+        }
 
         uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
         //ESP_LOGI(TAG, "%s: modem %02x", __func__, modem_status);

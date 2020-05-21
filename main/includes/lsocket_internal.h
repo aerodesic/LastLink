@@ -11,6 +11,7 @@
 #include "sdkconfig.h"
 #include "os_freertos.h"
 #include "lsocket.h"
+#include "simpletimer.h"
 
 
 /*
@@ -28,7 +29,8 @@
 #define DATAGRAM_SRC_PORT              (DATAGRAM_DEST_PORT + PORT_NUMBER_LEN)
 #define DATAGRAM_HEADER_END            (DATAGRAM_SRC_PORT + PORT_NUMBER_LEN)
 #define DATAGRAM_PAYLOAD               (DATAGRAM_HEADER_END)
-#define DATAGRAM_LEN                   (MAX_PACKET_LEN - DATAGRAM_PAYLOAD)
+#define DATAGRAM_LEN                   (DATAGRAM_PAYLOAD - HEADER_LEN)
+#define DATAGRAM_MAX_DATA              (MAX_PACKET_LEN - DATAGRAM_PAYLOAD)
 
 #define DATAGRAM_PROTOCOL              (FIRST_DATA_PROTOCOL+2)
 
@@ -54,8 +56,8 @@
 #define ACK_WINDOW_LEN                 ((CONFIG_LASTLINK_STREAM_WINDOW_SIZE + 1)/8)
 #define STREAM_HEADER_END              (STREAM_ACK_WINDOW + ACK_WINDOW_LEN)
 #define STREAM_PAYLOAD                 (STREAM_HEADER_END)
-#define STREAM_LEN                     (MAX_PACKET_LEN - STREAM_PAYLOAD)
-
+#define STREAM_LEN                     (STREAM_PAYLOAD - HEADER_LEN)
+#define STREAM_MAX_DATA                (MAX_PACKET_LEN - STREAM_PAYLOAD)
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
 typedef struct packet_window {
@@ -83,11 +85,6 @@ typedef enum {
 typedef struct ls_socket ls_socket_t;
 typedef struct packet_window packet_window_t;
 
-/* A timer for the socket */
-typedef struct socket_timer {
-    uint64_t    expires;
-} socket_timer_t;
-
 typedef struct ls_socket {
     bool                    inuse;              /* TRUE if socket is opened by user */
     bool                    dead;               /* Failure marks socket as dead */
@@ -99,7 +96,7 @@ typedef struct ls_socket {
     ls_address_t            dest_addr;          /* Destination address of the connection */
     int                     serial_number;      /* Unique serial number */
 
-    socket_timer_t          linger_timer;       /* Performs close after no more users */
+    simpletimer_t           linger_timer;       /* Performs close after no more users */
 
     union {
         /* LISTEN SOCKET INFO */
@@ -118,7 +115,7 @@ typedef struct ls_socket {
            ls_socket_t             *parent;      /* The listening socket number that begat us (if any) */
 
            /* state machine retry stuff */
-           socket_timer_t          state_machine_timer;
+           simpletimer_t           state_machine_timer;
            int                     retries;
            packet_t*               retry_packet;
            os_queue_t              response_queue;
@@ -129,9 +126,9 @@ typedef struct ls_socket {
 
            /* Packet assembly buffers */
            packet_window_t         *input_window;
-           socket_timer_t          output_window_timer;
+           simpletimer_t           output_window_timer;
            packet_window_t         *output_window;
-           socket_timer_t          socket_flush_timer;
+           simpletimer_t           socket_flush_timer;
            packet_t                *current_write_packet;
         };
     };

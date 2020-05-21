@@ -9,6 +9,7 @@
 #include "os_freertos.h"
 #include "sdkconfig.h"
 #include "listops.h"
+#include "simpletimer.h"
 
 #include "packets.h"
 
@@ -27,12 +28,12 @@ typedef struct route {
     int                 metric;               /* Metric (hops) to this destination */
     uint8_t             flags;                /* Misc flags of destination */
     int                 radio_num;            /* Radio number(s) of destination */
-    int                 origin;              /* Address of node providing this route info */
+    int                 origin;               /* Address of node providing this route info */
     int                 sequence;             /* Sequence number of route */
     int                 routeto;              /* Where we send the packet in order to reach the destination */
-    int                 lifetime;             /* Lifetime in milliseconds of this route before it expires */
+    simpletimer_t       lifetime;             /* Lifetime of route */
     os_queue_t          pending_packets;      /* Packets to destination waiting for a route */
-    os_timer_t          pending_timer;        /* Timer for retries to get route */
+    simpletimer_t       pending_timer;        /* Timer to cause retries to fire */
     int                 pending_retries;      /* Number of retries remaining */
 } route_t;
 

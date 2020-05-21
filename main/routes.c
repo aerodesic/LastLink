@@ -13,6 +13,7 @@
 #include "packets.h"
 #include "routes.h"
 #include "listops.h"
+#include "simpletimer.h"
 
 #if CONFIG_LASTLINK_TABLE_COMMANDS
 #include "commands.h"
@@ -22,7 +23,7 @@
 
 static list_head_t         routes;
 static os_mutex_t          routes_lock;
-static os_thread_t         route_expire_thread_id;
+static os_thread_t         route_scanner_thread_id;
 
 bool route_table_lock(void)
 {
@@ -34,36 +35,64 @@ bool route_table_unlock(void)
     return os_release_recursive_mutex(routes_lock);
 }
 
-
-static void update_route_lifetime(route_t* r, int lifetime)
+/*
+ * Called by timer
+ */
+static bool route_request_retry(route_t *route)
 {
-    if (r != NULL) {
-    	route_table_lock();
-        r->lifetime = get_milliseconds() + lifetime;
-	    route_table_unlock();
+    bool deleted = false;
+
+	if (simpletimer_is_expired(&route->pending_timer)) {
+        if (route->pending_retries != 0) {
+            route->pending_retries--;
+
+            simpletimer_restart(&route->pending_timer);
+
+            /* Create a route request and send it */
+            packet_t* packet = routerequest_packet_create(route->dest);
+
+	        linklayer_send_packet(packet);
+
+	    } else {
+            /* No joy, delete the route; will rebuild if necessary */
+            route_delete(route);
+            deleted = true;
+	    }
     }
+
+    return deleted;
 }
 
-static void route_expire_thread(void* param)
+/*
+ * Called by thread
+ */
+static bool check_route_expired(route_t *route)
+{
+    bool deleted = false;
+
+    if (simpletimer_is_expired(&route->lifetime)) {
+ESP_LOGI(TAG, "%s: expiring route for address %d", __func__, route->dest);
+        route_delete(route);
+        deleted = true;
+    }
+
+    return deleted;
+}
+
+static void route_scanner_thread(void* param)
 {
     while (true) {
         if (route_table_lock()) {
-            if (NUM_IN_LIST(&routes) != 0) {
-                route_t* start = (route_t*) HEAD_OF_LIST(&routes);
-                route_t* route = start;
+            route_t *route = (route_t *) FIRST_LIST_ITEM(&routes);
 
-                do {
-                    if (route_is_expired(route)) {
-ESP_LOGI(TAG, "%s: expiring route for address %d", __func__, route->dest);
-                        route_delete(route);
-
-                        /* Stop now, only do one release per cycle */
-                        route = start = NULL;
-                    } else {
-                        route = route->next;
-                    }
-                } while (route != start);
+            while (route != NULL) {
+                 if (route_request_retry(route) || check_route_expired(route)) {
+                     /* End the search if we have deleted something */
+                     route = NULL;
+                 }
+                 route = NEXT_LIST_ITEM(route, &routes);
             }
+
             route_table_unlock();
         }
 
@@ -88,9 +117,9 @@ route_t* create_route(int radio_num, int dest, int metric, int routeto, int orig
 	        r->sequence  = sequence;
 	        r->flags     = flags;
 
-	        update_route_lifetime(r, ROUTE_LIFETIME);
+            simpletimer_start(&r->lifetime, ROUTE_LIFETIME); 
+            simpletimer_stop(&r->pending_timer);
 
-	        r->pending_timer = NULL;
 	        r->pending_retries = 0;
 	        r->pending_packets = NULL;  /* No queue yet.  created when needed */
 
@@ -134,12 +163,7 @@ bool route_delete(route_t* r)
     if (r != NULL) {
         REMOVE_FROM_LIST(&routes, r);
 	    /* Cancel timer */
-        if (r->pending_timer) {
-            ESP_LOGI(TAG, "%s: canceling pending route request", __func__);
-            os_stop_timer(r->pending_timer);
-            os_delete_timer(r->pending_timer);
-            r->pending_timer = NULL;
-        }
+        simpletimer_stop(&r->pending_timer);
 
         if (r->pending_packets != NULL) {
             /* Discard the packets waiting */
@@ -193,7 +217,7 @@ route_t* update_route(int radio_num, int dest, int metric, int routeto, int orig
             r->radio_num  = radio_num;
             r->dest       = dest;
             r->flags      = flags;
-            update_route_lifetime(r, ROUTE_LIFETIME);
+            simpletimer_restart(&r->lifetime);
         }
 
         route_table_unlock();
@@ -224,44 +248,13 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
     return ok;
 }
 
-/*
- * Called by timer
- */
-void route_request_retry(os_timer_t timer)
-{
-    ESP_LOGI(TAG, "%s: timer fired", __func__);
-
-    route_t* r = (route_t*) os_get_timer_data(timer);
-
-    if (r != NULL) {
-        if (route_table_lock()) {
-
-	        if (r->pending_retries != 0) {
-                r->pending_retries--;
-
-                /* Create a route request and send it */
-                packet_t* packet = routerequest_packet_create(r->dest);
-
-	            linklayer_send_packet(packet);
-
-	        } else {
-                /* No joy, delete the route; will rebuild if necessary */
-                route_delete(r);
-	        }
-
-	        route_table_unlock();
-        }
-    }
-}
-
 void route_start_routerequest(route_t* r)
 {
     if (r != NULL) {
         if (route_table_lock()) {
 
             r->pending_retries = ROUTE_REQUEST_RETRIES;
-            r->pending_timer = os_create_repeating_timer("route_timer", ROUTE_REQUEST_TIMEOUT, (void*) r, route_request_retry);
-            os_start_timer(r->pending_timer);
+            simpletimer_start(&r->pending_timer, ROUTE_REQUEST_TIMEOUT);
 
             /* Create a route request and send it */
             packet_t* packet = routerequest_packet_create(r->dest);
@@ -277,12 +270,7 @@ void route_release_packets(route_t* r)
     if (r != NULL) {
         route_table_lock();
 
-	    if (r->pending_timer != NULL) {
-            os_stop_timer(r->pending_timer);
-            os_delete_timer(r->pending_timer);
-	        r->pending_timer = NULL;
-	        r->pending_retries = 0;
-	    }
+        simpletimer_stop(&r->pending_timer);
 
         if (r->pending_packets != NULL) {
 	        /* Move all packets to the send queue */
@@ -312,39 +300,23 @@ void route_release_packets(route_t* r)
     }
 }
 
-bool route_is_expired(route_t* r)
-{
-    bool expired = false;
-
-    if (r != NULL) {
-        if (route_table_lock()) {
-            expired = get_milliseconds() > r->lifetime;
-            route_table_unlock();
-        }
-    }
-
-    return expired;
-}
-
 route_t* find_route(int address)
 {
     route_t* found = NULL;
 
     if (route_table_lock()) {
-        if (NUM_IN_LIST(&routes) != 0) {
-            route_t* start = (route_t*) HEAD_OF_LIST(&routes);
-            route_t* route = start;
+        route_t* route = (route_t*) FIRST_LIST_ITEM(&routes);
 
-            do {
-                if (route->dest == address) {
+        while (found == NULL && route != NULL) {
+            if (route->dest == address) {
 //ESP_LOGI(TAG, "%s: found %d at %d", __func__, address, route->dest);
-                    found = route;
+                found = route;
 
-                    /* Update the expire time */
-	                update_route_lifetime(route, ROUTE_LIFETIME);
-                }
-                route = route->next;
-            } while (!found && route != start);
+                /* Update the expire time */
+                simpletimer_restart(&route->lifetime);
+            }
+
+            route = NEXT_LIST_ITEM(route, &routes);
         }
 
         route_table_unlock();
@@ -368,7 +340,7 @@ typedef struct {
     uint8_t             flags;
     int                 lifetime;
     int                 pending_packets;
-    bool                timer;
+    int                 pending_timer;
     int                 pending_retries;
 } route_table_values_t;
 
@@ -382,36 +354,34 @@ static int print_route_table(int argc, const char **argv)
         route_table_lock();
 
         /* Capture the table contents so we don't slow things down when we print */
-        if (NUM_IN_LIST(&routes) != 0) {
-            route_t* start = (route_t*) HEAD_OF_LIST(&routes);
-            route_t* route = start;
-            int rt_used = 0;
+        route_t* route = (route_t*) FIRST_LIST_ITEM(&routes);
+        int rt_used = 0;
 
-            do {
-                table[rt_used].dest = route->dest;
-                table[rt_used].radio_num = route->radio_num;
-                table[rt_used].origin = route->origin;
-                table[rt_used].sequence = route->sequence;
-                table[rt_used].metric = route->metric;
-                table[rt_used].routeto = route->routeto;
-                table[rt_used].flags = route->flags;
-                table[rt_used].lifetime = route->lifetime - get_milliseconds();
-                table[rt_used].pending_packets = route->pending_packets ? os_items_in_queue(route->pending_packets) : 0;
-                table[rt_used].timer = route->pending_timer != NULL;
-                table[rt_used].pending_retries = route->pending_retries;
+        while (route != NULL) {
+            table[rt_used].dest = route->dest;
+            table[rt_used].radio_num = route->radio_num;
+            table[rt_used].origin = route->origin;
+            table[rt_used].sequence = route->sequence;
+            table[rt_used].metric = route->metric;
+            table[rt_used].routeto = route->routeto;
+            table[rt_used].flags = route->flags;
+            table[rt_used].lifetime = simpletimer_remaining(&route->lifetime),
+            table[rt_used].pending_packets = route->pending_packets ? os_items_in_queue(route->pending_packets) : 0;
+            table[rt_used].pending_timer = simpletimer_remaining(&route->pending_timer);
+            table[rt_used].pending_retries = route->pending_retries;
             
-                route = route->next;
+            ++rt_used;
 
-                ++rt_used;
+            route = NEXT_LIST_ITEM(route, &routes);
+        }
 
-            } while (route != start);
+        route_table_unlock();
 
-            route_table_unlock();
-
+        if (rt_used != 0) {
             printf("Dest  Radio  Source  Sequence  Metric  RouteTo  Flags  Life  Pending  Timer  Retries\n");
 
             for (int index = 0; index < rt_used; ++index) {
-                printf("%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5s  %-d\n",
+                printf("%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5d  %-d\n",
                         table[index].dest,
                         table[index].radio_num,
                         table[index].origin,
@@ -421,7 +391,7 @@ static int print_route_table(int argc, const char **argv)
                         table[index].flags,
                         table[index].lifetime / 1000,
                         table[index].pending_packets,
-                        table[index].timer ? "ON" : "OFF",
+                        table[index].pending_timer / 1000,
                         table[index].pending_retries);
             }
         }
@@ -440,8 +410,8 @@ void route_table_init(void)
     }
 
     /* Start a thread to expire routes when they get too old */
-    if (route_expire_thread_id == NULL) {
-        route_expire_thread_id = os_create_thread(route_expire_thread, "route_expire", 8192, 0, NULL);
+    if (route_scanner_thread_id == NULL) {
+        route_scanner_thread_id = os_create_thread(route_scanner_thread, "route_scanner", 8192, 0, NULL);
     }
 
 #if CONFIG_LASTLINK_TABLE_COMMANDS
@@ -459,14 +429,14 @@ bool route_table_deinit(void)
 
         route_table_lock();
 
-        if (route_expire_thread_id != NULL) {
-            os_delete_thread(route_expire_thread_id);
-            route_expire_thread_id = NULL;
+        if (route_scanner_thread_id != NULL) {
+            os_delete_thread(route_scanner_thread_id);
+            route_scanner_thread_id = NULL;
         }
 
 	    /* Remove all routes */
         while (NUM_IN_LIST(&routes) != 0) {
-            route_delete((route_t*) HEAD_OF_LIST(&routes));
+            route_delete((route_t*) FIRST_LIST_ITEM(&routes));
 	    }
 
 	    route_table_unlock();

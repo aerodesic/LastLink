@@ -315,11 +315,7 @@ const char* get_str_field(const packet_t *p, size_t from, size_t length)
     char* value = NULL;
 
     if (validate_field(p, from, length)) {
-        /* Determine length of field to copy */
-        length = strnlen((char*) p->buffer + from, length);
-        value = (char*) malloc(length + 1);
-        strncpy((char*) value, (char*) p->buffer + from, length);
-        value[length] = '\0';
+        value = strndup((char*) p->buffer + from, length);
     }
 
     return (const char*) value;

@@ -18,40 +18,42 @@ typedef struct list_head {
     int            count;
 } list_head_t;
 
-#define INIT_LIST(listhead)  do { (listhead)->list = NULL; (listhead)->count = 0; } while(0)
+#define INIT_LIST(__listhead)  do { (__listhead)->list = NULL; (__listhead)->count = 0; } while(0)
 
-#define ADD_TO_LIST(listhead, element) \
+#define ADD_TO_LIST(__listhead, __element) \
     do { \
-        if ((listhead)->count != 0) { \
-            *((list_element_t**) &((element)->next))  = (listhead)->list; \
-            *((list_element_t**) &((element)->prev))  = (listhead)->list->prev; \
-            ((listhead)->list)->prev->next            = (list_element_t*) (element); \
-            ((listhead)->list)->prev                  = (list_element_t*) (element); \
+        if ((__listhead)->count != 0) { \
+            *((list_element_t**) &((__element)->next))  = (__listhead)->list; \
+            *((list_element_t**) &((__element)->prev))  = (__listhead)->list->prev; \
+            ((__listhead)->list)->prev->next            = (list_element_t*) (__element); \
+            ((__listhead)->list)->prev                  = (list_element_t*) (__element); \
         } else { \
-            (listhead)->list                          = (list_element_t*) (element); \
-            *((list_element_t**) &((element)->next))  = (list_element_t*) (element); \
-            *((list_element_t**) &((element)->prev))  = (list_element_t*) (element); \
+            (__listhead)->list                          = (list_element_t*) (__element); \
+            *((list_element_t**) &((__element)->next))  = (list_element_t*) (__element); \
+            *((list_element_t**) &((__element)->prev))  = (list_element_t*) (__element); \
         } \
-        (listhead)->count++; \
+        (__listhead)->count++; \
     } while(0);
 
-#define REMOVE_FROM_LIST(listhead, element) \
+#define REMOVE_FROM_LIST(__listhead, __element) \
     do { \
-        *((list_element_t**) &((element)->prev->next)) = (list_element_t*) (element)->next; \
-        *((list_element_t**) &((element)->next->prev)) = (list_element_t*) (element)->prev; \
-        if (-- (listhead)->count == 0) { \
-            (listhead)->list = NULL; \
-        } else if ((listhead)->list == (list_element_t*) (element)) { \
-            (listhead)->list = (listhead)->list->next; \
+        *((list_element_t**) &((__element)->prev->next)) = (list_element_t*) (__element)->next; \
+        *((list_element_t**) &((__element)->next->prev)) = (list_element_t*) (__element)->prev; \
+        if (-- (__listhead)->count == 0) { \
+            (__listhead)->list = NULL; \
+        } else if ((__listhead)->list == (list_element_t*) (__element)) { \
+            (__listhead)->list = (__listhead)->list->next; \
         } \
     } while(0);
 
 
-#define HEAD_OF_LIST(listhead) ((listhead)->list)
+#define FIRST_LIST_ITEM(__listhead) ((__listhead)->list)
 
-#define NUM_IN_LIST(listhead) ((listhead)->count)
+#define NUM_IN_LIST(__listhead) ((__listhead)->count)
 
-#define IS_LIST_EMPTY(listhead) (NUM_IN_LIST(listhead) == 0)
+#define IS_LIST_EMPTY(__listhead) (NUM_IN_LIST(__listhead) == 0)
+
+#define NEXT_LIST_ITEM(__var, __listhead)  ((__var && (list_element_t*) __var->next != FIRST_LIST_ITEM(__listhead)) ? __var->next : NULL)
 
 #endif /* __listops_h_included */
 

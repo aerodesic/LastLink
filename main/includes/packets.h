@@ -29,7 +29,8 @@ typedef struct packet {
     bool             (*routed_callback)(packet_t* packet, void* data);
     void             *routed_callback_data;
 
-    bool             transmitted;                /* TRUE if packet was transmitted (promiscuous mode status) */
+    bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
+    bool             delay;                      /* true if to apply a random delay before sending packet */
     uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int8_t           rssi;                       /* Received signal strength */
     int8_t           snr;                        /* In .1 db */

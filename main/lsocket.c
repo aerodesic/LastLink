@@ -79,6 +79,8 @@
 #define TAG "lsocket"
 
 /* PING support */
+#define PING_RETRY_STACK_SIZE    16000
+
 static const char* ping_packet_format(const packet_t *packet);
 static const char* pingreply_packet_format(const packet_t *packet);
 static bool ping_packet_process(packet_t *packet);
@@ -113,11 +115,10 @@ static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet);
 
 static ssize_t release_socket(ls_socket_t* socket);
 
-static os_timer_t socket_timer;
-static void socket_timer_scanner(os_timer_t);
-static void start_socket_timer(socket_timer_t *timer, int delay);
-static void stop_socket_timer(socket_timer_t *timer);
-static bool socket_timer_check(socket_timer_t *timer, uint64_t current_time, uint32_t *next_time);
+#define SOCKET_SCANNER_STACK_SIZE          16000
+#define SOCKET_SCANNER_DEFAULT_INTERVAL    100
+static os_thread_t socket_scanner_thread_id;
+static void socket_scanner_thread(void*);
 
 static void start_state_machine(ls_socket_t *socket, ls_socket_state_t state, packet_t *packet, int timeout, int retries);
 static void cancel_state_machine(ls_socket_t *socket);
@@ -143,7 +144,8 @@ typedef struct ping_table_entry {
     os_queue_t   queue;
     int          sequence;
     packet_t     *packet;
-    os_timer_t   timer;
+    os_thread_t  thread;
+    bool         waiting;
     int          retries;
     bool         routed;
     ls_error_t   error;
@@ -273,8 +275,10 @@ static bool pingreply_packet_process(packet_t *packet)
             if (linklayer_packet_is_for_this_node(packet)) {
                 /* Look for ping request and deliver packet to process queue */
                 int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN));
-                if (slot >= 0 && ping_table[slot].queue != NULL) {
-                    os_stop_timer(ping_table[slot].timer);
+                if (slot >= 0 && ping_table[slot].queue != NULL && ping_table[slot].waiting) {
+                    os_delete_thread(ping_table[slot].thread);
+                    ping_table[slot].waiting = false;
+                    ping_table[slot].thread = NULL;
                     os_put_queue(ping_table[slot].queue, ref_packet(packet));
                 }
 
@@ -335,6 +339,8 @@ static packet_t *wait_for_ping_reply(int slot)
 
     if (slot >= 0 && slot < ELEMENTS_OF(ping_table)) {
         os_get_queue(ping_table[slot].queue, (os_queue_item_t*) &packet);
+        /* Allow the thread to die */
+        ping_table[slot].waiting = false;
     }
 
     return packet;
@@ -344,10 +350,9 @@ static void release_ping_table_entry(int slot)
 {
     if (linklayer_lock()) {
 
-        if (ping_table[slot].timer != NULL) {
-//            os_stop_timer(ping_table[slot].timer);
-            os_delete_timer(ping_table[slot].timer);
-            ping_table[slot].timer = NULL;
+        if (ping_table[slot].thread != NULL) {
+            os_delete_thread(ping_table[slot].thread);
+            ping_table[slot].thread = NULL;
         }
 
         if (ping_table[slot].packet != NULL) {
@@ -368,35 +373,44 @@ static void release_ping_table_entry(int slot)
 /*
  * Resend the ping packet for the number of retries allowed
  */
-void ping_retry(os_timer_t timer)
+void ping_retry_thread(void* param)
 {
-    int slot = (int) os_get_timer_data(timer);
+    int slot = (int) param;
 
-    linklayer_lock();
+    bool done = false;
 
-    if (ping_table[slot].timer != NULL) {
-        if (ping_table[slot].retries != 0) {
+    do {
+        linklayer_lock();
+
+        if (ping_table[slot].waiting && ping_table[slot].retries != 0) {
+
             ping_table[slot].retries--;
 
             /* Retransmit packet with new sequence number */
             set_uint_field(ping_table[slot].packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
             linklayer_send_packet(ref_packet(ping_table[slot].packet));
-        } else {
-#if 0
-            /* Give up */
-            os_stop_timer(timer);
-            os_delete_timer(timer);
-            ping_table[slot].timer = NULL;
-#endif
-        
-            /* Tell pinger to give up */
-            os_stop_timer(ping_table[slot].timer);
-            ping_table[slot].error = LSE_TIMEOUT;
-            os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
-        }
-    }
 
-    linklayer_unlock();
+        } else {
+            /* Either timed out or was told to quit. */
+            done = true;
+
+            /* If we timed out - return error */
+            if (ping_table[slot].waiting) {
+                ping_table[slot].error = LSE_TIMEOUT;
+                os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
+                ping_table[slot].waiting = false;
+            }
+        }
+
+        linklayer_unlock();
+
+        if (!done) {
+            os_delay(CONFIG_LASTLINK_PING_RETRY_TIMER);
+        }
+
+    } while (!done);
+
+    os_exit_thread();
 }
 
 
@@ -418,9 +432,9 @@ static bool ping_has_been_routed(packet_t* packet, void* data)
     if (packet != NULL) {
         /* Create a timer to retry trasmission for a while */
         ping_table[slot].retries = CONFIG_LASTLINK_PING_RETRIES;
-        ping_table[slot].timer = os_create_repeating_timer("ping_retry", CONFIG_LASTLINK_PING_RETRY_TIMER, (void*) slot, ping_retry);
+        ping_table[slot].waiting = true;
+        ping_table[slot].thread = os_create_thread(ping_retry_thread, "ping_retry", PING_RETRY_STACK_SIZE, 0, (void*) slot);
         ping_table[slot].routed = true;
-        os_start_timer(ping_table[slot].timer);
 
         /* We are done with it */
         release_packet(packet);
@@ -596,7 +610,7 @@ static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
 static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
 {
     packet_t *new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                                           DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
+                                                           DATAGRAM_PROTOCOL, DATAGRAM_LEN);
 
     if (new_packet != NULL) {
         set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN));
@@ -608,7 +622,7 @@ static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
 
 static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
 {
-    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_PAYLOAD);
+    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, DATAGRAM_PROTOCOL, DATAGRAM_LEN);
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
@@ -620,9 +634,9 @@ static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
 
 static bool datagram_packet_process(packet_t *packet)
 {
-    bool processed = false;
+    bool consumed = false;
 
-    if (packet != NULL && linklayer_packet_is_for_this_node(packet)) {
+    if (packet != NULL && (linklayer_packet_is_for_this_node(packet) || get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS)) {
 //ESP_LOGD(TAG, "%s: finding socket for this packet", __func__);
         ls_socket_t *socket = find_socket_from_packet(packet, LS_DATAGRAM);
 
@@ -635,11 +649,11 @@ static bool datagram_packet_process(packet_t *packet)
                 release_packet(packet);
             }
  
-            processed = true;
+            consumed = true;
         }
     }
 
-    return processed;
+    return consumed;
 }
 
 static const char* datagram_packet_format(const packet_t *packet)
@@ -661,7 +675,7 @@ static const char* datagram_packet_format(const packet_t *packet)
 static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_t flags)
 {
     packet_t *new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
-                                                           STREAM_PROTOCOL, STREAM_PAYLOAD);
+                                                           STREAM_PROTOCOL, STREAM_LEN);
 
     if (new_packet != NULL) {
         set_uint_field(new_packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN));
@@ -674,7 +688,7 @@ static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_
 
 static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uint8_t flags)
 {
-    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_PAYLOAD);
+    packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_LEN);
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
@@ -696,7 +710,7 @@ static packet_t *assemble_socket_data(packet_t *packet_to_send, packet_t *packet
 
 static bool stream_packet_process(packet_t *packet)
 {
-    bool processed = false;
+    bool consumed = false;
 
     bool reject = true;
 
@@ -872,10 +886,10 @@ ls_dump_socket_ptr("new connection", new_connection);
                               get_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN));
         }
 
-        processed = true;
+        consumed = true;
     }
 
-    return processed;
+    return consumed;
 }
 
 static const char* stream_packet_format(const packet_t *packet)
@@ -939,9 +953,9 @@ static ssize_t release_socket(ls_socket_t* socket)
                 socket->connections = NULL;
                 socket->socket_type = LS_UNUSED;
             } else {
-                stop_socket_timer(&socket->state_machine_timer);
-                stop_socket_timer(&socket->socket_flush_timer);
-                stop_socket_timer(&socket->output_window_timer);
+                simpletimer_stop(&socket->state_machine_timer);
+                simpletimer_stop(&socket->socket_flush_timer);
+                simpletimer_stop(&socket->output_window_timer);
 
                 /* Otherwise forcibly shut everything down */
                 release_packet_window(socket->input_window);
@@ -1136,7 +1150,7 @@ static void start_state_machine(ls_socket_t *socket, ls_socket_state_t state, pa
     socket->state = state;
     if (timeout != 0) {
         socket->retries = retries;
-        start_socket_timer(&socket->state_machine_timer, timeout);
+        simpletimer_start(&socket->state_machine_timer, timeout);
         socket->retry_packet = ref_packet(packet);
     }
 
@@ -1181,7 +1195,7 @@ static void cancel_state_machine(ls_socket_t *socket)
 {
     socket->retries = 0;
 
-    stop_socket_timer(&socket->state_machine_timer);
+    simpletimer_stop(&socket->state_machine_timer);
 
     release_packet(socket->retry_packet);
     socket->retry_packet = NULL;
@@ -1247,7 +1261,7 @@ static void socket_flush_stream(ls_socket_t *socket)
 {
 //linklayer_print_packet("socketflush", socket->current_write_packet);
 /* Locks needed ? */
-    stop_socket_timer(&socket->socket_flush_timer);
+    simpletimer_stop(&socket->socket_flush_timer);
     assert(socket->output_window != NULL);
 
     if (socket->output_window != NULL) {
@@ -1255,7 +1269,7 @@ static void socket_flush_stream(ls_socket_t *socket)
         release_packet(socket->current_write_packet);
         socket->current_write_packet = NULL;
 ESP_LOGI(TAG, "%s: start output_window_timer", __func__);
-        start_socket_timer(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
+        simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
     }
 }
 
@@ -1264,7 +1278,7 @@ ESP_LOGI(TAG, "%s: start output_window_timer", __func__);
  */
 static void ack_output_window(ls_socket_t *socket, int ack_sequence, unsigned int ack_window)
 {
-    stop_socket_timer(&socket->output_window_timer);
+    simpletimer_stop(&socket->output_window_timer);
 
 ESP_LOGI(TAG, "%s: waiting for output window lock...", __func__);
 
@@ -1279,7 +1293,7 @@ ESP_LOGI(TAG, "%s: released_packet_in_window done...", __func__);
         /* If packets remain in window, start the send_output_window timer again */
         if (socket->output_window->in != 0) {
             socket->output_window->retry_time = 0;
-            start_socket_timer(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME);
+            simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME);
         }
           
         os_release_recursive_mutex(socket->output_window->lock);
@@ -1288,7 +1302,7 @@ ESP_LOGI(TAG, "%s: released_packet_in_window done...", __func__);
 
 static void send_output_window(ls_socket_t *socket)
 {
-    stop_socket_timer(&socket->output_window_timer);
+    simpletimer_stop(&socket->output_window_timer);
 
 ESP_LOGI(TAG, "%s: waiting for window lock", __func__);
 
@@ -1317,7 +1331,7 @@ linklayer_print_packet("sending packet", socket->output_window->slots[slot]);
                 }
 
                 /* Come back in exponential time */
-                start_socket_timer(&socket->output_window_timer, socket->output_window->retry_time);
+                simpletimer_start(&socket->output_window_timer, socket->output_window->retry_time);
 
                 /* Next time wait twice as long */
                 socket->output_window->retry_time <<= 1;
@@ -1342,7 +1356,7 @@ static void socket_linger_check(ls_socket_t* socket)
             (void) release_socket(socket);
         } else {
             /* Look again later */
-            start_socket_timer(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
+            simpletimer_start(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
         }
     }
 }
@@ -1373,8 +1387,8 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
             packet_t *packet = datagram_packet_create_from_socket(socket);
             if (packet != NULL) {
                 int tomove = len;
-                if (tomove > DATAGRAM_LEN) {
-                    tomove = DATAGRAM_LEN;
+                if (tomove > DATAGRAM_MAX_DATA) {
+                    tomove = DATAGRAM_MAX_DATA;
                 }
                 memcpy(packet->buffer + DATAGRAM_PAYLOAD, buf, tomove);
                 packet->length += tomove;
@@ -1430,7 +1444,7 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
                     socket->current_write_packet = NULL;
                 } else {
                     /* Set a timer with CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY to force transmission if nothing else is stored in packet. */
-                    start_socket_timer(&socket->socket_flush_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
+                    simpletimer_start(&socket->socket_flush_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
                 }
             }
             err = written;
@@ -1640,7 +1654,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                         err = get_state_machine_response(socket);
 
                         /* After purged queues finish or a suitable timeout, socket will be cleared */
-                        start_socket_timer(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
+                        simpletimer_start(&socket->linger_timer, CONFIG_LASTLINK_SOCKET_LINGER_TIME);
                     }
                     break;
                 }
@@ -2177,82 +2191,51 @@ ls_error_t ls_dump_socket(const char* msg, int s)
 /* Called by timer to work on the sockets.
  * Rechedules itself when new time interval is needed.
  */
-static void socket_timer_scanner(os_timer_t timer)
+static void socket_scanner_thread(void* param)
 {
-    if (linklayer_lock()) {
-        uint32_t next_time = 0;
-        uint64_t current_time = get_milliseconds();
+    while (true) {
+        uint32_t next_time = SOCKET_SCANNER_DEFAULT_INTERVAL;
 
-        for (int socket_index = 0; socket_index < ELEMENTS_OF(socket_table); ++socket_index) {
-            /* Check the socket timer and fire action is ready */
-            if (socket_timer_check(&socket_table[socket_index].state_machine_timer, current_time, &next_time)) {
+        if (linklayer_lock()) {
+            for (int socket_index = 0; socket_index < ELEMENTS_OF(socket_table); ++socket_index) {
+                /* Check the socket timer and fire action is ready */
+                if (simpletimer_is_expired_or_remaining(&socket_table[socket_index].state_machine_timer, &next_time)) {
 ESP_LOGI(TAG, "%s: state_machine_timer for socket %d fired", __func__, socket_index);
-               state_machine_timeout(&socket_table[socket_index]);
-            }
+                     state_machine_timeout(&socket_table[socket_index]);
+                }
 
-            if (socket_timer_check(&socket_table[socket_index].socket_flush_timer, current_time, &next_time)) {
+                if (simpletimer_is_expired_or_remaining(&socket_table[socket_index].socket_flush_timer, &next_time)) {
 ESP_LOGI(TAG, "%s: socket_flush_timer for socket %d fired", __func__, socket_index);
-                 socket_flush_stream(&socket_table[socket_index]);
-            }
+                     socket_flush_stream(&socket_table[socket_index]);
+                }
 
-            if (socket_timer_check(&socket_table[socket_index].output_window_timer, current_time, &next_time)) {
+                if (simpletimer_is_expired_or_remaining(&socket_table[socket_index].output_window_timer, &next_time)) {
 ESP_LOGI(TAG, "%s: output_window_timer for socket %d fired", __func__, socket_index);
-                 send_output_window(&socket_table[socket_index]);
-            }
+                     send_output_window(&socket_table[socket_index]);
+                }
 
-            if (socket_timer_check(&socket_table[socket_index].linger_timer, current_time, &next_time)) {
+                if (simpletimer_is_expired_or_remaining(&socket_table[socket_index].linger_timer, &next_time)) {
 ESP_LOGI(TAG, "%s: linger_timer for socket %d fired", __func__, socket_index);
-                 socket_linger_check(&socket_table[socket_index]);
+                     socket_linger_check(&socket_table[socket_index]);
+                }
             }
+
+            linklayer_unlock();
         }
 
-        if (next_time != 0) {
-            /* Set delay to next trigger */
-            os_set_timer(socket_timer, next_time);
-            /* And start it */
-            os_start_timer(socket_timer);
-        }
-
-        linklayer_unlock();
+        os_delay(next_time);
     }
 }
 
-static bool socket_timer_check(socket_timer_t *timer, uint64_t current_time, uint32_t *next_time)
-{
-    bool fired = timer->expires != 0 && current_time >= timer->expires;
-
-    /* If it didn't fire, calculate next time to fire */
-    if (!fired) {
-        uint32_t time_to_fire = timer->expires - current_time;
-        if (*next_time == 0 || time_to_fire < *next_time) {
-            *next_time = time_to_fire;
-        }
-    } 
-
-    return fired;
-}
-
-static void start_socket_timer(socket_timer_t *timer, int delay)
-{
-    timer->expires = delay + get_milliseconds();
-
-    /* Force a scan to reschedule */
-    os_set_timer(socket_timer, 1);
-    os_start_timer(socket_timer);
-}
-
-static void stop_socket_timer(socket_timer_t *timer)
-{
-    timer->expires = 0;
-}
-
-
+/*
+ * User interface commands.
+ */
 #if CONFIG_LASTLINK_TABLE_COMMANDS
 typedef struct {
-    int         sequence;
     int         queue;
+    int         sequence;
     int         to;
-    bool        timer;
+    bool        thread;
     int         retries;
     bool        routed;
     ls_error_t  error;
@@ -2272,7 +2255,7 @@ static int print_lsocket_ping_table(int argc, const char **argv)
                 pings[num_pings].queue = (ping_table[num_pings].queue != NULL) ? os_items_in_queue(ping_table[num_pings].queue) : -1;
                 pings[num_pings].sequence = ping_table[num_pings].sequence;
                 pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
-                pings[num_pings].timer = ping_table[num_pings].timer != NULL;
+                pings[num_pings].thread = ping_table[num_pings].thread != NULL;
                 pings[num_pings].retries = ping_table[num_pings].retries;
                 pings[num_pings].routed = ping_table[num_pings].routed;
                 pings[num_pings].error = ping_table[num_pings].error;
@@ -2291,14 +2274,14 @@ static int print_lsocket_ping_table(int argc, const char **argv)
             for (int index = 0; index < num_pings; ++index) {
                 if (all || pings[index].sequence != 0) {
                     if (! header_printed) {
-                        printf("Sequence  Queue  To    Timer  Routed Retries  Error\n");
+                        printf("Sequence  Queue  To    Thread  Routed  Retries  Error\n");
                         header_printed = true;
                     }
-                    printf("%-8d  %-5d  %-4d  %-5s  %-6s  %-7d  %-5d\n",
+                    printf("%-8d  %-5d  %-4d  %-6s  %-6s  %-7d  %-5d\n",
                             pings[index].sequence,
                             pings[index].queue,
                             pings[index].to,
-                            pings[index].timer ? "YES" : "NO",
+                            pings[index].thread ? "YES" : "NO",
                             pings[index].routed ? "YES" : "NO",
                             pings[index].retries,
                             pings[index].error);
@@ -2309,6 +2292,196 @@ static int print_lsocket_ping_table(int argc, const char **argv)
 
     return 0;
 }
+
+/*
+ * Absorb all characters in queue looking for match with testch.
+ * Return true if one seen.
+ */
+static bool hit_test(int testch)
+{
+    bool found = false;
+    int ch;
+
+    while ((ch = getchar()) >= 0) {
+        if (ch == testch) {
+            found = true;
+        }
+    }
+        
+    return found;
+}
+    
+/**********************************************************************/
+/* dglisten <port>                                                    */
+/**********************************************************************/
+static int dglisten_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<port>", "Listen for datagrams on <port>");
+    } else if (argc > 1) {
+        int port = strtol(argv[1], NULL, 10);
+        int socket = ls_socket(LS_DATAGRAM);
+        if (socket >= 0) {
+            printf("listening socket %d port %d...\n", socket, port);
+            int ret = ls_bind(socket, port);
+            if (ret >= 0) {
+                /* Accept packets from any */
+                ret = ls_connect(socket, NULL_ADDRESS, 0);
+                if (ret == LSE_NO_ERROR) {
+                    ls_dump_socket("receiving", socket);
+                    while (!hit_test('\x03')) {
+                        char buf[200];
+                        int address;
+
+                        int len = ls_read_with_address(socket, buf, sizeof(buf), &address, &port, 50);
+                        if (len >= 0) {
+                            buf[len] = '\0';
+                            printf("Data from %d/%d len %d: '%s'\n", address, port, len, buf);
+                        } else if (len != LSE_TIMEOUT) {
+                            printf("ls_read returned %d\n", len);
+                        }
+                    }
+                } else {
+                    printf("ls_connect returned %d\n", ret);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
+/* dgsend <address> <port> <data>                                     */
+/**********************************************************************/
+static int dgsend_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<address> <port> <data>", "Send datagram <data> to <port> on <address>");
+    } else if (argc >= 4) {
+        int address = strtol(argv[1], NULL, 10);
+        int port = strtol(argv[2], NULL, 10);
+        printf("Sending '%s' to %d/%d\n", argv[3], address, port);
+        int socket = ls_socket(LS_DATAGRAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, 0);
+            if (ret >= 0) {
+                ret = ls_connect(socket, address, port);
+                ls_dump_socket("sending", socket);
+                if (ret >= 0) {
+                    ret = ls_write(socket, argv[3], strlen(argv[3]));
+                    printf("ls_write returned %d\n", ret);
+                } else {
+                    printf("ls_connect returned %d\n", ret);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
+/* stlisten <port>                                                    */
+/**********************************************************************/
+static int stlisten_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<port>", "Listen for stream connection on <port>");
+    } else if (argc > 1) {
+        int port = strtol(argv[1], NULL, 10);
+        int socket = ls_socket(LS_STREAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, port);
+            if (ret >= 0) {
+                /* Accept packets from any */
+                bool done = false;
+                printf("listening socket %d port %d...\n", socket, port);
+                do {
+                    int connection = ls_listen(socket, 5, 50);
+                    if (connection >= 0) {
+                        printf("got connection on %d\n", connection);
+                        char buffer[80];
+                        int len;
+                        while ((len = ls_read(connection, buffer, sizeof(buffer))) > 0) {
+                            fwrite(buffer, len, 1, stdout);
+                        }
+                        printf("--end--\n");
+                        ls_close(connection);
+                        done = hit_test('\x03');
+                    } else if (connection != LSE_TIMEOUT) {
+                        printf("ls_listen returned %d\n", ret);
+                        done = true;
+                    }
+                } while (!done);
+                ls_close(socket);
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
+/* stconnect <address> <port>                                         */
+/**********************************************************************/
+static int stconnect_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<address> <port>", "Connect to stream <port> on <address>");
+    } else if (argc >= 4) {
+        int address = strtol(argv[1], NULL, 10);
+        int port = strtol(argv[2], NULL, 10);
+
+        int socket = ls_socket(LS_STREAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, 0);
+            if (ret >= 0) {
+                ret = ls_connect(socket, address, port);
+                ls_dump_socket("sending", socket);
+                if (ret >= 0) {
+                    for (int line = 1; line <= 10; ++line) {
+                        char buffer[80];
+                        sprintf(buffer, "%s: line %d\n", argv[3], line);
+                        ret = ls_write(socket, argv[3], strlen(argv[3]));
+                        printf("ls_write returned %d\n", ret);
+                    }
+                } else {
+                    printf("ls_connect returned %d\n", ret);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
 #endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
 
 /*
@@ -2324,8 +2497,8 @@ ls_error_t ls_socket_init(void)
         linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
         linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
 
-        /* Create the timer but don't start it */
-        socket_timer = os_create_timer("socket_timer", 5, NULL, socket_timer_scanner);
+        /* Create the socket_scanner thread */
+        socket_scanner_thread_id = os_create_thread(socket_scanner_thread, "socket_scanner", SOCKET_SCANNER_STACK_SIZE, 0, NULL);
 
         esp_vfs_t vfs = {
             .flags    = ESP_VFS_FLAG_DEFAULT,
@@ -2352,24 +2525,30 @@ ls_error_t ls_socket_init(void)
     }
 
 #if CONFIG_LASTLINK_TABLE_COMMANDS
+    add_command("dglisten",   dglisten_command);
+    add_command("dgsend",     dgsend_command);
+    add_command("stlisten",   stlisten_command);
+    add_command("stconnect",  stconnect_command);
     add_command("pt", print_lsocket_ping_table);
 #endif
 
     return err;
 }
-
 ls_error_t ls_socket_deinit(void)
 {
 #if CONFIG_LASTLINK_TABLE_COMMANDS
+    remove_command("dglisten");
+    remove_command("dgsend");
+    remove_command("stlisten");
+    remove_command("stconnect");
     remove_command("pt");
 #endif
 
     linklayer_lock();
 
-    /* Kill socket timer */
-    os_stop_timer(socket_timer);
-    os_delete_timer(socket_timer);
-    socket_timer = NULL;
+    /* Kill socket scanner */
+    os_delete_thread(socket_scanner_thread_id);
+    socket_scanner_thread_id = NULL;
 
     /* Purge all waiting pings */
     for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
