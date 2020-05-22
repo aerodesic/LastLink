@@ -383,20 +383,21 @@ static int tasks_command(int argc, const char **argv)
             uint32_t ulTotalRunTime;
 
             /* Generate raw status information about each task. */
-            uxArraySize = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalRunTime );
+            BaseType_t num_tasks = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalRunTime );
      
             /* For each populated position in the pxTaskStatusArray array,
             format the raw data as human readable ASCII data. */
-            printf("Task Name         Runtime  State      Priority  High Stack\n");
-            for( size_t x = 0; x < uxArraySize; x++ ) {
+            printf("\nTask Name         Runtime  State      Priority  Cpu  High Stack\n");
+            for( size_t x = 0; x < num_tasks; x++ ) {
                 char runtime[20];
                 sprintf(runtime, "%u.%u", pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 1000, (pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 100) % 10);
 
-                printf("%-16s  %-7s %-9s  %-8u  %-5d\n",
+                printf("%-16s  %-7s  %-9s  %-8u  %-3d  %-5d\n",
                        pxTaskStatusArray[x].pcTaskName,
                        runtime,
                        task_state(pxTaskStatusArray[x].eCurrentState),
                        pxTaskStatusArray[x].uxCurrentPriority,
+                       pxTaskStatusArray[x].xCoreID > 32 ? -1 : pxTaskStatusArray[x].xCoreID,
                        pxTaskStatusArray[x].usStackHighWaterMark);
             }
         }
@@ -447,10 +448,13 @@ void CommandProcessor(void* params)
 
             os_acquire_recursive_mutex(command_lock);
 
-            command_entry_t *command = find_command(args[0]);
-            if (command != NULL) {
-                function = command->function;
+            if (argc > 0) {
+                command_entry_t *command = find_command(args[0]);
+                if (command != NULL) {
+                    function = command->function;
+                }
             }
+
             os_release_recursive_mutex(command_lock);
 
             if (function != NULL) {
@@ -458,7 +462,7 @@ void CommandProcessor(void* params)
                 if (rc != 0) {
                      printf("Error: %d\n", rc);
                 }
-            } else {
+            } else if (argc > 0) {
                 printf("Invalid command: %s\n", args[0]);
             }
 
