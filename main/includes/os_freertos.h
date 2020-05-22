@@ -87,7 +87,7 @@ bool os_exit_thread(void);
 /* Allocate DMA compatible memory */
 void* os_alloc_dma_memory(size_t size);
 
-void os_delay(int ms);
+bool os_delay(int ms);
 
 bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup, gpio_pulldown_t pulldown, void (*handler)(void*), void* param);
 

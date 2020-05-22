@@ -148,6 +148,7 @@ typedef struct radio_config {
     int delay;
     int dios[MAX_DIOS];
     int reset;
+    int transmit_delay;
     union {
        struct {
          int spi_host;

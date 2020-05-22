@@ -67,6 +67,10 @@ bool io_init(radio_t* radio, const radio_config_t* config)
 {
     bool ret;
 
+    /* Copy fields to be accessable by radio */
+    radio->transmit_delay = config->transmit_delay;
+
+    /* Do specific I/O initialization */
     if (strcmp(config->type, "spi") == 0) {
         ret = spi_init(radio, config);
     } else {
@@ -204,7 +208,7 @@ static int spi_read_register(radio_t* radio, int reg)
 
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
-#ifndef BROKEN_CODE_HERE_SOMEWHERE
+#ifdef BROKEN_CODE_HERE_SOMEWHERE
     spi_transaction_t t;
 
 ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);

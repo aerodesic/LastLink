@@ -23,6 +23,7 @@
 
 /* Where freed packets go - where we look first */
 static packet_t          *packet_table;
+static uint8_t           *dma_buffers;
 static int               packet_table_len;
 static os_queue_t        free_packets_queue;
 static os_mutex_t        packet_mutex;
@@ -67,22 +68,20 @@ packet_t *allocate_packet_plain(void)
 
             /* Check for the impossible... */
             if (packet != NULL) {
-                memset(packet->buffer, 0, MAX_PACKET_LEN);
+
+                if (packet->ref != 0) { 
+                    ESP_LOGE(TAG, "%s: ref not zero: %d", __func__, packet->ref);
+                }
+
+                memset(packet->buffer, 0, MAX_PHYSICAL_PACKET_LEN);
                 packet->length = 0;
+                packet->transmitted = false;
+                packet->delay = false;
                 packet->ref = 1;
                 packet->radio_num = UNKNOWN_RADIO;
                 packet->rssi = 0;
                 packet->crc_ok = false;
 
-#if HEADER_DUMMY_LEN != 0
-                /* Fill in the dummy data */
-                static int dummy_value;
-                extern int linklayer_node_address;
-                dummy_value = ((dummy_value + 1) & 0x0f) + (linklayer_node_address << 4);
-                for (int dummy = 0; dummy < HEADER_DUMMY_LEN; ++dummy) {
-                    packet->buffer[HEADER_DUMMY_DATA + dummy] = dummy_value;
-                }
-#endif
                 ++active_packets;
             }
         }
@@ -109,9 +108,11 @@ packet_t *create_packet_plain(uint8_t* buf, size_t length)
 
     packet_t *p = allocate_packet();
 
-    memcpy(p->buffer, buf, length);
-    p->length = length;
-    p->radio_num = UNKNOWN_RADIO;
+    if (p != NULL) {
+        memcpy(p->buffer, buf, length);
+        p->length = length;
+       p->radio_num = UNKNOWN_RADIO;
+    }
 
     return p;
 }
@@ -546,39 +547,38 @@ bool init_packets(int num_packets)
         /* Create the bulk table */
         packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
         if (packet_table != NULL) {
-            
-            /* Zero the table */
-            memset(packet_table, 0, num_packets * sizeof(packet_t));
+            /* Create the bulk DMA buffer */
+            dma_buffers = (uint8_t*) os_alloc_dma_memory(MAX_PHYSICAL_PACKET_LEN * num_packets);
 
-            packet_table_len = num_packets;
-            free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
+            if (dma_buffers != NULL) {
+                /* Zero the table */
+                memset(packet_table, 0, num_packets * sizeof(packet_t));
 
-            if (free_packets_queue != NULL) {
-                // ESP_LOGD(TAG, "free_packets_queue created");
+                packet_table_len = num_packets;
+                free_packets_queue = os_create_queue(num_packets, sizeof(packet_t*));
+
+                if (free_packets_queue != NULL) {
+                    // ESP_LOGD(TAG, "free_packets_queue created");
     
-                ok = true;
+                    ok = true;
 
-                int count = 0;
+                    int count = 0;
 
-                while(ok && count < num_packets) {
-                    packet_t *p = &packet_table[count];
-                    memset(p, 0, sizeof(packet_t));
-                    p->ref = 1;
-                    p->buffer = (uint8_t*) os_alloc_dma_memory(MAX_PACKET_LEN);
-                    if (p->buffer == NULL) {
-ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
-                        /* Failed */
-                        free((void*) p);
-                        ok = false;
-                    } else {
-//ESP_LOGI(TAG, "%s: Packet %d at %p with buffer %p", __func__, count, p, p->buffer);
+                    while(ok && count < num_packets) {
+                        packet_t *p = &packet_table[count];
+                        memset(p, 0, sizeof(packet_t));
+                        p->ref = 1;
+                        p->buffer = dma_buffers;
                         release_packet(p);
-                    }
 
-                    ++count;
-                }      
+                        dma_buffers += MAX_PHYSICAL_PACKET_LEN;
+                        ++count;
+                    }      
+                } else {
+                    ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
+                }
             } else {
-                ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
+                ESP_LOGE(TAG, "%s: Unable to allocate packet dma pool", __func__);
             }
         } else {
             ESP_LOGE(TAG, "%s: Unable to allocate packet table", __func__);
@@ -609,11 +609,8 @@ ESP_LOGE(TAG, "%s: Unable to allocate packet %d", __func__, count);
  */
 int deinit_packets(void)
 {
-    int packets_left = 0;
+    int packets_left = -1;
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
-    remove_command("p");
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
 
     if (packet_mutex != NULL) {
         packet_lock();
@@ -626,18 +623,12 @@ int deinit_packets(void)
                 /* Release free packets */
                 packet_t* packet;
                 while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
-                    free((void*) packet->buffer);
                     packet->buffer = NULL;
                 }
 
-                /* Free the bulk store */
-                free((void*) packet_table);
-                packet_table = NULL;
-                packet_table_len = 0;
+                os_delete_queue(free_packets_queue);
+                free_packets_queue = NULL;
             }
-
-            os_delete_queue(free_packets_queue);
-            free_packets_queue = NULL;
         }
 
         packet_unlock();
@@ -645,6 +636,17 @@ int deinit_packets(void)
         if (packets_left == 0) {
             os_delete_mutex(packet_mutex);
             packet_mutex = NULL;
+
+            /* Free the bulk store */
+            free((void*) packet_table);
+            free((void*) dma_buffers);
+            packet_table = NULL;
+            dma_buffers = NULL;
+            packet_table_len = 0;
+
+#if CONFIG_LASTLINK_TABLE_COMMANDS
+            remove_command("p");
+#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
         }
     }
 

@@ -48,6 +48,9 @@ typedef struct radio {
     /* Radio number */
     int radio_num;
 
+    /* transmit delay after receive or transmit */
+    int transmit_delay;
+
 #if 0
     /* Deinit specific radio type (call into the radio module)  */
     bool (*radio_deinit)(radio_t* radio);

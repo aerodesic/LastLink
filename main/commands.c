@@ -21,7 +21,6 @@
 #define TAG "commands"
 
 #define COMMAND_PROCESSOR_STACK_SIZE 40000
-#define PING_COMMAND_STACK_SIZE      4000
 
 /*
  * Go through buffer and tokenize into argv/argc structure.
@@ -124,64 +123,6 @@ os_thread_t start_commands(FILE* in, FILE* out)
 void show_help(const char* name, const char *params, const char *description)
 {
     printf("%s %-*s %s\n", name, HELP_CMD_FIELD_LEN - strlen(name), params, description);
-}
-
-typedef struct {
-    int address;
-    FILE* out;
-} ping_info_t;
-
-void ping_command_thread(void* param)
-{
-    ping_info_t *info = (ping_info_t*) param;
-
-    int address = info->address;
-
-    /* Set stdout for printing */
-    stdout = info->out;
-
-    free((void*) info);
-
-    // printf("Test message from ping_command_thread\n");
-
-    int paths[100];
-    int path_len = ping(address, paths, ELEMENTS_OF(paths));
-
-    if (path_len < 0) {
-        printf("Ping error %d\n", path_len);
-    } else {
-        printf("Path:");
-        for (int path = 0; path < path_len; ++path) {
-            printf(" %d", paths[path]);
-        }
-
-        printf("\n");
-    }
-
-    os_exit_thread();
-}
-
-/**********************************************************************/
-/* ping <node address>                                                */
-/**********************************************************************/
-static int ping_command(int argc, const char **argv)
-{
-    if (argc == 0) {
-        show_help(argv[0], "<node address>", "Find and report path to a node");
-    } else {
-        int address = strtol(argv[1], NULL, 10);
-
-        ping_info_t *info = (ping_info_t*) malloc(sizeof(ping_info_t));
-        if (info != NULL) {
-            info->address = address;
-            info->out = stdout;
-            os_create_thread(ping_command_thread, "ping", PING_COMMAND_STACK_SIZE, 10, (void*) info);
-        } else {
-            printf("Unable to create ping info object\n");
-        }
-    }
-
-    return 0;
 }
 
 /**********************************************************************/
@@ -525,7 +466,6 @@ void init_commands(void)
     add_command("mem",        memory_command);
     add_command("contrast",   contrast_command);
     add_command("echo",       echo_command);
-    add_command("ping",       ping_command);
     add_command("address",    address_command);
     add_command("loglevel",   loglevel_command);
     add_command("config",     config_command);

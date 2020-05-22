@@ -137,52 +137,55 @@ duplicate_packet_list_t           duplicate_packets;
 
 #define RADIO_CONFIG_SPI(radio, module) \
     { \
-    .type       = "spi",                                                         \
-    .radio_type = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
-    .delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
-    .dios[0]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),  \
-    .dios[1]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),  \
-    .dios[2]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),  \
-    .reset      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET), \
-    .spi_sck    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),   \
-    .spi_mosi   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),  \
-    .spi_miso   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),  \
-    .spi_cs     = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),    \
-    .spi_host   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),   \
-    .spi_clock  = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ), \
+    .type                = "spi",                                                         \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
+    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),  \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),  \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),  \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET), \
+    .spi_sck             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),   \
+    .spi_mosi            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),  \
+    .spi_miso            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),  \
+    .spi_cs              = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),    \
+    .spi_host            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),   \
+    .spi_clock           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ), \
     .spi_pre_xfer_callback = NULL,                                               \
-    .dma_chan   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),   \
+    .dma_chan            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),   \
    },
 
 #define RADIO_CONFIG_I2C(radio, module) \
     { \
-    .type       = "i2c",                                                         \
-    .radio_type = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
-    .delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
-    .reset      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),  \
-    .dios[0]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),   \
-    .dios[1]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),   \
-    .dios[2]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),   \
-    .i2c_blah1  = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),  \
-    .i2c_blah2  = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),  \
+    .type                = "i2c",                                                         \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
+    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),  \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),   \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),   \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),   \
+    .i2c_blah1           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),  \
+    .i2c_blah2           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),  \
    },
 
 #define RADIO_CONFIG_SERIAL(radio, module) \
     { \
-    .type       = "serial",                                                      \
-    .radio_type = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
-    .delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
-    .dios[0]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),   \
-    .dios[1]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),   \
-    .dios[2]    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),   \
-    .reset      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),  \
-    .dev        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),    \
+    .type                = "serial",                                                      \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
+    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),   \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),   \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),   \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),  \
+    .dev                 = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),    \
    },
 
 static const radio_config_t radio_config[] = {
@@ -378,15 +381,15 @@ packet_t* beacon_packet_create(const char* name)
         length = BEACON_NAME_LEN;
     }
 
-    packet_t* p = linklayer_create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length);
-    if (p != NULL) {
-        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
-        set_int_field(p, HEADER_METRIC, METRIC_LEN, MAX_METRIC); /* Large metric so it doesn't get retransmitted */
-        int moved = set_str_field(p, BEACON_NAME, length, name);
+    packet_t* packet = linklayer_create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length);
+    if (packet != NULL) {
+        set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); /* Large metric so it doesn't get retransmitted */
+        int moved = set_str_field(packet, BEACON_NAME, length, name);
         /* Update packet length */
-        p->length = HEADER_LEN + moved;
+        packet->length = HEADER_LEN + moved;
     }
-    return p;
+    return packet;
 }
 
 /*
@@ -504,16 +507,14 @@ static const char* routeannounce_packet_format(const packet_t* packet)
  */
 packet_t* routerequest_packet_create(int address)
 {
-    packet_t* p = linklayer_create_generic_packet(address, ROUTEREQUEST_PROTOCOL, ROUTEREQUEST_LEN);
+    packet_t* packet = linklayer_create_generic_packet(address, ROUTEREQUEST_PROTOCOL, ROUTEREQUEST_LEN);
 
-    if (p != NULL) {
-        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
-        //set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-        //set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-        set_uint_field(p, ROUTEREQUEST_FLAGS, FLAGS_LEN, node_flags);
+    if (packet != NULL) {
+        set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
+        set_uint_field(packet, ROUTEREQUEST_FLAGS, FLAGS_LEN, node_flags);
     }
 
-    return p;
+    return packet;
 }
 
 static bool routerequest_packet_process(packet_t* packet)
@@ -531,12 +532,13 @@ static bool routerequest_packet_process(packet_t* packet)
             if (linklayer_packet_is_for_this_node(packet)) {
                 packet_t* ra = routeannounce_packet_create(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
 
-                /* Label it as going to specific radio of origin */
-                ra->radio_num = packet->radio_num;
-                linklayer_send_packet(ra);
+                if (ra != NULL) {
+                    /* Label it as going to specific radio of origin */
+                    ra->radio_num = packet->radio_num;
+                    linklayer_send_packet(ra);
 
-                consumed = true;
-
+                    consumed = true;
+                }
             } else {
                 /* By not 'consuming' the packet, this packet will be resent with an updated metric */
             }
@@ -569,14 +571,14 @@ static const char* routerequest_packet_format(const packet_t* packet)
  */
 packet_t* routeerror_packet_create(int dest, int address, const char* reason)
 {
-    packet_t* p = linklayer_create_generic_packet(dest, ROUTEERROR_PROTOCOL, ROUTEERROR_LEN);
-    if (p != NULL) {
-        set_uint_field(p, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, dest);
-        set_uint_field(p, ROUTEERROR_ADDRESS, ADDRESS_LEN, address);
-        set_str_field(p, ROUTEERROR_REASON, REASON_LEN, reason);
+    packet_t* packet = linklayer_create_generic_packet(dest, ROUTEERROR_PROTOCOL, ROUTEERROR_LEN);
+    if (packet != NULL) {
+        set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, dest);
+        set_uint_field(packet, ROUTEERROR_ADDRESS, ADDRESS_LEN, address);
+        set_str_field(packet, ROUTEERROR_REASON, REASON_LEN, reason);
     }
 
-    return p;
+    return packet;
 }
 
 static bool routeerror_packet_process(packet_t* packet)
@@ -630,23 +632,23 @@ static const char* routeerror_packet_format(const packet_t* packet)
  */
 packet_t* data_packet_create(int dest, int protocol, uint8_t* data, int length)
 {
-    packet_t* p;
+    packet_t* packet;
 
     if (DATA_PAYLOAD + length <= DATA_LEN) {
-        p = linklayer_create_generic_packet(dest, protocol, length);
+        packet = linklayer_create_generic_packet(dest, protocol, length);
 
-        if (p != NULL) {
+        if (packet != NULL) {
             /* Move the data and set the final packet length */
-            int moved = set_bytes_field(p, DATA_PAYLOAD, length, data);
-            p->length = DATA_PAYLOAD + moved;
+            int moved = set_bytes_field(packet, DATA_PAYLOAD, length, data);
+            packet->length = DATA_PAYLOAD + moved;
         }
 
     } else {
         /* Invalid length */
-        p = NULL;
+        packet = NULL;
     }
 
-    return p;
+    return packet;
 }
 
 static char tohex(int v)
@@ -1111,13 +1113,17 @@ void linklayer_send_packet(packet_t* packet)
 
 void linklayer_send_packet_update_metric(packet_t* packet)
 {
-    int metric = get_uint_field(packet, HEADER_METRIC, METRIC_LEN);
-    if (++metric < MAX_METRIC) {
-        set_uint_field(packet, HEADER_METRIC, METRIC_LEN, metric);
-        linklayer_send_packet(packet);
-    } else {
+    if (packet != NULL) {
+        int metric = get_uint_field(packet, HEADER_METRIC, METRIC_LEN);
+        if (++metric < MAX_METRIC) {
+            set_uint_field(packet, HEADER_METRIC, METRIC_LEN, metric);
+            linklayer_send_packet(packet);
+        } else {
 linklayer_print_packet("METRIC EXPIRED", packet);
-        release_packet(packet);
+            release_packet(packet);
+        }
+    } else {
+ESP_LOGE(TAG, "%s: null packet", __func__);
     }
 }
 
@@ -1268,13 +1274,19 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
             if (listen_only) {
                 /* In promiscuous mode, deliver to receiver so it can handle it (but not process it) */
                 if (promiscuous_queue != NULL) {
-                    os_put_queue(promiscuous_queue, duplicate_packet(packet));
+                    packet_t *dup = duplicate_packet(packet);
+                    if (dup != NULL) {
+                        os_put_queue(promiscuous_queue, dup);
+                    }
                 }
             /* Ignore redundant packets from the same origin and sequence number */
             } else {
                 /* In promiscuous mode, deliver to receiver so it can handle it (but not process it) */
                 if (promiscuous_queue != NULL) {
-                    os_put_queue(promiscuous_queue, duplicate_packet(packet));
+                    packet_t *dup = duplicate_packet(packet);
+                    if (dup != NULL) {
+                        os_put_queue(promiscuous_queue, dup);
+                    }
                 }
     
                 /* Check for packets arriving with the same sequence number - ignore them */
@@ -1335,6 +1347,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
             }
         } else {
 ESP_LOGI(TAG, "%s: packet crc error; len %d bytes", __func__, packet->length);
+            dump_buffer("packet", packet->buffer, packet->length);
             packet_errors_crc++;
         }
 

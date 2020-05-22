@@ -14,6 +14,7 @@
 #else
   #define MAX_PACKET_LEN       CONFIG_LASTLINK_MAX_PACKET_LENGTH
 #endif
+#define MAX_PHYSICAL_PACKET_LEN  CONFIG_LASTLINK_MAX_PACKET_LENGTH
 
 #define UNKNOWN_RADIO        -1
 
@@ -30,7 +31,7 @@ typedef struct packet {
     void             *routed_callback_data;
 
     bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
-    bool             delay;                      /* true if to apply a random delay before sending packet */
+    bool             delay;                      /* delay before transmit after any other spacing delay */
     uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int8_t           rssi;                       /* Received signal strength */
     int8_t           snr;                        /* In .1 db */

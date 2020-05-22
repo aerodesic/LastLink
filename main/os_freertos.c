@@ -349,7 +349,7 @@ bool os_exit_thread(void)
     return true;
 }
 
-void os_delay(int ms)
+bool os_delay(int ms)
 {
     int ticks = 0;
 
@@ -362,6 +362,8 @@ void os_delay(int ms)
     }
 
     vTaskDelay(ticks);
+
+    return true;
 }
 
 static unsigned long last_ticks;

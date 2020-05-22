@@ -20,8 +20,9 @@
 #include "os_freertos.h"
 #include "sx127x_driver.h"
 #include "linklayer.h"
+#include "simpletimer.h"
 
-#if CONFIG_LASTLINK_CRC16_PACKETS
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
 #include "crc16.h"
 #endif
 
@@ -72,27 +73,28 @@ static bool disable_irq(radio_t* radio, uint8_t mask);
 
 /* Define private data structure */
 typedef struct sx127x_private_data {
-    uint8_t    sync_word;
-    uint8_t    preamble_length;
-    uint8_t    coding_rate;
-    bool       implicit_header;
-    bool       implicit_header_set;
-    int        hop_period;
-    bool       enable_crc;
-    int        channel;
-    int        datarate;
-    int        bandwidth;
-    uint8_t    spreading_factor;
-    uint8_t    tx_power;
-    int        rx_interrupts;
-    int        tx_interrupts;
-    int        fhss_interrupts;
-    os_mutex_t rlock;
-    int        packet_memory_failed;
-    packet_t  *current_packet;
-    bool       carrier_detected;
-    int        packet_crc_errors;
-    uint16_t   irq_flags;                      /* Bottom 8 are hardware flags acquired at irq scan time */
+    uint8_t       sync_word;
+    uint8_t       preamble_length;
+    uint8_t       coding_rate;
+    bool          implicit_header;
+    bool          implicit_header_set;
+    int           hop_period;
+    bool          enable_crc;
+    int           channel;
+    int           datarate;
+    int           bandwidth;
+    uint8_t       spreading_factor;
+    uint8_t       tx_power;
+    int           rx_interrupts;
+    int           tx_interrupts;
+    int           fhss_interrupts;
+    os_mutex_t    rlock;
+    int           packet_memory_failed;
+    packet_t     *current_packet;
+    bool          carrier_detected;
+    int           packet_crc_errors;
+    simpletimer_t transmit_timer;
+    uint16_t      irq_flags;                      /* Bottom 8 are hardware flags acquired at irq scan time */
 #define SX127x_FORCE_START_TRANSMIT   0x100    /* Extra 'irq flag' for starting new transmit activity */
 } sx127x_private_data_t;
 
@@ -164,6 +166,11 @@ bool sx127x_create(radio_t* radio)
             data->rx_interrupts             = 0;
             data->tx_interrupts             = 0;
             data->rlock                     = os_create_recursive_mutex();
+
+            /* Set the interval to delay transmit after last receive or transmit */
+            simpletimer_start(&data->transmit_timer, radio->transmit_delay);
+ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->radio_num, radio->transmit_delay);
+
         }
 
         /* Start global interrupt processing thread if not yet running */
@@ -198,7 +205,14 @@ static void rx_handle_interrupt(radio_t* radio)
 
     int length;
 
-    radio->write_register(radio, SX127x_REG_FIFO_PTR, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
+    simpletimer_restart(&data->transmit_timer);
+
+    uint8_t fifo_current = radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT);
+    if (fifo_current != 0) {
+        ESP_LOGE(TAG, "%s: FIFO_CURRENT not 0: %d (%02x)", __func__, fifo_current, fifo_current);
+    }
+
+    radio->write_register(radio, SX127x_REG_FIFO_PTR, fifo_current);
 
     if (data->implicit_header) {
         length = radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH);
@@ -214,11 +228,11 @@ static void rx_handle_interrupt(radio_t* radio)
         if (packet != NULL) {
 
             if (radio->read_buffer(radio, SX127x_REG_FIFO, packet->buffer, length)) {
-#if CONFIG_LASTLINK_CRC16_PACKETS
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
                 bool crcok = false;
                 if (length >= 3) {
                     /* Check the add crc on the packets */
-                    crcok = calc_crc16(CRC16_SEED, packet->buffer, packet->length) == CRC16_SEED;
+                    crcok = calc_crc16(CRC16_SEED, packet->buffer, length) == 0;
                     if (crcok) {
                        length = length - 2;
                     }
@@ -292,7 +306,7 @@ static bool write_packet(radio_t* radio, packet_t* packet)
         radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0);
     }
 
-#if CONFIG_LASTLINK_CRC16_PACKETS
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
     /* Compute crc to add to message.  Can't modify packet as it may be sent more
      * than one place.  Need to compute and send crc separately.
      */
@@ -341,19 +355,23 @@ static void tx_handle_interrupt(radio_t* radio, bool from_interrupt)
 
     if (data->current_packet != NULL) {
 
+//int remaining = simpletimer_remaining(&data->transmit_timer);
+//if (remaining != 0)  ESP_LOGI(TAG, "%s: waiting %d ms to transmit", __func__, remaining);
+
+        /* Don't fire a new transmit unless it's been long enough from the last transmit or receive */
+        simpletimer_wait_for(&data->transmit_timer);
+
         if (data->current_packet->delay) {
-            os_delay((esp_random() % 5 + 1) * 50 );
+           os_delay((esp_random() % 50 + 1) * 20);
         }
 
-        uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
-        //ESP_LOGI(TAG, "%s: modem %02x", __func__, modem_status);
-
         /* Make sure no carrier detected */
-        //if ((modem_status & (SX127x_MODEM_STATUS_SIG_DETECTED | SX127x_MODEM_STATUS_SIG_SYNCED | SX127x_MODEM_STATUS_RX_ONGOING | SX127x_MODEM_STATUS_HEADER_VALID | SX127x_MODEM_STATUS_CLEAR)) != SX127x_MODEM_STATUS_CLEAR) {
-        //if (data->carrier_detected) {
         if ((radio->read_register(radio, SX127x_REG_OP_MODE) & SX127x_MODE_MASK) == SX127x_MODE_RX_SINGLE) {
+            uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
             ESP_LOGE(TAG, "%s: CAD detected %s %02x - delaying...", __func__, data->carrier_detected ? "TRUE" : "FALSE", modem_status);
         } else {
+
+            simpletimer_restart(&data->transmit_timer);
 
             start_packet(radio);
             write_packet(radio, data->current_packet);
