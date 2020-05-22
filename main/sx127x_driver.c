@@ -176,7 +176,7 @@ ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->
         /* Start global interrupt processing thread if not yet running */
         if (global_interrupt_handler_thread == NULL) {
             global_interrupt_handler_queue = os_create_queue(MAX_IRQ_PENDING, sizeof(radio_t*));
-            global_interrupt_handler_thread = os_create_thread_on_core(global_interrupt_handler, "sx127x_svc",
+            global_interrupt_handler_thread = os_create_thread_on_core(global_interrupt_handler, "sx127x_interrupt",
                                                                GLOBAL_IRQ_THREAD_STACK, GLOBAL_IRQ_THREAD_PRIORITY, NULL, 0);
         }
 
@@ -397,10 +397,13 @@ static void transmit_start(radio_t *radio)
 
     if (acquire_lock(radio)) {
 
+        data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
+
+        /* Only do this if we are not currently in transmit mode */
         if (data->current_packet == NULL) {
-            data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
             os_put_queue(global_interrupt_handler_queue, (os_queue_item_t) radio);
         }
+
         release_lock(radio);
 
     } else {
@@ -419,6 +422,8 @@ static void global_interrupt_handler(void* param)
         radio_t *radio;
 
         if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t*) &radio)) {
+
+//ESP_LOGI(TAG, "%s: radio %d", __func__, radio ? radio->radio_num : -1);
 
             if (radio != NULL) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;

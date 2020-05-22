@@ -27,7 +27,7 @@ static uint8_t           *dma_buffers;
 static int               packet_table_len;
 static os_queue_t        free_packets_queue;
 static os_mutex_t        packet_mutex;
-static int               active_packets;
+static int               packets_in_use;
 static int               dropped_allocations;
 
 static bool validate_field(const packet_t *p, size_t from, size_t length);
@@ -53,7 +53,9 @@ packet_t *allocate_packet_plain(void)
 {
     // ESP_LOGD(TAG, "allocate_packet");
 
-    packet_t* packet = NULL;
+    packet_t *packet = NULL;
+
+    packet_lock();
 
     /* Make sure free packet queue is present */
     if (free_packets_queue != NULL) {
@@ -82,7 +84,7 @@ packet_t *allocate_packet_plain(void)
                 packet->rssi = 0;
                 packet->crc_ok = false;
 
-                ++active_packets;
+                ++packets_in_use;
             }
         }
     }
@@ -117,7 +119,7 @@ packet_t *create_packet_plain(uint8_t* buf, size_t length)
     return p;
 }
 
-packet_t *duplicate_packet_plain(packet_t* packet)
+packet_t *duplicate_packet_plain(packet_t *packet)
 {
     packet_t *new_packet = create_packet(packet->buffer, packet->length);
 
@@ -137,66 +139,64 @@ bool release_packet_plain(packet_t *packet)
     bool ok = false;
 
     if (packet != NULL) {
-        /* We don't need to lock on mutex - just make sure it's there.  The queue
-         * function is atomic.
-         */
+
         if (free_packets_queue != NULL) {
-            if (packet != NULL && --(packet->ref) == 0) {
+            packet_lock();
+
+            if (--(packet->ref) == 0) {
                 packet->routed_callback = NULL;
                 packet->routed_callback_data = NULL;
                 ok = os_put_queue_with_timeout(free_packets_queue, packet, 0);
+                packets_in_use--;
+            } else {
+                ok = true;
             }
-            ok = true;
+
+            packet_unlock();
         }
     }
 
     return ok;
 }
 
-#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-packet_t *allocate_packet_debug(const char *filename, int lineno)
+packet_t *ref_packet_plain(packet_t *packet)
 {
-    packet_t *packet = allocate_packet_plain();
+    if (packet != NULL) {
+        packet_lock();
+        packet->ref++;
+        packet_unlock();
+    }
+    return packet;
+}
+#if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
+packet_t *touch_packet_debug(const char *filename, int lineno, packet_t *packet)
+{
     if (packet != NULL) {
         packet->last_referenced_filename = filename;
         packet->last_referenced_lineno = lineno;
     }
 
     return packet;
+}
+
+packet_t *allocate_packet_debug(const char *filename, int lineno)
+{
+    return touch_packet_debug(filename, lineno, allocate_packet_plain());
 }
 
 packet_t *create_packet_debug(const char* filename, int lineno, uint8_t* buf, size_t length)
 {
-    packet_t *packet = create_packet_plain(buf, length);
-    if (packet != NULL) {
-        packet->last_referenced_filename = filename;
-        packet->last_referenced_lineno = lineno;
-    }
-
-    return packet;
+    return touch_packet_debug(filename, lineno, create_packet_plain(buf, length));
 }
 
-packet_t *duplicate_packet_debug(const char* filename, int lineno, packet_t* packet)
+packet_t *duplicate_packet_debug(const char* filename, int lineno, packet_t *packet)
 {
-    packet_t *dup = duplicate_packet_plain(packet);
-    if (dup != NULL) {
-        dup->last_referenced_filename = filename;
-        dup->last_referenced_lineno = lineno;
-    }
-
-    return dup;
+    return touch_packet_debug(filename, lineno, duplicate_packet_plain(packet));
 }
 
 packet_t *ref_packet_debug(const char* filename, int lineno, packet_t *packet)
 {
-    packet->ref++;
-
-    if (packet != NULL) {
-        packet->last_referenced_filename = filename;
-        packet->last_referenced_lineno = lineno;
-    }
-
-    return packet;
+    return touch_packet_debug(filename, lineno, ref_packet_plain(packet));
 }
 
 /*
@@ -208,13 +208,13 @@ bool release_packet_debug(const char *filename, int lineno, packet_t *packet)
 
     if (packet != NULL) {
         if (packet->ref != 0) {
-            packet->last_referenced_filename = filename;
-            packet->last_referenced_lineno = lineno;
+            // For now, don't 'touch' a packet when released.  We want to find the last actual use (or ref)
             ok = release_packet_plain(packet);
+            // ok = release_packet_plain(touch_packet_debug(filename, lineno, packet));
         } else {
             ESP_LOGE(TAG, "********************************************************");
             ESP_LOGE(TAG, "%s: packet_release called by %s:%d", __func__, filename, lineno);
-            ESP_LOGE(TAG, "%s: last release by %s:%d", __func__, packet->last_referenced_filename, packet->last_referenced_lineno);
+            ESP_LOGE(TAG, "%s: last accessed by %s:%d", __func__, packet->last_referenced_filename, packet->last_referenced_lineno);
             linklayer_print_packet("Already Released", packet);
         }
     } else {
@@ -364,20 +364,11 @@ int set_str_field(packet_t *p, size_t from, size_t length, const char* value)
     return moved;
 }
 
-#ifdef NOTUSED
-/* Moved inline */
-packet_t* ref_packet(packet_t* p)
-{
-    if (p != NULL) {
-        p->ref++;
-    }
-    return p;
-}
-#endif
-
 bool packet_lock(void)
 {
-    return xSemaphoreTakeRecursive(packet_mutex, 0) == pdTRUE;
+    return os_acquire_recursive_mutex(packet_mutex);
+    // This was failing without being noticed.  Lots of bad stuff could happen...
+    //return xSemaphoreTakeRecursive(packet_mutex, 0) == pdTRUE;
 }
 
 void packet_unlock(void)
@@ -403,7 +394,7 @@ bool packet_tell_routed_callback(packet_t *packet, bool success)
     return ok;
 }
 
-void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t* packet, void* data), void* data)
+void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *packet, void* data), void* data)
 {
     if (packet->routed_callback != NULL) {
         ESP_LOGE(TAG, "%s: Already has a routed callback; overriding", __func__);
@@ -425,6 +416,7 @@ typedef struct {
     int           origin;
     int           dest;
     int           sender;
+    int           protocol;
 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
     const char    *last_referenced_filename;
     unsigned int  last_referenced_lineno;
@@ -454,6 +446,7 @@ int print_packet_table(int argc, const char **argv)
                 table[num_packets].origin                   = get_uint_field(&packet_table[num_packets], HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
                 table[num_packets].dest                     = get_uint_field(&packet_table[num_packets], HEADER_DEST_ADDRESS, ADDRESS_LEN);
                 table[num_packets].sender                   = get_uint_field(&packet_table[num_packets], HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+                table[num_packets].protocol                 = get_uint_field(&packet_table[num_packets], HEADER_PROTOCOL, PROTOCOL_LEN);
 
                 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
                 table[num_packets].last_referenced_filename = packet_table[num_packets].last_referenced_filename;
@@ -475,14 +468,14 @@ int print_packet_table(int argc, const char **argv)
                 if (all || table[index].ref != 0) {
                     if (! header_printed) {
                         #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data     Last Accessed\n");
+                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
                         #else
-                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Callback  CB Data\n");
+                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
                         #endif
                         header_printed = true;
                     }
                     #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %-10p  %s:%d\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
                             table[index].address,
                             table[index].buffer,
                             table[index].ref,
@@ -492,12 +485,13 @@ int print_packet_table(int argc, const char **argv)
                             table[index].origin & 0xFFFF,
                             table[index].dest & 0xFFFF,
                             table[index].sender & 0xFFFF,
+                            table[index].protocol,
                             table[index].routed_callback ? "YES" : "NO",
                             table[index].routed_callback_data,
                             table[index].last_referenced_filename,
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-8s  %p\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
                             table[index].address,
                             table[index].buffer,
                             table[index].ref,
@@ -507,6 +501,7 @@ int print_packet_table(int argc, const char **argv)
                             table[index].origin & 0xFFFF,
                             table[index].dest & 0xFFFF,
                             table[index].sender & 0xFFFF,
+                            table[index].protocol,
                             table[index].routed_callback ? "YES" : "NO",
                             table[index].routed_callback_data);
                     #endif
@@ -514,7 +509,9 @@ int print_packet_table(int argc, const char **argv)
             }
         }
 
-        printf("\nPacket lock count: %d\n", os_get_mutex_count(packet_mutex));
+        printf("\nPacket lock:    %s\n", os_get_mutex_count(packet_mutex) ? "UNLOCKED" : "LOCKED");
+        printf("\nFree packets:   %d\n", available_packets());
+        printf("\nPackets in use: %d\n", packets_in_use);
     }
 
     return 0;
@@ -535,14 +532,16 @@ bool init_packets(int num_packets)
 {
     bool ok = false;
 
-    // ESP_LOGD(TAG, "init_packets: %d", num_packets);
+    ESP_LOGI(TAG, "init_packets: %d", num_packets);
 
     packet_mutex = os_create_recursive_mutex();
 
     if (packet_mutex != NULL) {
-        // ESP_LOGD(TAG, "packet_mutex created");
+        // ESP_LOGI(TAG, "packet_mutex created");
 
         packet_lock();
+
+        packets_in_use = num_packets;  // Until initially freed, they are 'in use'.
 
         /* Create the bulk table */
         packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
@@ -613,15 +612,16 @@ int deinit_packets(void)
 
 
     if (packet_mutex != NULL) {
+
         packet_lock();
 
         if (free_packets_queue != NULL) {
 
-            if (active_packets != 0) {
-                packets_left = active_packets;
+            if (packets_in_use != 0) {
+                packets_left = packets_in_use;
             } else {
                 /* Release free packets */
-                packet_t* packet;
+                packet_t *packet;
                 while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
                     packet->buffer = NULL;
                 }

@@ -69,6 +69,9 @@ bool release_packet_debug(const char* filename, int lineno, packet_t* packet);
 packet_t* ref_packet_debug(const char* filename, int lineno, packet_t *packet);
 #define ref_packet(packet)  ref_packet_debug(__FILE__, __LINE__, packet)
 
+packet_t *touch_packet_debug(const char *filename, int lineno, packet_t *packet);
+#define touch_packet(packet) touch_packet_debug(__FILE__, __LINE__, packet)
+
 #else
 
 packet_t *allocate_packet_plain(void);
@@ -83,13 +86,10 @@ packet_t *duplicate_packet_plain(packet_t *packet);
 bool release_packet_plain(packet_t *packet);
 #define release_packet(packet) release_packet_plain(packet)
 
-inline static packet_t* ref_packet(packet_t* packet)
-{
-    if (packet != NULL) {
-        packet->ref++;
-    }
-    return packet;
-}
+packet_t* ref_packet_plain(packet_t* packet);
+#define ref_packet(packet) ref_packet_plain(packet)
+
+#define touch_packet(packet) (packet)
 #endif
 
 /*

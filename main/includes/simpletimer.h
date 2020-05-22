@@ -50,14 +50,28 @@ static inline bool simpletimer_is_expired(simpletimer_t *timer)
     return timer->state == ST_EXPIRED;
 }
 
+static inline bool simpletimer_is_stopped(simpletimer_t *timer)
+{
+    return timer->state == ST_STOPPED;
+}
+
 static inline bool simpletimer_is_running(simpletimer_t *timer)
 {
-    return timer->state != ST_STOPPED && !simpletimer_is_expired(timer);
+    return !simpletimer_is_stopped(timer) && !simpletimer_is_expired(timer);
 }
 
 static inline uint32_t simpletimer_remaining(simpletimer_t *timer)
 {
-    return simpletimer_is_running(timer) ? timer->target - get_milliseconds() : 0;
+    uint32_t remaining;
+
+    if (simpletimer_is_running(timer)) {
+        remaining = timer->target - get_milliseconds();
+    } else if (simpletimer_is_stopped(timer)) {
+        remaining = 0xFFFFFFFF;
+    } else {
+        remaining = 0;
+    }
+    return remaining;
 }
 
 static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uint32_t *remaining)
@@ -73,11 +87,6 @@ static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uin
     } 
 
     return fired;
-}
-
-static inline bool simpletimer_is_stopped(simpletimer_t *timer)
-{
-    return timer->state == ST_STOPPED;
 }
 
 static inline void simpletimer_restart(simpletimer_t *timer)

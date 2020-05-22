@@ -281,8 +281,13 @@ static bool pingreply_packet_process(packet_t *packet)
                     os_delete_thread(ping_table[slot].thread);
                     ping_table[slot].waiting = false;
                     ping_table[slot].thread = NULL;
-                    os_put_queue(ping_table[slot].queue, ref_packet(packet));
+                    if (!os_put_queue(ping_table[slot].queue, ref_packet(packet))) {
+                        ESP_LOGE(TAG, "%s: No room for ping reply", __func__);
+                        release_packet(packet);
+                    }
                 }
+
+                consumed = true;
 
             } else {
                 /* Sanity check - reuse last entry if full */
@@ -293,8 +298,6 @@ static bool pingreply_packet_process(packet_t *packet)
                 packet->length += ADDRESS_LEN;
                 set_uint_field(packet, packet->length - ADDRESS_LEN, ADDRESS_LEN, linklayer_node_address);
             }
-
-            consumed = true;
 
             linklayer_unlock();
 
@@ -430,7 +433,7 @@ static bool ping_has_been_routed(packet_t* packet, void* data)
 
     linklayer_lock();
 
-    ESP_LOGI(TAG, "%s: for slot %d", __func__, slot);
+    // ESP_LOGI(TAG, "%s: for slot %d", __func__, slot);
 
     if (packet != NULL) {
         /* Create a timer to retry trasmission for a while */
@@ -2226,6 +2229,7 @@ ESP_LOGI(TAG, "%s: linger_timer for socket %d fired", __func__, socket_index);
             linklayer_unlock();
         }
 
+//ESP_LOGI(TAG, "%s: delay %d", __func__, next_time);
         os_delay(next_time);
     }
 }
@@ -2244,7 +2248,7 @@ typedef struct {
     ls_error_t  error;
 } ping_info_table_t;
 
-static int print_lsocket_ping_table(int argc, const char **argv)
+static int print_ping_table(int argc, const char **argv)
 {
     if (argc == 0) {
         show_help(argv[0], "[ -a ]", "Show ping table");
@@ -2269,7 +2273,7 @@ static int print_lsocket_ping_table(int argc, const char **argv)
             linklayer_unlock();
         }
 
-        bool all = argc > 1 && strcmp(argv[0], "-a") == 0;
+        bool all = argc > 1 && strcmp(argv[1], "-a") == 0;
 
         if (num_pings != 0) {
             bool header_printed = false;
@@ -2596,7 +2600,8 @@ static int ping_command(int argc, const char **argv)
                 printf("\n");
             }
 
-            os_delay(1000);
+            //os_delay(1000);
+            os_delay(100);
 
             count--;
         }
@@ -2654,7 +2659,7 @@ ls_error_t ls_socket_init(void)
     add_command("stlisten",   stlisten_command);
     add_command("stconnect",  stconnect_command);
     add_command("ping",       ping_command);
-    add_command("pt", print_lsocket_ping_table);
+    add_command("pt",         print_ping_table);
 #endif
 
     return err;

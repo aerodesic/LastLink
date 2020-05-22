@@ -15,6 +15,8 @@
 #include "listops.h"
 #include "simpletimer.h"
 
+#define ROUTE_SCANNER_STACK_SIZE  8192
+
 #if CONFIG_LASTLINK_TABLE_COMMANDS
 #include "commands.h"
 #endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
@@ -411,7 +413,7 @@ void route_table_init(void)
 
     /* Start a thread to expire routes when they get too old */
     if (route_scanner_thread_id == NULL) {
-        route_scanner_thread_id = os_create_thread(route_scanner_thread, "route_scanner", 8192, 0, NULL);
+        route_scanner_thread_id = os_create_thread(route_scanner_thread, "route_scanner", ROUTE_SCANNER_STACK_SIZE, 0, NULL);
     }
 
 #if CONFIG_LASTLINK_TABLE_COMMANDS

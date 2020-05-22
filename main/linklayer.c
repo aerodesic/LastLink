@@ -1290,11 +1290,11 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                 }
     
                 /* Check for packets arriving with the same sequence number - ignore them */
-                if (is_internal_packet(packet) || !is_duplicate_packet(&duplicate_packets, packet)) {
+                if (is_internal_packet(touch_packet(packet)) || !is_duplicate_packet(&duplicate_packets, touch_packet(packet))) {
                     bool consumed = false;
     
                     /* If the packet is for us or routed through us, process it, if it's the first time through */
-                    if (is_internal_packet(packet) || is_packet_for_this_node(packet) || is_routed_through(packet)) {
+                    if (is_internal_packet(touch_packet(packet)) || is_packet_for_this_node(touch_packet(packet)) || is_routed_through(touch_packet(packet))) {
     
                         /* Update route table */
                         update_route(packet->radio_num,
@@ -1306,7 +1306,7 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                      get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
                 
                         /* Try to process the packet by the protocol field */
-                        int protocol = get_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN);
+                        int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
     
                         /* Is it a valid protocol? */
                         if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
@@ -1331,13 +1331,13 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
 
                     /* If the packet was not consumed, see how to forward on */
                     if (!consumed) {
-                        int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+                        int routeto = get_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
     
                         /* If routed to this node, then send onward by routing or rebroadcasting */
                         if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
                             /* re-route if not broadcast */
                             if (routeto != BROADCAST_ADDRESS) {
-                                set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                                set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                             }
     
                             linklayer_send_packet_update_metric(ref_packet(packet));
@@ -1351,7 +1351,7 @@ ESP_LOGI(TAG, "%s: packet crc error; len %d bytes", __func__, packet->length);
             packet_errors_crc++;
         }
 
-        release_packet(packet);
+        release_packet(touch_packet(packet));
     }
 }
 

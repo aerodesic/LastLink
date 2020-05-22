@@ -164,7 +164,15 @@ static bool spi_write_register(radio_t* radio, int reg, int data)
 
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len)
 {
-#ifndef BROKEN_CODE_HERE_SOMEWHERE
+    bool ok;
+
+#ifdef USE_SIMPLE_SPI_BUFFER_WRITE
+    ok = true;
+
+    for (int b = 0; ok && b < len; ++b) {
+        ok = spi_write_register(radio, reg, buffer[b]);
+    }
+#else
     spi_transaction_t t;
 
  //ESP_LOGV(TAG, "%s: %02x with %d bytes", __func__, reg, len);
@@ -176,15 +184,10 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
 
     //dump_buffer("Write", buffer, len);
 
-    return spi_device_transmit(radio->spi, &t) == ESP_OK;
-#else
-    bool ok = true;
-
-    for (int b = 0; ok && b < len; ++b) {
-        ok = spi_write_register(radio, reg, buffer[b]);
-    }
-    return ok;
+    ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
 #endif
+
+    return ok;
 }
 
 static int spi_read_register(radio_t* radio, int reg)
@@ -208,20 +211,11 @@ static int spi_read_register(radio_t* radio, int reg)
 
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len)
 {
-#ifdef BROKEN_CODE_HERE_SOMEWHERE
-    spi_transaction_t t;
+    bool ok;
 
-ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
-
-    memset(&t, 0, sizeof(t));
-    t.addr = reg & 0x7F;
-    t.length = 8*len;           /* data */
-    t.rx_buffer = buffer;
-
-    bool ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
-#else
+#ifdef USE_SIMPLE_SPI_BUFFER_READ
     /* Do it the hard way by looping several read register functions. */
-    bool ok = true;
+    ok = true;
 
     for (int b = 0; ok &&  b < len; ++b) {
         int ch = spi_read_register(radio, reg);
@@ -231,11 +225,23 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
             ok =  false;
         }
     }
+#else
+    spi_transaction_t t;
+
+ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
+
+    memset(&t, 0, sizeof(t));
+    t.addr = reg & 0x7F;
+    t.length = 8*len;           /* data */
+    t.rx_buffer = buffer;
+
+    ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
 #endif
 
     //if (ok) {
     //    dump_buffer("Read", buffer, len);
     //}
+
     return ok;
 }
 

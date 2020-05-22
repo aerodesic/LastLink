@@ -335,7 +335,6 @@ static int help_command(int argc, const char **argv)
     } else {
         os_acquire_recursive_mutex(command_lock);
 
-
         command_entry_t *command = (command_entry_t*) FIRST_LIST_ITEM(&command_table);
 
         while (command != NULL) {
@@ -352,6 +351,62 @@ static int help_command(int argc, const char **argv)
     return 0;
 }
 
+static const char* task_state(eTaskState state)
+{
+    switch (state) {
+       case eReady:     return "Ready";
+       case eRunning:   return "Running";
+       case eBlocked:   return "Blocked";
+       case eSuspended: return "Suspended";
+       case eDeleted:   return "Deleted";
+       default:         return "Unknown";
+    }
+}
+
+static int tasks_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "List all tasks");
+    } else {
+        TaskStatus_t *pxTaskStatusArray;
+        UBaseType_t uxArraySize;
+
+        /* Take a snapshot of the number of tasks in case it changes while this
+        function is executing. */
+        uxArraySize = uxTaskGetNumberOfTasks();
+
+        /* Allocate a TaskStatus_t structure for each task.  An array could be
+        allocated statically at compile time. */
+        pxTaskStatusArray = pvPortMalloc( uxArraySize * sizeof( TaskStatus_t ) );
+
+        if( pxTaskStatusArray != NULL ) {
+            uint32_t ulTotalRunTime;
+
+            /* Generate raw status information about each task. */
+            uxArraySize = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalRunTime );
+     
+            /* For each populated position in the pxTaskStatusArray array,
+            format the raw data as human readable ASCII data. */
+            printf("Task Name         Runtime  State      Priority  High Stack\n");
+            for( size_t x = 0; x < uxArraySize; x++ ) {
+                char runtime[20];
+                sprintf(runtime, "%u.%u", pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 1000, (pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 100) % 10);
+
+                printf("%-16s  %-7s %-9s  %-8u  %-5d\n",
+                       pxTaskStatusArray[x].pcTaskName,
+                       runtime,
+                       task_state(pxTaskStatusArray[x].eCurrentState),
+                       pxTaskStatusArray[x].uxCurrentPriority,
+                       pxTaskStatusArray[x].usStackHighWaterMark);
+            }
+        }
+
+        /* The array is no longer needed, free the memory it consumes. */
+        vPortFree( pxTaskStatusArray );
+    }
+
+    return 0;
+}
 
 void CommandProcessor(void* params)
 {
@@ -470,6 +525,7 @@ void init_commands(void)
     add_command("loglevel",   loglevel_command);
     add_command("config",     config_command);
     add_command("reboot",     reboot_command);
+    add_command("tasks",      tasks_command);
 
     os_release_recursive_mutex(command_lock);
 }
