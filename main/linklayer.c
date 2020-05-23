@@ -309,33 +309,32 @@ static bool is_valid_address(int address)
 #define is_valid_address(addr)   (true)
 #endif
 
-/*
- * Packets for this node (not internal packets checked elsewhere) is a packet
- * with a valid address (not in exclude list) and not from us (echoed packets)
- * and destination is either this node or a broadcast.
- */
-static inline bool is_packet_for_this_node(const packet_t* packet)
-{
-    int sender = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
-    int origin = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
-    int dest   = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
 
-    return is_valid_address(sender) && origin != linklayer_node_address && (dest == linklayer_node_address || dest == BROADCAST_ADDRESS);
-}
-
-static inline bool is_routed_through(const packet_t* packet)
-{
-    return get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == linklayer_node_address ||
-           get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS;
-}
-
-static inline bool is_internal_packet(const packet_t* packet)
-{
-    return get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address &&
-           get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == linklayer_node_address;
-}
-
-
+//  /*
+//   * Packets for this node (not internal packets checked elsewhere) is a packet
+//   * with a valid address (not in exclude list) and not from us (echoed packets)
+//   * and destination is either this node or a broadcast.
+//   */
+//  static inline bool is_packet_for_this_node(const packet_t* packet)
+//  {
+//      int sender = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+//      int origin = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+//      int dest   = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+//  
+//      return is_valid_address(sender) && origin != linklayer_node_address && (dest == linklayer_node_address || dest == BROADCAST_ADDRESS);
+//  }
+//  
+//  static inline bool is_routed_through(const packet_t* packet)
+//  {
+//      return get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == linklayer_node_address ||
+//             get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS;
+//  }
+//  
+//  static inline bool is_internal_packet(const packet_t* packet)
+//  {
+//      return get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address &&
+//             get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == linklayer_node_address;
+//  }
 
 
 /*
@@ -394,7 +393,7 @@ packet_t* beacon_packet_create(const char* name)
  */
 static bool beacon_packet_process(packet_t* packet)
 {
-    bool consumed = false;
+    bool handled = false;
 
     if (packet != NULL) {
         const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
@@ -409,12 +408,12 @@ static bool beacon_packet_process(packet_t* packet)
 
         free((void*) name);
 
-        consumed = true;
+        handled = true;
 
         release_packet(packet);
     }
 
-    return consumed;
+    return handled;
 }
 
 static const char* beacon_packet_format(const packet_t* packet)
@@ -452,13 +451,13 @@ packet_t* routeannounce_packet_create(int dest)
 
 static bool routeannounce_packet_process(packet_t* packet)
 {
-    bool consumed = false;
+    bool handled = false;
 
     if (packet != NULL) {
         //linklayer_print_packet("Route Announce", packet);
         if (route_table_lock()) {
             if (linklayer_packet_is_for_this_node(packet)) {
-                consumed = true;
+                handled = true;
 
                 /* See if this supplied a route to the ORIGIN */
                 route_t* route = find_route(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
@@ -479,7 +478,7 @@ static bool routeannounce_packet_process(packet_t* packet)
         release_packet(packet);
     }
 
-    return consumed;
+    return handled;
 }
 
 static const char* routeannounce_packet_format(const packet_t* packet)
@@ -516,7 +515,7 @@ packet_t* routerequest_packet_create(int address)
 
 static bool routerequest_packet_process(packet_t* packet)
 {
-    bool consumed = false;
+    bool handled = false;
 
     if (packet != NULL) {
         //linklayer_print_packet("Route Request", p);
@@ -534,7 +533,7 @@ static bool routerequest_packet_process(packet_t* packet)
                     ra->radio_num = packet->radio_num;
                     linklayer_send_packet(ra);
 
-                    consumed = true;
+                    handled = true;
                 }
             } else {
                 /* By not 'consuming' the packet, this packet will be resent with an updated metric */
@@ -549,7 +548,7 @@ static bool routerequest_packet_process(packet_t* packet)
         release_packet(packet);
     }
 
-    return consumed;
+    return handled;
 }
 
 static const char* routerequest_packet_format(const packet_t* packet)
@@ -580,7 +579,7 @@ packet_t* routeerror_packet_create(int dest, int address, const char* reason)
 
 static bool routeerror_packet_process(packet_t* packet)
 {
-    bool consumed = false;
+    bool handled = false;
 
     if (packet != NULL) {
 
@@ -594,7 +593,7 @@ static bool routeerror_packet_process(packet_t* packet)
                     route_remove(address);
                 }
 
-                consumed = true;
+                handled = true;
             }
 
             linklayer_unlock();
@@ -605,7 +604,7 @@ static bool routeerror_packet_process(packet_t* packet)
         release_packet(packet);
     }
 
-    return consumed;
+    return handled;
 }
 
 static const char* routeerror_packet_format(const packet_t* packet)
@@ -1286,62 +1285,62 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                     }
                 }
 
-                /* Ignore any packets that are 'from' us - they've been repeated and we don't need them */
-                if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) != linklayer_node_address) {
+                int origin  = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+                int dest    = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+                int sender  = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+                int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+        
+                /* we will process packets that are local (from us and to us but not broadcast) 
+                 * or not from us and not duplicate.
+                 */
+                if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
+                    ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS) &&
+                              is_valid_address(sender) && !is_duplicate_packet(&duplicate_packets, packet))) {
 
-                    /* Check for packets arriving with the same sequence number - ignore them */
-                    if (is_internal_packet(touch_packet(packet)) || !is_duplicate_packet(&duplicate_packets, touch_packet(packet))) {
-                        bool consumed = false;
+                    bool handled = false;
 
-                        /* If the packet is for us or routed through us, process it, if it's the first time through */
-                        if (is_internal_packet(touch_packet(packet)) || is_packet_for_this_node(touch_packet(packet)) || is_routed_through(touch_packet(packet))) {
+                    /* Update route table */
+                    update_route(packet->radio_num,
+                                 origin,                                                               /* This is the destination */
+                                 get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
+                                 sender,                                                               /* Route to this node to send it */
+                                 origin,                                                               /* Route provided by this node */
+                                 get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
+                                 get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
 
-                            /* Update route table */
-                            update_route(packet->radio_num,
-                                         get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* This is the destination */
-                                         get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
-                                         get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),           /* Route to this node to send it */
-                                         get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* Route provided by this node */
-                                         get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
-                                         get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
+                    /* Try to process the packet by the protocol field */
+                    int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
 
-                            /* Try to process the packet by the protocol field */
-                            int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
+                    /* Is it a valid protocol? */
+                    if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
+                        /* Does it have a process function? */
+                        if (protocol_table[protocol].process != NULL) {
+                            ++packet_processed;  /* It is processed */
 
-                            /* Is it a valid protocol? */
-                            if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
-                                /* Does it have a process function? */
-                                if (protocol_table[protocol].process != NULL) {
-                                    ++packet_processed;  /* It is processed */
+                            /* Perform the processing and remember if we did something local */
+                            handled = protocol_table[protocol].process(ref_packet(packet));
 
-                                    /* Perform the processing and remember if we did something local */
-                                    consumed = protocol_table[protocol].process(ref_packet(packet));
-
-                                } else {
-                                    linklayer_print_packet("NOT REGISTERED", packet);
-                                    //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
-                                    consumed = true;
-                                }
-                            } else {
-                                linklayer_print_packet("BAD PROTOCOL", packet);
-                                //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
-                                consumed = true;
-                            }
+                        } else {
+                            linklayer_print_packet("NOT REGISTERED", packet);
+                            //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                            handled = true;
                         }
+                    } else {
+                        linklayer_print_packet("BAD PROTOCOL", packet);
+                        //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
+                        handled = true;
+                    }
 
-                        /* If the packet was not consumed, see how to forward on */
-                        if (!consumed) {
-                            int routeto = get_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-
-                            /* If routed to this node, then send onward by routing or rebroadcasting */
-                            if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
-                                /* re-route if not broadcast */
-                                if (routeto != BROADCAST_ADDRESS) {
-                                    set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
-                                }
-
-                                linklayer_send_packet_update_metric(ref_packet(packet));
+                    /* If the packet was not handled, see how to forward on */
+                    if (!handled) {
+                        /* If routed to this node, then send onward by routing or rebroadcasting */
+                        if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
+                            /* re-route if not broadcast */
+                            if (routeto != BROADCAST_ADDRESS) {
+                                set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                             }
+
+                            linklayer_send_packet_update_metric(ref_packet(packet));
                         }
                     }
                 }

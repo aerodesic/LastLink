@@ -2512,13 +2512,17 @@ ESP_LOGI(TAG, "%s: stack at %p", __func__, &info);
 
     int paths[100];
 
+    int sequence = 0;
+
     while (count != 0) {
+        ++sequence;
+
         int path_len = ping(address, paths, ELEMENTS_OF(paths));
 
         if (path_len < 0) {
-            printf("Ping error %d\n", path_len);
+            printf("%d: Ping error %d\n", , sequence, path_len);
         } else {
-            printf("Path:");
+            printf("%d: Path", sequence);
             for (int path = 0; path < path_len; ++path) {
                 printf(" %d", paths[path]);
             }
@@ -2586,13 +2590,15 @@ static int ping_command(int argc, const char **argv)
 
         int paths[100];
     
+        int sequence = 0;
         while (!hit_test('\x03') && count != 0) {
+            sequence++;
             int path_len = ping(address, paths, ELEMENTS_OF(paths));
 
             if (path_len < 0) {
-                printf("Ping error %d\n", path_len);
+                printf("%d: Ping error %d\n", sequence, path_len);
             } else {
-                printf("Path:");
+                printf("%d: Path", sequence);
                 for (int path = 0; path < path_len; ++path) {
                     printf(" %d", paths[path]);
                 }

@@ -68,14 +68,14 @@ static void add_line_to_buffer(const char* fmt, ...)
 
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(lines[nextline], sizeof(lines[nextline]), fmt, ap);
-    nextline++;
+    vsnprintf(lines[nextline++], sizeof(lines[nextline]), fmt, ap);
+    //nextline++;
     va_end(ap);
 
     display->hold(display);
     display->draw_rectangle(display, 0, 12, 127, 52, draw_flag_clear);
     for (int line = 0; line < NUMLINES && lines[line] != NULL; ++line) {
-        display->draw_text(display, 0, 12 + line*8, "%s", lines[line]);
+        display->draw_text(display, 0, 12 + line*8, lines[line]);
     }
     display->show(display);
 }
@@ -137,16 +137,16 @@ void app_main(void)
 
     display->clear(display);
 
-#if 1
-    display->draw_text(display, 0, 0, "Lastlink #%d", get_config_int("lastlink.address", 0));
-#else
-    display->draw_text(display, 0, 0, "LastLink %s", VERSION);
-#endif
+    char *buffer;
+    asprintf(&buffer, "Lastlink #%d", get_config_int("lastlink.address", 0));
+    display->draw_text(display, 0, 0, buffer);
+    free((void*) buffer);
     
 #if 0
     wifi_init_softap();
 #endif
 
+#if 0
     os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
     uint64_t starting_tick_count  = get_milliseconds();
@@ -192,5 +192,6 @@ void app_main(void)
             }
         }
     }
+#endif
 }
 

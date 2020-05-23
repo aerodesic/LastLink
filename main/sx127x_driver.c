@@ -136,7 +136,7 @@ static int          global_number_radios_active;
 /* Called when radio's wakeup timer fires - generates 'interrupt' to handler */
 static void wakeup_timer(os_timer_t timer_id)
 {
-ESP_LOGI(TAG, "%s: wakeup", __func__);
+//ESP_LOGI(TAG, "%s: wakeup", __func__);
     radio_t *radio = (radio_t *) os_get_timer_data(timer_id);
 
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
@@ -197,7 +197,7 @@ bool sx127x_create(radio_t* radio)
             /* Create the wakeup timer but don't start it */
             data->wakeup_timer_id = os_create_timer("wakeup_timer", 0, radio, wakeup_timer);
 
-ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->radio_num, radio->transmit_delay);
+//ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->radio_num, radio->transmit_delay);
         }
 
         /* Start global interrupt processing thread if not yet running */
@@ -405,6 +405,20 @@ static bool tx_handle_interrupt(radio_t* radio, bool from_interrupt)
                 uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
                 ESP_LOGE(TAG, "%s: CAD detected %s %02x - delaying...", __func__, data->carrier_detected ? "TRUE" : "FALSE", modem_status);
             } else {
+#else
+            /* Make stab at checking to see if activity is present on the receiver and abandon the
+             * transmission until later.
+             */
+            uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
+            if ((modem_status & 0x1f) != 0x04) {
+     
+ESP_LOGE(TAG, "%s: modem status %02x: waiting...", __func__, modem_status);
+
+                /* Look again in a short while */
+                processed = false;
+                /* Do immediately after receive finishes */
+                simpletimer_start(&data->transmit_timer, 0);
+            } else {
 #endif
 
                 start_packet(radio);
@@ -415,9 +429,7 @@ static bool tx_handle_interrupt(radio_t* radio, bool from_interrupt)
                 /* When we transmit, we delay 2 units before sending again */
                 simpletimer_start(&data->transmit_timer, radio->transmit_delay * 2);
 
-#ifdef USE_CAD
             }
-#endif
 
         } else {
 
@@ -466,7 +478,7 @@ static void global_interrupt_handler(void* param)
 
         if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t*) &radio)) {
 
-ESP_LOGI(TAG, "%s: radio %d", __func__, radio ? radio->radio_num : -1);
+//ESP_LOGI(TAG, "%s: radio %d", __func__, radio ? radio->radio_num : -1);
 
             if (radio != NULL) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
@@ -511,7 +523,7 @@ ESP_LOGI(TAG, "%s: radio %d", __func__, radio ? radio->radio_num : -1);
 #endif /* USE_CAD */
 
                     if ((data->irq_flags & (SX127x_IRQ_RX_DONE)) != 0) {
-ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
+//ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         rx_handle_interrupt(radio);
                         data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_RX_TIMEOUT);
 
@@ -527,12 +539,12 @@ ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                     if (data->irq_flags & (SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE)) {
                         /* If it's been long enough, start the transmit. */
                         if (tx_handle_interrupt(radio, (data->irq_flags & SX127x_IRQ_TX_DONE))) {
-ESP_LOGI(TAG, "%s: TX_DONE processed", __func__);
+//ESP_LOGI(TAG, "%s: TX_DONE processed", __func__);
                             /* Kill both flags at once */
                             data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
 
-                        } else {
-ESP_LOGI(TAG, "%s: tx delayed %d ms", __func__, simpletimer_remaining(&data->transmit_timer));
+                        } else if (simpletimer_remaining(&data->transmit_timer) != 0) {
+//ESP_LOGI(TAG, "%s: tx delayed %d ms", __func__, simpletimer_remaining(&data->transmit_timer));
                             os_set_timer(data->wakeup_timer_id, simpletimer_remaining(&data->transmit_timer));
                         }
                     }
