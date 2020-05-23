@@ -127,12 +127,5 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Transmit delay after last receive or transmit.
 
-    config LASTLINK_RADIO_$(RADIO_NUM)_DELAY
-        int "Transmit delay (in mS)"
-        default 0
-        range 0 500
-        help
-            Receive to transmit delay
-
 endmenu
 

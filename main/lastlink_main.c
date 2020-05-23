@@ -68,7 +68,8 @@ static void add_line_to_buffer(const char* fmt, ...)
 
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(lines[nextline++], sizeof(lines[nextline]), fmt, ap);
+    vsnprintf(lines[nextline], sizeof(lines[nextline]), fmt, ap);
+    nextline++;
     va_end(ap);
 
     display->hold(display);

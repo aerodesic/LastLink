@@ -145,7 +145,6 @@ typedef struct radio_config {
     radio_type_t radio_type;
     int crystal;
     int channel;
-    int delay;
     int dios[MAX_DIOS];
     int reset;
     int transmit_delay;

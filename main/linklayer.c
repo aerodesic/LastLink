@@ -141,7 +141,6 @@ duplicate_packet_list_t           duplicate_packets;
     .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
-    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),  \
     .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),  \
@@ -164,7 +163,6 @@ duplicate_packet_list_t           duplicate_packets;
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
     .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),  \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),   \
     .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),   \
@@ -180,7 +178,6 @@ duplicate_packet_list_t           duplicate_packets;
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DELAY),      \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),   \
     .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),   \
     .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),   \
@@ -277,7 +274,7 @@ void linklayer_set_receive_only_from(const char* addresses)
     ESP_LOGD(TAG, "%s: setting to %s", __func__, addresses);
 
     const char *p = addresses;
-    
+
     for (size_t slot = 0; slot < ELEMENTS_OF(receive_only_from) && p != NULL; ++slot) {
         receive_only_from[slot] = strtol(p, NULL, 0);
         p = (const char*) strchr(p, ',');
@@ -311,7 +308,7 @@ static bool is_valid_address(int address)
 #else
 #define is_valid_address(addr)   (true)
 #endif
-       
+
 /*
  * Packets for this node (not internal packets checked elsewhere) is a packet
  * with a valid address (not in exclude list) and not from us (echoed packets)
@@ -527,7 +524,7 @@ static bool routerequest_packet_process(packet_t* packet)
         if (linklayer_lock()) {
 
             /* TODO: Need may brakes to avoid transmitting too many at once !! (Maybe ok for testing) */
-            
+
             /* If packet is dest for our node, announce route back to origin with same seqeuence and new metric. */
             if (linklayer_packet_is_for_this_node(packet)) {
                 packet_t* ra = routeannounce_packet_create(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
@@ -1043,7 +1040,7 @@ void linklayer_send_packet(packet_t* packet)
                     route_start_routerequest(route);
                 }
 
-                if (route == NULL) { 
+                if (route == NULL) {
                     /* Don't have a route and it's not ours so drop it */
                     release_packet(packet);
                     packet = NULL;
@@ -1288,59 +1285,63 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                         os_put_queue(promiscuous_queue, dup);
                     }
                 }
-    
-                /* Check for packets arriving with the same sequence number - ignore them */
-                if (is_internal_packet(touch_packet(packet)) || !is_duplicate_packet(&duplicate_packets, touch_packet(packet))) {
-                    bool consumed = false;
-    
-                    /* If the packet is for us or routed through us, process it, if it's the first time through */
-                    if (is_internal_packet(touch_packet(packet)) || is_packet_for_this_node(touch_packet(packet)) || is_routed_through(touch_packet(packet))) {
-    
-                        /* Update route table */
-                        update_route(packet->radio_num,
-                                     get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* This is the destination */
-                                     get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
-                                     get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),           /* Route to this node to send it */
-                                     get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* Route provided by this node */
-                                     get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
-                                     get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
-                
-                        /* Try to process the packet by the protocol field */
-                        int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
-    
-                        /* Is it a valid protocol? */
-                        if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
-                            /* Does it have a process function? */
-                            if (protocol_table[protocol].process != NULL) {
-                                ++packet_processed;  /* It is processed */
-    
-                                /* Perform the processing and remember if we did something local */
-                                consumed = protocol_table[protocol].process(ref_packet(packet));
-    
+
+                /* Ignore any packets that are 'from' us - they've been repeated and we don't need them */
+                if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) != linklayer_node_address) {
+
+                    /* Check for packets arriving with the same sequence number - ignore them */
+                    if (is_internal_packet(touch_packet(packet)) || !is_duplicate_packet(&duplicate_packets, touch_packet(packet))) {
+                        bool consumed = false;
+
+                        /* If the packet is for us or routed through us, process it, if it's the first time through */
+                        if (is_internal_packet(touch_packet(packet)) || is_packet_for_this_node(touch_packet(packet)) || is_routed_through(touch_packet(packet))) {
+
+                            /* Update route table */
+                            update_route(packet->radio_num,
+                                         get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* This is the destination */
+                                         get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
+                                         get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN),           /* Route to this node to send it */
+                                         get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),           /* Route provided by this node */
+                                         get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
+                                         get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
+
+                            /* Try to process the packet by the protocol field */
+                            int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
+
+                            /* Is it a valid protocol? */
+                            if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
+                                /* Does it have a process function? */
+                                if (protocol_table[protocol].process != NULL) {
+                                    ++packet_processed;  /* It is processed */
+
+                                    /* Perform the processing and remember if we did something local */
+                                    consumed = protocol_table[protocol].process(ref_packet(packet));
+
+                                } else {
+                                    linklayer_print_packet("NOT REGISTERED", packet);
+                                    //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                                    consumed = true;
+                                }
                             } else {
-                                linklayer_print_packet("NOT REGISTERED", packet);
-                                //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                                linklayer_print_packet("BAD PROTOCOL", packet);
+                                //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
                                 consumed = true;
                             }
-                        } else {
-                            linklayer_print_packet("BAD PROTOCOL", packet);
-                            //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
-                            consumed = true;
                         }
-                    } 
 
-                    /* If the packet was not consumed, see how to forward on */
-                    if (!consumed) {
-                        int routeto = get_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-    
-                        /* If routed to this node, then send onward by routing or rebroadcasting */
-                        if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
-                            /* re-route if not broadcast */
-                            if (routeto != BROADCAST_ADDRESS) {
-                                set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                        /* If the packet was not consumed, see how to forward on */
+                        if (!consumed) {
+                            int routeto = get_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+
+                            /* If routed to this node, then send onward by routing or rebroadcasting */
+                            if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
+                                /* re-route if not broadcast */
+                                if (routeto != BROADCAST_ADDRESS) {
+                                    set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                                }
+
+                                linklayer_send_packet_update_metric(ref_packet(packet));
                             }
-    
-                            linklayer_send_packet_update_metric(ref_packet(packet));
                         }
                     }
                 }
@@ -1418,8 +1419,8 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
         ESP_LOGE(TAG, "%s: trying to set activity_count < 0", __func__);
     }
 
-    gpio_set_level(CONFIG_LASTLINK_LED_ACTIVITY_GPIO, activity_count != 0); 
-    gpio_set_level(2, activity_count != 0); 
+    gpio_set_level(CONFIG_LASTLINK_LED_ACTIVITY_GPIO, activity_count != 0);
+    gpio_set_level(2, activity_count != 0);
 }
 
 void linklayer_print_packet(const char* reason, packet_t* packet)
