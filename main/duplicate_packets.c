@@ -47,9 +47,9 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
         }
     }
 
-if (duplicate) {
-    ESP_LOGI(TAG, "%s: %d duplicate on node %d", __func__, sequence, origin);
-}
+//if (duplicate) {
+//    ESP_LOGI(TAG, "%s: %d duplicate on node %d", __func__, sequence, origin);
+//}
 
     return duplicate;
 }

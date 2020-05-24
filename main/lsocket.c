@@ -149,6 +149,7 @@ typedef struct ping_table_entry {
     int          retries;
     bool         routed;
     ls_error_t   error;
+    uint64_t     start_time;
 } ping_table_entry_t;
 
 ping_table_entry_t   ping_table[CONFIG_LASTLINK_MAX_OUTSTANDING_PINGS];
@@ -441,6 +442,7 @@ static bool ping_has_been_routed(packet_t* packet, void* data)
         ping_table[slot].waiting = true;
         ping_table[slot].thread = os_create_thread(ping_retry_thread, "ping_retry", PING_RETRY_STACK_SIZE, 0, (void*) slot);
         ping_table[slot].routed = true;
+        ping_table[slot].start_time = get_milliseconds();
 
         /* We are done with it */
         release_packet(packet);
@@ -460,7 +462,7 @@ static bool ping_has_been_routed(packet_t* packet, void* data)
 /*
  * Ping an address and return it's pathlist
  */
-ls_error_t ping(int address, int *pathlist, int pathlistlen)
+ls_error_t ping(int address, uint32_t *elapsed, int *pathlist, int pathlistlen)
 {
     ls_error_t err = 0;
 
@@ -495,6 +497,8 @@ ls_error_t ping(int address, int *pathlist, int pathlistlen)
                 }
 
                 err = num_routes;
+
+                *elapsed = get_milliseconds() - ping_table[slot].start_time;
 
                 release_packet(reply);
 
@@ -2489,87 +2493,6 @@ static int stconnect_command(int argc, const char **argv)
     return 0;
 }
 
-#ifdef PING_THREAD_USED
-typedef struct {
-    int address;
-    FILE* out;
-    int count;
-} ping_info_t;
-
-void ping_command_thread(void* param)
-{
-    ping_info_t *info = (ping_info_t*) param;
-
-ESP_LOGI(TAG, "%s: stack at %p", __func__, &info);
-
-    int address = info->address;
-    int count = info->count;
-
-    /* Set stdout for printing */
-    stdout = info->out;
-
-    free((void*) info);
-
-    int paths[100];
-
-    int sequence = 0;
-
-    while (count != 0) {
-        ++sequence;
-
-        int path_len = ping(address, paths, ELEMENTS_OF(paths));
-
-        if (path_len < 0) {
-            printf("%d: Ping error %d\n", , sequence, path_len);
-        } else {
-            printf("%d: Path", sequence);
-            for (int path = 0; path < path_len; ++path) {
-                printf(" %d", paths[path]);
-            }
-
-            printf("\n");
-        }
-
-        count--;
-    }
-
-    os_exit_thread();
-}
-
-#define PING_COMMAND_STACK_SIZE      8000
-
-/**********************************************************************/
-/* ping <node address>                                                */
-/**********************************************************************/
-static int ping_command(int argc, const char **argv)
-{
-    if (argc == 0) {
-        show_help(argv[0], "<node address> [<count>]", "Find and report path to a node");
-    } else {
-        int address = strtol(argv[1], NULL, 10);
-        int count = 1;
-
-        if (argc > 2) {
-           count = strtol(argv[2], NULL, 10);
-           if (count < 0 || count > 1000) {
-               count = 1;
-           }
-        }
-
-        ping_info_t *info = (ping_info_t*) malloc(sizeof(ping_info_t));
-        if (info != NULL) {
-            info->address = address;
-            info->out = stdout;
-            info->count = count;
-            os_create_thread(ping_command_thread, "ping", PING_COMMAND_STACK_SIZE, 10, (void*) info);
-        } else {
-            printf("Unable to create ping info object\n");
-        }
-    }
-
-    return 0;
-}
-#else
 /**********************************************************************/
 /* ping <node address>                                                */
 /**********************************************************************/
@@ -2593,12 +2516,14 @@ static int ping_command(int argc, const char **argv)
         int sequence = 0;
         while (!hit_test('\x03') && count != 0) {
             sequence++;
-            int path_len = ping(address, paths, ELEMENTS_OF(paths));
+            uint32_t  elapsed;
+
+            int path_len = ping(address, &elapsed, paths, ELEMENTS_OF(paths));
 
             if (path_len < 0) {
                 printf("%d: Ping error %d\n", sequence, path_len);
             } else {
-                printf("%d: Path", sequence);
+                printf("%d: %d mS Path", sequence, elapsed);
                 for (int path = 0; path < path_len; ++path) {
                     printf(" %d", paths[path]);
                 }
@@ -2615,7 +2540,6 @@ static int ping_command(int argc, const char **argv)
 
     return 0;
 }
-#endif
 
 #endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
 

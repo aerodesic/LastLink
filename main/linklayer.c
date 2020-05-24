@@ -1165,10 +1165,10 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         }
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
-            if (os_items_in_queue(radio->transmit_queue) == 1) {
+            // if (os_items_in_queue(radio->transmit_queue) == 1) {
                 /* Start the transmission */
                 radio->transmit_start(radio);
-            }
+            // }
         }
     }
 }

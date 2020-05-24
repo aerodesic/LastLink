@@ -141,7 +141,7 @@ ls_error_t ls_get_last_error(int socket);
 /*
  * Ping a node and return route list.
  */
-ls_error_t ping(int address, int* routelist, int routelistlen);
+ls_error_t ping(int address, uint32_t *elapsed, int* routelist, int routelistlen);
 
 /*
  * debug
