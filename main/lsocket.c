@@ -581,7 +581,7 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
     ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
     int dest_addr       = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 
-printf("find_socket_from_packet: addr %d src port %d dest port %d\n", dest_addr, src_port, dest_port);
+//printf("find_socket_from_packet: addr %d src port %d dest port %d\n", dest_addr, src_port, dest_port);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
 //ls_dump_socket_ptr("testing", socket_table + index);
@@ -2384,7 +2384,7 @@ static int dgsend_command(int argc, const char **argv)
             int ret = ls_bind(socket, 0);
             if (ret >= 0) {
                 ret = ls_connect(socket, address, port);
-                ls_dump_socket("sending", socket);
+                //ls_dump_socket("sending", socket);
                 if (ret >= 0) {
                     ret = ls_write(socket, argv[3], strlen(argv[3]));
                     printf("ls_write returned %d\n", ret);
