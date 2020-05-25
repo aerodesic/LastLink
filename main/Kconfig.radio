@@ -125,7 +125,7 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         default 50
         range 0 1000
         help
-            Transmit delay after last receive or transmit.
+            Delays are in multiples of this interval.
 
 endmenu
 

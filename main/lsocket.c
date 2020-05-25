@@ -584,14 +584,14 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
 printf("find_socket_from_packet: addr %d src port %d dest port %d\n", dest_addr, src_port, dest_port);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
-ls_dump_socket_ptr("testing", socket_table + index);
+//ls_dump_socket_ptr("testing", socket_table + index);
         if (socket_table[index].socket_type == type &&
             !socket_table[index].listen &&
             (socket_table[index].dest_addr == 0 || socket_table[index].dest_addr == dest_addr) &&
             socket_table[index].local_port == dest_port &&
             (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port)) {
 
-ls_dump_socket_ptr("found", socket_table + index);
+//ls_dump_socket_ptr("found", socket_table + index);
             socket = &socket_table[index];
         }
     }
@@ -2506,12 +2506,16 @@ static int ping_command(int argc, const char **argv)
 
         if (argc > 2) {
            count = strtol(argv[2], NULL, 10);
-           if (count < 0 || count > 1000) {
+           if (count < 0) {
                count = 1;
            }
         }
 
-        int paths[100];
+        int  fail = 0;
+        int  good = 0;
+        int  total = 0;
+
+        int paths[1000];
     
         int sequence = 0;
         while (!hit_test('\x03') && count != 0) {
@@ -2519,10 +2523,13 @@ static int ping_command(int argc, const char **argv)
             uint32_t  elapsed;
 
             int path_len = ping(address, &elapsed, paths, ELEMENTS_OF(paths));
+            ++total;
 
             if (path_len < 0) {
+                ++fail;
                 printf("%d: Ping error %d\n", sequence, path_len);
             } else {
+                ++good;
                 printf("%d: %d mS Path", sequence, elapsed);
                 for (int path = 0; path < path_len; ++path) {
                     printf(" %d", paths[path]);
@@ -2532,10 +2539,11 @@ static int ping_command(int argc, const char **argv)
             }
 
             //os_delay(1000);
-            os_delay(100);
+            os_delay(1000);
 
             count--;
         }
+        printf("%d fail  %d good  %d total\n", fail, good, total);
     }
 
     return 0;

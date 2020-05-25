@@ -19,9 +19,35 @@ typedef struct simpletimer {
     uint64_t target;
 } simpletimer_t;
 
+/*
+ * Forward declarations.
+ */
+static inline void simpletimer_set_interval(simpletimer_t *timer, uint32_t interval);
+static inline bool simpletimer_is_stopped(simpletimer_t *timer);
+static inline bool simpletimer_is_running(simpletimer_t *timer);
+static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval);
+static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval);
+static inline void simpletimer_set_expired(simpletimer_t *timer);
+static inline void simpletimer_stop(simpletimer_t *timer);
+static inline bool simpletimer_is_expired(simpletimer_t *timer);
+static inline uint32_t simpletimer_remaining(simpletimer_t *timer);
+static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uint32_t *remaining);
+static inline void simpletimer_restart(simpletimer_t *timer);
+static inline void simpletimer_wait_for(simpletimer_t *timer);
+
 static inline void simpletimer_set_interval(simpletimer_t *timer, uint32_t interval)
 {
     timer->interval = interval;
+}
+
+static inline bool simpletimer_is_stopped(simpletimer_t *timer)
+{
+    return timer->state == ST_STOPPED;
+}
+
+static inline bool simpletimer_is_running(simpletimer_t *timer)
+{
+    return !simpletimer_is_stopped(timer) && !simpletimer_is_expired(timer);
 }
 
 static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval)
@@ -29,6 +55,17 @@ static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval)
     simpletimer_set_interval(timer, interval);
     timer->target = get_milliseconds() + timer->interval;
     timer->state = ST_RUNNING;
+}
+
+/*
+ * Make sure the timer is set for at least <interval>.  Don't decrease if smaller.
+ */
+static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval)
+{
+    if (!simpletimer_is_running(timer) || simpletimer_remaining(timer) < interval) {
+        /* Increase to new interval */
+        simpletimer_start(timer, interval);
+    }
 }
 
 static inline void simpletimer_set_expired(simpletimer_t *timer)
@@ -48,16 +85,6 @@ static inline bool simpletimer_is_expired(simpletimer_t *timer)
     }
 
     return timer->state == ST_EXPIRED;
-}
-
-static inline bool simpletimer_is_stopped(simpletimer_t *timer)
-{
-    return timer->state == ST_STOPPED;
-}
-
-static inline bool simpletimer_is_running(simpletimer_t *timer)
-{
-    return !simpletimer_is_stopped(timer) && !simpletimer_is_expired(timer);
 }
 
 static inline uint32_t simpletimer_remaining(simpletimer_t *timer)

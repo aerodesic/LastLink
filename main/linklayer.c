@@ -68,15 +68,6 @@ static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
 static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
 
-#ifdef NOTUSED
-static void linklayer_transmit_packet_delayed(os_timer_t timer);
-/* item sent to delay start through timer to actually launch the packet */
-typedef struct {
-    radio_t *radio;
-    packet_t *packet;
-} start_delay_param_t;
-#endif
-
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
 /* Calls from radio driver to linklayer */
@@ -137,52 +128,52 @@ duplicate_packet_list_t           duplicate_packets;
 
 #define RADIO_CONFIG_SPI(radio, module) \
     { \
-    .type                = "spi",                                                         \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .type                = "spi",                                                             \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),  \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),  \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),  \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET), \
-    .spi_sck             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),   \
-    .spi_mosi            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),  \
-    .spi_miso            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),  \
-    .spi_cs              = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),    \
-    .spi_host            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),   \
-    .spi_clock           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ), \
-    .spi_pre_xfer_callback = NULL,                                               \
-    .dma_chan            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),   \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),      \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),      \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),      \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET),     \
+    .spi_sck             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),       \
+    .spi_mosi            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),      \
+    .spi_miso            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),      \
+    .spi_cs              = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),        \
+    .spi_host            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),       \
+    .spi_clock           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ),   \
+    .spi_pre_xfer_callback = NULL,                                                            \
+    .dma_chan            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),       \
    },
 
 #define RADIO_CONFIG_I2C(radio, module) \
     { \
-    .type                = "i2c",                                                         \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .type                = "i2c",                                                             \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),  \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),   \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),   \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),   \
-    .i2c_blah1           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),  \
-    .i2c_blah2           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),  \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),      \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),       \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),       \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),       \
+    .i2c_blah1           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),      \
+    .i2c_blah2           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),      \
    },
 
 #define RADIO_CONFIG_SERIAL(radio, module) \
     { \
-    .type                = "serial",                                                      \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                 \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),    \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),    \
+    .type                = "serial",                                                          \
+    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
+    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
+    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),   \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),   \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),   \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),  \
-    .dev                 = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),    \
+    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),       \
+    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),       \
+    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),       \
+    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),      \
+    .dev                 = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),        \
    },
 
 static const radio_config_t radio_config[] = {
@@ -1097,6 +1088,13 @@ void linklayer_send_packet(packet_t* packet)
                     }
                 }
 
+                if (get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS ||
+                    get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+                    /* Issue a random delay on each transmit request based on current node number */
+                    packet->delay = linklayer_node_address;
+//ESP_LOGI(TAG, "%s: setting delay to %d", __func__, linklayer_node_address);
+                }
+
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
@@ -1143,26 +1141,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
-#ifdef NOTUSED
-    } else if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
-        /* Issue delayed start for broadcast packets */
-        start_delay_param_t *sdp = (start_delay_param_t*) malloc(sizeof(start_delay_param_t));
-        if (sdp != NULL) {
-            sdp->packet = packet;
-            sdp->radio = radio;
-            int delay = ((esp_random() + linklayer_node_address) % 5) * 20 + 20;
-            os_timer_t timer = os_create_timer("delay_packet", delay, sdp, linklayer_transmit_packet_delayed);
-            os_start_timer(timer);
-        } else {
-            release_packet(packet);
-            ESP_LOGE(TAG, "%s: unable to allocate delay_param", __func__);
-        }
-#endif
     } else {
-        if (get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
-            /* Issue a random delay on each transmit request */
-            packet->delay = true;
-        }
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
             // if (os_items_in_queue(radio->transmit_queue) == 1) {
@@ -1172,25 +1151,6 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         }
     }
 }
-
-#ifdef NOTUSED
-static void linklayer_transmit_packet_delayed(os_timer_t timer)
-{
-    start_delay_param_t *delay_param = (start_delay_param_t*) os_get_timer_data(timer);
-
-    if (os_put_queue(delay_param->radio->transmit_queue, delay_param->packet)) {
-        if (os_items_in_queue(delay_param->radio->transmit_queue) == 1) {
-            delay_param->radio->transmit_start(delay_param->radio);
-        }
-    } else {
-        ESP_LOGE(TAG, "%s: unable to queue packet", __func__);
-        release_packet(delay_param->packet);
-    }
-
-    free((void*) delay_param);
-    os_delete_timer(timer);
-}
-#endif
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
 {

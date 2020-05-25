@@ -363,6 +363,21 @@ static const char* task_state(eTaskState state)
     }
 }
 
+/*
+ * time
+ *
+ * Display time in ms
+ */
+static int time_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "Show current time int mS since boot");
+    } else {
+        printf("%llu\n", get_milliseconds());
+    }
+    return 0;
+}
+
 static int tasks_command(int argc, const char **argv)
 {
     if (argc == 0) {
@@ -530,6 +545,7 @@ void init_commands(void)
     add_command("config",     config_command);
     add_command("reboot",     reboot_command);
     add_command("tasks",      tasks_command);
+    add_command("time",       time_command);
 
     os_release_recursive_mutex(command_lock);
 }

@@ -71,6 +71,7 @@ static bool release_lock(radio_t* radio);
 static bool set_bandwidth(radio_t* radio, int bw);
 static bool set_spreading_factor(radio_t*, int spreading_factor);
 static int  get_spreading_factor(radio_t* radio);
+static int  get_message_time(radio_t* radio, int length);
 static int set_coding_rate(radio_t* radio, int rate);
 static int set_preamble_length(radio_t* radio, int length);
 static int set_enable_crc(radio_t* radio, bool enable);
@@ -110,6 +111,7 @@ typedef struct sx127x_private_data {
     os_timer_t    wakeup_timer_id;
     uint16_t      irq_flags;                      /* Bottom 8 are hardware flags acquired at irq scan time */
 #define SX127x_FORCE_START_TRANSMIT   0x100       /* Extra 'irq flag' for starting new transmit activity */
+#define SX127x_FORCE_END_RECEIVE      0x200       /* Status used to indicate a timeout on receive */
 } sx127x_private_data_t;
 
 static os_thread_t  global_interrupt_handler_thread;
@@ -135,7 +137,7 @@ static void wakeup_timer(os_timer_t timer_id)
 //ESP_LOGI(TAG, "%s: wakeup", __func__);
     radio_t *radio = (radio_t *) os_get_timer_data(timer_id);
 
-    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+   // sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) radio, 0);
 }
@@ -190,6 +192,7 @@ bool sx127x_create(radio_t* radio)
 
             /* Set the interval to delay transmit after last receive or transmit */
             simpletimer_start(&data->transmit_timer, radio->transmit_delay);
+
             /* Create the wakeup timer but don't start it */
             data->wakeup_timer_id = os_create_timer("wakeup_timer", 0, radio, wakeup_timer);
 
@@ -289,6 +292,7 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
 
     /* On receive, we delay one unit */
     simpletimer_start(&data->transmit_timer, radio->transmit_delay);
+//ESP_LOGI(TAG, "%s: receive; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
 }
 
 #ifdef USE_FHSS
@@ -388,9 +392,14 @@ static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *dat
     /* Get a new packet if we have none */
     if (data->current_packet == NULL) {
         os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &data->current_packet, 0);
-        /* If the packet calls for a delay, make it three units before transmit */
         if (data->current_packet && data->current_packet->delay) {
-            simpletimer_start(&data->transmit_timer, (esp_random() % 5 + 1) * radio->transmit_delay);
+
+#if  0
+            simpletimer_extend(&data->transmit_timer, (data->current_packet->delay % 8) * (radio->transmit_delay + get_message_time(radio, data->current_packet->length)));
+            //ESP_LOGI(TAG, "%s: new; packet delay %d", __func__, simpletimer_remaining(&data->transmit_timer));
+#else
+            simpletimer_start(&data->transmit_timer, (data->current_packet->delay % 9) * get_message_time(radio, MAX_PACKET_LEN));
+#endif
         }
     }
 
@@ -403,11 +412,17 @@ static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *dat
              * transmission until later.
              */
             uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
-            if ((modem_status & 0x1f) != 0x04) {
+            if ((modem_status & (SX127x_MODEM_STATUS_SIG_DETECTED | SX127x_MODEM_STATUS_SIG_SYNCED | SX127x_MODEM_STATUS_HEADER_VALID)) != 0) {
      
-ESP_LOGE(TAG, "%s: modem status %02x: waiting...", __func__, modem_status);
+                /* Freshen the irq_flags */
+                data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
 
-                simpletimer_start(&data->transmit_timer, radio->transmit_delay * esp_random() % 3);
+//ESP_LOGE(TAG, "%s: modem status %02x irq_mask %02x: waiting...", __func__, modem_status, data->irq_flags);
+
+                /* Wait for max packet length and if timeout, re-enter */
+                simpletimer_extend(&data->transmit_timer, get_message_time(radio, MAX_PACKET_LEN));
+//ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
+
                 tx_state = TX_WAIT_RX_INT;
 
             } else {
@@ -419,7 +434,8 @@ ESP_LOGE(TAG, "%s: modem status %02x: waiting...", __func__, modem_status);
 
                 tx_state = TX_WAIT_TX_INT;
 
-                simpletimer_start(&data->transmit_timer, radio->transmit_delay);
+                simpletimer_extend(&data->transmit_timer, radio->transmit_delay + get_message_time(radio, data->current_packet->length));
+//ESP_LOGI(TAG, "%s: tx; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
             }
         } else {
             tx_state = TX_CALLBACK;
@@ -475,7 +491,8 @@ static void global_interrupt_handler(void* param)
                 if (acquire_lock(radio)) {
                     /* Remember what we have */
                     data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
-                    /* Physically clear the interrupts */
+
+                    /* Physically clear the interrupts detected */
                     radio->write_register(radio, SX127x_REG_IRQ_FLAGS, data->irq_flags & 0xFF);
 
 #ifdef USE_FHSS
@@ -489,12 +506,20 @@ static void global_interrupt_handler(void* param)
                     if ((data->irq_flags & (SX127x_IRQ_RX_DONE)) != 0) {
 //ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         rx_handle_interrupt(radio, data);
-                        data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_RX_TIMEOUT);
+                        data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_RX_TIMEOUT | SX127x_FORCE_END_RECEIVE);
 
                         /* If we have a packet hanging around, try to start next */
                         if (data->current_packet != NULL) {
                             data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
                         }
+                    }
+
+                    /* Handle the force end receive if still lingering */
+                    if ((data->irq_flags & SX127x_FORCE_END_RECEIVE) != 0) {
+                        data->irq_flags &= ~(SX127x_FORCE_END_RECEIVE);
+                        //simpletimer_stop(&data->transmit_timer);
+                        set_standby_mode(radio);
+                        set_receive_mode(radio);
                     }
 
                     if (data->irq_flags & (SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE)) {
@@ -504,11 +529,16 @@ static void global_interrupt_handler(void* param)
                             case TX_WAIT_RX_INT: {
 //ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
                                 /* Transmitted - waiting for receive interrupt */
-                                /* Will be called back and find waiting transmit */
+                                /* Callback at max message length in case it didn't happen via interrupt */
+
+                                data->irq_flags |= SX127x_FORCE_END_RECEIVE;
+                                simpletimer_extend(&data->transmit_timer, get_message_time(radio, MAX_PACKET_LEN));
+//ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
+
                                 break;
                             }
                             case TX_CALLBACK: {
-//ESP_LOGI(TAG, "%s: TX_CALLBACK %d", __func__, simpletimer_remaining(&data->transmit_timer));
+//ESP_LOGI(TAG, "%s: TX_CALLBACK %d (%llu)", __func__, simpletimer_remaining(&data->transmit_timer), get_milliseconds());
                                 /* Set a callback to happen after transmit delay */
                                 data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
                                 os_set_timer(data->wakeup_timer_id, simpletimer_remaining(&data->transmit_timer));
@@ -1049,6 +1079,7 @@ ESP_LOGI(TAG, "%s: sf %d", __func__, spreading_factor);
 static int get_spreading_factor(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
     return data->spreading_factor;
 }
 
@@ -1174,6 +1205,17 @@ ESP_LOGI(TAG, "%s: enable %s", __func__, implicit_header ? "TRUE" : "FALSE");
 
     return ok;
 }
+
+/*
+ * Return message time in milliseconds for a packet of given length.
+ */
+static int get_message_time(radio_t* radio, int length)
+{
+    int time = (length * (1 << get_spreading_factor(radio)) * 1000) / get_bandwidth(radio);
+//ESP_LOGI(TAG, "%s: sf %d bw %d length %d is %d", __func__, get_spreading_factor(radio), get_bandwidth(radio), length, time);
+    return time;
+}
+
 
 /*
  * All interrupts come here and are queued for later processing by a global handling thread.

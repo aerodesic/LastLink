@@ -21,6 +21,9 @@
 #include "commands.h"
 #endif
 
+/* Round up packet len so each is on a 32 byte boundary and multiples of 32 bytes */
+#define ALLOCATED_PACKET_LEN   ((MAX_PHYSICAL_PACKET_LEN + 31) & 0xFFE0)
+
 /* Where freed packets go - where we look first */
 static packet_t          *packet_table;
 static uint8_t           *dma_buffers;
@@ -78,7 +81,7 @@ packet_t *allocate_packet_plain(void)
                 memset(packet->buffer, 0, MAX_PHYSICAL_PACKET_LEN);
                 packet->length = 0;
                 packet->transmitted = false;
-                packet->delay = false;
+                packet->delay = 0;
                 packet->ref = 1;
                 packet->radio_num = UNKNOWN_RADIO;
                 packet->rssi = 0;
@@ -547,7 +550,7 @@ bool init_packets(int num_packets)
         packet_table = (packet_t*) malloc(sizeof(packet_t) * num_packets);
         if (packet_table != NULL) {
             /* Create the bulk DMA buffer */
-            dma_buffers = (uint8_t*) os_alloc_dma_memory(MAX_PHYSICAL_PACKET_LEN * num_packets);
+            dma_buffers = (uint8_t*) os_alloc_dma_memory(ALLOCATED_PACKET_LEN * num_packets);
 
             if (dma_buffers != NULL) {
                 /* Zero the table */
@@ -570,7 +573,7 @@ bool init_packets(int num_packets)
                         p->buffer = dma_buffers;
                         release_packet(p);
 
-                        dma_buffers += MAX_PHYSICAL_PACKET_LEN;
+                        dma_buffers += ALLOCATED_PACKET_LEN;
                         ++count;
                     }      
                 } else {

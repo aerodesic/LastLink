@@ -73,7 +73,7 @@ static bool check_route_expired(route_t *route)
     bool deleted = false;
 
     if (simpletimer_is_expired(&route->lifetime)) {
-ESP_LOGI(TAG, "%s: expiring route for address %d", __func__, route->dest);
+//ESP_LOGI(TAG, "%s: expiring route for address %d", __func__, route->dest);
         route_delete(route);
         deleted = true;
     }

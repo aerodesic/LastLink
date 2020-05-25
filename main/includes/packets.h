@@ -31,7 +31,7 @@ typedef struct packet {
     void             *routed_callback_data;
 
     bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
-    bool             delay;                      /* delay before transmit after any other spacing delay */
+    int              delay;                      /* A delay factor before transmitting packet */
     uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int8_t           rssi;                       /* Received signal strength */
     int8_t           snr;                        /* In .1 db */
