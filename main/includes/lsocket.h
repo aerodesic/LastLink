@@ -42,7 +42,7 @@ typedef enum {
 } ls_errors_t;
 
 typedef enum {
-    LS_UNUSED = 0,    /* Unused */
+    LS_UNKNOWN = 0,   /* Unknown */
     LS_DATAGRAM,      /* Receiving/transmitting datagrams */
     LS_STREAM,        /* Receiving/transmitting streams */
 } ls_socket_type_t;

@@ -144,56 +144,8 @@ menu "LastLink Configuration"
                 to the SOURCE via the SENDER, marking with invalid
                 SEQUENCE and impossibly high METRIC.
 
-        config LASTLINK_SERVICE_NAME_ENABLE
-            bool "Enable service names"
-            default true
-            help
-                Enable service names.  These are names published by
-                a node that refer to a published service on a specific
-                port type and port number.
 
-        config LASTLINK_SERVICE_NAME_MAX_LEN
-            int "Maximum length of sevice name"
-            default 16
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                The maximum characters in a service name.
-
-        config LASTLINK_SERVICE_NAME_REPLY_TIMEOUT
-            int "Timeout in mS waiting for service reply"
-            default 10000
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                This is the timeout while waiting for a service name lookup.
-
-        config LASTLINK_SERVICE_NAME_RETRIES
-            int "Number of retries on servicerequest before giving up."
-            default 5
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                Service request will issue this many retries before giving up.
-
-        config LASTLINK_SERVICE_NAME_ROUTED_TIME
-            int "Timeout if in anti-forward routed state."
-            default 3000
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                This timeout prevents re-sending already forwarded service requests.
-
-        config LASTLINK_SERVICE_NAME_LIFETIME
-            int "Timeout of a service entry after publishing"
-            default 120000
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                This is the timeout after which a local service name
-                entry will be deleted after received.
-
-        config LASTLINK_SERVICE_NAME_TICK
-            int "Granularity of SERVICE NAME timers."
-            default 500
-            depends on LASTLINK_SERVICE_NAME_ENABLE
-            help
-                How often service name scanning is performed.
+        source "main/Kconfig.service_names"
 
     endmenu
 

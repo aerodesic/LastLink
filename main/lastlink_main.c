@@ -36,6 +36,7 @@
 #include "default_config.h"
 #include "os_freertos.h"
 #include "packets.h"
+#include "service_names.h"
 
 #include "commands.h"
 #include "ssd1306_i2c.h"
@@ -88,9 +89,7 @@ void app_main(void)
     }
 
 
-#if 1 
     init_commands();
-#endif
 
     display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
     display->contrast(display, get_config_int("display.contrast", 128));
@@ -126,9 +125,11 @@ void app_main(void)
     linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));
 #endif
 
-#if 1
-    start_commands(stdin, stdout);
+#if CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
+    init_service_names();
 #endif
+
+    start_commands(stdin, stdout);
 
     bootloader_random_enable();
     ESP_LOGI(TAG, "random number 1 %d", esp_random());
@@ -193,5 +194,8 @@ void app_main(void)
         }
     }
 #endif
+    while (true) {
+        os_delay(1000);
+    }
 }
 

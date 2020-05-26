@@ -16,7 +16,7 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
     bool duplicate = false;
 
     int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
-    int sequence = get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
+    int sequence = get_int_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
     int hash     = origin % NUM_ORIGIN_MAP;
     
     list_head_t *list_head = &duplist->origin_map[hash];
@@ -28,9 +28,11 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
     while (!found && dupinfo != NULL) {
         if (dupinfo->origin == origin) {
             /* Return true if duplicate */
-            duplicate = dupinfo->sequence == sequence;
-            /* Remember the new one now */
-            dupinfo->sequence = sequence;
+            duplicate = (dupinfo->sequence - sequence) >= 0;
+            if (!duplicate) {
+                /* Remember the new one now */
+                dupinfo->sequence = sequence;
+            }
             /* End the search when we find an address match */
             found = true;
         }

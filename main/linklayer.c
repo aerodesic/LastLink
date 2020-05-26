@@ -72,7 +72,7 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
-static void linklayer_on_receive(radio_t* radio, packet_t* packet);
+static void linklayer_receive_packet(radio_t* radio, packet_t* packet);
 static void linklayer_activity_indicator(radio_t* radio, bool active);
 
 static void reset_device(radio_t* radio);
@@ -433,8 +433,6 @@ packet_t* routeannounce_packet_create(int dest)
     packet_t* packet = linklayer_create_generic_packet(dest, ROUTEANNOUNCE_PROTOCOL, ROUTEANNOUNCE_LEN);
     if (packet != NULL) {
         set_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN, node_flags);
-        //set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-        //set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
     }
 
     return packet;
@@ -522,7 +520,7 @@ static bool routerequest_packet_process(packet_t* packet)
                 if (ra != NULL) {
                     /* Label it as going to specific radio of origin */
                     ra->radio_num = packet->radio_num;
-                    linklayer_send_packet(ra);
+                    linklayer_route_packet(ra);
 
                     handled = true;
                 }
@@ -864,10 +862,7 @@ bool linklayer_remove_radio(int radio_num)
 static bool linklayer_init_radio(radio_t* radio)
 {
     radio->attach_interrupt = linklayer_attach_interrupt;
-    radio->on_receive = linklayer_on_receive;
-#if 0
-    radio->on_transmit = linklayer_on_transmit;
-#endif
+    radio->on_receive = linklayer_receive_packet;
     radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
     radio->activity_indicator = linklayer_activity_indicator;
     radio->reset_device = reset_device;
@@ -947,7 +942,7 @@ int linklayer_allocate_sequence(void)
 /*
  * Send a packet
  */
-void linklayer_send_packet(packet_t* packet)
+void linklayer_route_packet(packet_t* packet)
 {
     if (packet == NULL) {
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
@@ -971,28 +966,15 @@ void linklayer_send_packet(packet_t* packet)
         /* Indicate coming from us */
         set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
 
-        /* If origin is NULL address, set it to us */
-        // if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == NULL_ADDRESS) {
-        //    set_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-        // }
-
-        /* Every outbound packet from this node gets a new sequence number */
-        //if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address) {
-        //    set_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
-        //}
-
         /* If packet is destined for local address, side-step and just put into receive queue for radio 0 */
         if (dest == linklayer_node_address) {
              set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, linklayer_node_address);
              /* Tell caller the packet has been routed */
              packet_tell_routed_callback(packet, true);
-             linklayer_on_receive(radio_table[0], ref_packet(packet));
+             linklayer_receive_packet(radio_table[0], ref_packet(packet));
+
         } else {
 
-            /*
-             * If the routeto is NULL, then we compute next hop based on route table.
-             * If no route table, create pending NULL route and cache packet for later retransmission.
-             */
             unsigned int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
 
             radio_t* radio = NULL;  /* Gets the target radio device address */
@@ -1001,11 +983,18 @@ void linklayer_send_packet(packet_t* packet)
                 /* Route to broadcast as well */
                 set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
 
+            /*
+             * If the routeto is NULL, then we compute next hop based on route table.
+             * If no route table, create pending NULL route and cache packet for later retransmission.
+             */
             } else if (routeto == NULL_ADDRESS) {
 
                 route_table_lock();
 
+//ESP_LOGI(TAG, "%s: find route for dest %d origin %d", __func__, dest, get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
                 route_t* route = find_route(dest);
+
+//ESP_LOGI(TAG, "%s: route %p", __func__, route);
 
                 /* If no route and we are the originator, create a dummy and make a request */
                 if (route == NULL && get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address) {
@@ -1093,7 +1082,9 @@ void linklayer_send_packet(packet_t* packet)
                     /* Issue a random delay on each transmit request based on current node number */
                     packet->delay = linklayer_node_address;
 //ESP_LOGI(TAG, "%s: setting delay to %d", __func__, linklayer_node_address);
+//linklayer_print_packet("delayed", packet);
                 }
+//else linklayer_print_packet("not delayed", packet);
 
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
@@ -1105,13 +1096,13 @@ void linklayer_send_packet(packet_t* packet)
     }
 }
 
-void linklayer_send_packet_update_metric(packet_t* packet)
+void linklayer_route_packet_update_metric(packet_t* packet)
 {
     if (packet != NULL) {
         int metric = get_uint_field(packet, HEADER_METRIC, METRIC_LEN);
         if (++metric < MAX_METRIC) {
             set_uint_field(packet, HEADER_METRIC, METRIC_LEN, metric);
-            linklayer_send_packet(packet);
+            linklayer_route_packet(packet);
         } else {
 linklayer_print_packet("METRIC EXPIRED", packet);
             release_packet(packet);
@@ -1204,7 +1195,7 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
 }
 
 /*
- * linklayer_on_receive
+ * linklayer_receive_packet
  *
  * Called by thread in driver.
  *
@@ -1218,7 +1209,7 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
  *      radio               Pointer to radio delivering the packet
  *      packet              The data packet
  */
-static void linklayer_on_receive(radio_t* radio, packet_t* packet)
+static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
 {
     //linklayer_print_packet("on_receive", packet);
 
@@ -1254,8 +1245,8 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                  * or not from us and not duplicate.
                  */
                 if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
-                    ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS) &&
-                              is_valid_address(sender) && !is_duplicate_packet(&duplicate_packets, packet))) {
+                    ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS)
+                              && origin != linklayer_node_address && is_valid_address(sender) && !is_duplicate_packet(&duplicate_packets, packet))) {
 
                     bool handled = false;
 
@@ -1300,14 +1291,14 @@ static void linklayer_on_receive(radio_t* radio, packet_t* packet)
                                 set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                             }
 
-                            linklayer_send_packet_update_metric(ref_packet(packet));
+                            linklayer_route_packet_update_metric(ref_packet(packet));
                         }
                     }
                 }
             }
         } else {
 ESP_LOGI(TAG, "%s: packet crc error; len %d bytes", __func__, packet->length);
-            dump_buffer("packet", packet->buffer, packet->length);
+            // dump_buffer("packet", packet->buffer, packet->length);
             packet_errors_crc++;
         }
 

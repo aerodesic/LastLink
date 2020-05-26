@@ -53,7 +53,7 @@ static bool route_request_retry(route_t *route)
             /* Create a route request and send it */
             packet_t* packet = routerequest_packet_create(route->dest);
 
-	        linklayer_send_packet(packet);
+	        linklayer_route_packet(packet);
 
 	    } else {
             /* No joy, delete the route; will rebuild if necessary */
@@ -260,7 +260,7 @@ void route_start_routerequest(route_t* r)
 
             /* Create a route request and send it */
             packet_t* packet = routerequest_packet_create(r->dest);
-	        linklayer_send_packet(packet);
+	        linklayer_route_packet(packet);
 
             route_table_unlock();
         }
@@ -288,7 +288,7 @@ void route_release_packets(route_t* r)
                 /* Direct it to specific radio */
                 p->radio_num = r->radio_num;
                 if (packet_tell_routed_callback(p, true)) {
-	                linklayer_send_packet(p);
+	                linklayer_route_packet(p);
                 } else {
                     /* Cancel the packet */
                     release_packet(p);
