@@ -104,6 +104,12 @@ int get_uint_field(const packet_t *p, size_t from, size_t length);
 bool set_int_field(packet_t *p, size_t from, size_t length, int value);
 #define set_uint_field(p, from, length, value) set_int_field(p, from, length, value)
 
+/* Or in bits */
+bool or_uint_field(packet_t *p, size_t from, size_t length, unsigned int value);
+
+/* Remove bits */
+bool unset_uint_field(packet_t *p, size_t from, size_t length, unsigned int value);
+
 /*
  * Get a string from a field.  If length < 0, field is to end of buffer.
  * Returns a freshly allocated char* array which must be freed by the caller.

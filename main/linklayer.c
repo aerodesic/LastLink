@@ -1128,11 +1128,12 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
 {
     if (radio == NULL) {
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
-//ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
             linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
         }
         release_packet(packet);
     } else {
+//ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
+linklayer_print_packet("transmit", packet);
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
             // if (os_items_in_queue(radio->transmit_queue) == 1) {

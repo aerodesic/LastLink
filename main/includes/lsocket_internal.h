@@ -38,16 +38,24 @@
  * STREAMING data connection is based on datagram with sequence numbers.
  */
 #define STREAM_FLAGS                   (DATAGRAM_PAYLOAD)
-#define   STREAM_FLAGS_CMD                0x07
-#define   STREAM_FLAGS_CMD_DATA           0x00   /* Data for socket */
-#define   STREAM_FLAGS_CMD_CONNECT        0x01   /* Connect request */
-#define   STREAM_FLAGS_CMD_CONNECT_ACK    0x02   /* Ack to connect request or ack to ACK */
-#define   STREAM_FLAGS_CMD_DISCONNECT     0x03   /* Disconnect request */
-#define   STREAM_FLAGS_CMD_DISCONNECTED   0x04   /* Disconect ack */
-#define   STREAM_FLAGS_CMD_REJECT         0x05   /* Reject - something's wrong */
-// #define  STREAM_FLAGS_UNUSED_6         0x06
-// #define  STREAM_FLAGS_UNUSED_7         0x07
-#define   STREAM_FLAGS_EOR                0x10   /* End of record at end of packet */
+#define   STREAM_FLAGS_CMD                0x0F
+#define   STREAM_FLAGS_CMD_NOP            0x00   /* No operation */
+#define   STREAM_FLAGS_CMD_DATA           0x01   /* Data for socket */
+#define   STREAM_FLAGS_CMD_DATA_EOR       0x02   /* Data for socket with end of record */
+#define   STREAM_FLAGS_CMD_CONNECT        0x03   /* Connect request */
+#define   STREAM_FLAGS_CMD_CONNECT_ACK    0x04   /* Ack to connect request or ack to ACK */
+#define   STREAM_FLAGS_CMD_DISCONNECT     0x05   /* Disconnect request */
+#define   STREAM_FLAGS_CMD_DISCONNECTED   0x06   /* Disconect ack */
+#define   STREAM_FLAGS_CMD_REJECT         0x07   /* Reject - something's wrong */
+// #define  STREAM_FLAGS_UNUSED_8         0x08
+// #define  STREAM_FLAGS_UNUSED_9         0x09
+// #define  STREAM_FLAGS_UNUSED_A         0x0A
+// #define  STREAM_FLAGS_UNUSED_B         0x0B
+// #define  STREAM_FLAGS_UNUSED_C         0x0C
+// #define  STREAM_FLAGS_UNUSED_D         0x0D
+// #define  STREAM_FLAGS_UNUSED_E         0x0E
+// #define  STREAM_FLAGS_UNUSED_F         0x0F
+#define   STREAM_FLAGS_ACKNUM             0x10   /* ACK Sequence number is present */
 // #define  STREAM_FLAGS_UNUSED           0xE0   /* Unused flags */
 #define STREAM_SEQUENCE                (STREAM_FLAGS + FLAGS_LEN)
 #define STREAM_ACK_SEQUENCE            (STREAM_SEQUENCE + SEQUENCE_NUMBER_LEN)
@@ -65,11 +73,10 @@ typedef struct packet_window {
     int              retry_time;                 /* Next time for retry delay */
     int              retries;                    /* Count of remaining tries */
     uint8_t          length;                     /* Number of slots */
-    uint8_t          in;                         /* Where the next sequential packet is placed. */
     uint8_t          released;                   /* Number of packets freed that have not issued release_semaphore */
-    int              sequence;                   /* Sequence number of first packet (or expected packet) */
-    os_semaphore_t   available;                  /* Semaphore for access */
-    unsigned int     window;                     /* Window of used slots */
+    int              next_in;                    /* Next input slot to use */
+    int              sequence;                   /* Sequence number of next packet to be added to window */
+    os_semaphore_t   available;                  /* Semaphore used to release access to packets */
     packet_t         *slots[1];                  /* 1..length slots */
 } packet_window_t;
 
@@ -96,7 +103,6 @@ typedef struct ls_socket {
     bool                    rename_dest;        /* If datagram and true, dest_address gets value of last packet read */
                                                 /* This allows us to ls_write() back to return data */
     ls_address_t            dest_addr;          /* Destination address of the connection */
-    int                     serial_number;      /* Unique serial number */
 
     simpletimer_t           linger_timer;       /* Performs close after no more users */
 

@@ -290,6 +290,36 @@ bool set_int_field(packet_t *p, size_t from, size_t length, int value)
     return ok;
 }
 
+bool or_uint_field(packet_t *p, size_t from, size_t length, unsigned int value)
+{
+    bool ok = true;
+    if (validate_field(p, from, length)) {
+        for (int index = length - 1; index >= 0; --index) {
+            *(p->buffer + from + index) |= value & 0xFF;
+            value >>= 8;
+        }
+    } else {
+        ok = false;
+    }
+    return ok;
+}
+
+
+/* Remove bits */
+bool unset_uint_field(packet_t *p, size_t from, size_t length, unsigned int value)
+{
+    bool ok = true;
+    if (validate_field(p, from, length)) {
+        for (int index = length - 1; index >= 0; --index) {
+            *(p->buffer + from + index) &= ~(value & 0xFF);
+            value >>= 8;
+        }
+    } else {
+        ok = false;
+    }
+    return ok;
+}
+
 /*
  * Get bytes from a field.  If length == 0, field is to end of buffer.
  * Returns a freshly allocated uint8_t* array which must be freed by the caller.

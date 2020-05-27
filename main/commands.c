@@ -20,7 +20,7 @@
 
 #define TAG "commands"
 
-#define COMMAND_PROCESSOR_STACK_SIZE 40000
+#define COMMAND_PROCESSOR_STACK_SIZE 20000
 
 /*
  * Go through buffer and tokenize into argv/argc structure.

@@ -30,6 +30,7 @@ static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_set_expired(simpletimer_t *timer);
 static inline void simpletimer_stop(simpletimer_t *timer);
 static inline bool simpletimer_is_expired(simpletimer_t *timer);
+static inline uint32_t simpletimer_elapsed(simpletimer_t *timer);
 static inline uint32_t simpletimer_remaining(simpletimer_t *timer);
 static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uint32_t *remaining);
 static inline void simpletimer_restart(simpletimer_t *timer);
@@ -101,19 +102,25 @@ static inline uint32_t simpletimer_remaining(simpletimer_t *timer)
     return remaining;
 }
 
+static inline uint32_t simpletimer_elapsed(simpletimer_t *timer)
+{
+    return simpletimer_is_running(timer) ? get_milliseconds() - (timer->target - timer->interval) : 0;
+}
+
+
 static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uint32_t *remaining)
 {
-    bool fired = simpletimer_is_expired(timer);
+    bool expired = simpletimer_is_expired(timer);
 
     /* If it didn't fire, calculate next time to fire */
-    if (!fired) {
+    if (!expired) {
         uint32_t time_to_fire = simpletimer_remaining(timer);
         if (time_to_fire < *remaining) {
             *remaining = time_to_fire;
         }
     } 
 
-    return fired;
+    return expired;
 }
 
 static inline void simpletimer_restart(simpletimer_t *timer)
