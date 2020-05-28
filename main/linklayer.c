@@ -240,11 +240,14 @@ static const radio_config_t radio_config[] = {
 
 bool linklayer_lock(void)
 {
+    ESP_LOGI(TAG, "%s: locking", __func__);
     return os_acquire_recursive_mutex(linklayer_mutex);
+    ESP_LOGI(TAG, "%s: locked", __func__);
 }
 
 bool linklayer_unlock(void)
 {
+    ESP_LOGI(TAG, "%s: unlocked", __func__);
     return os_release_recursive_mutex(linklayer_mutex);
 }
 

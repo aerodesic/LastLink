@@ -143,7 +143,7 @@ void app_main(void)
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
     
-#if 1
+#if 0
     wifi_init_softap();
 #endif
 

@@ -16,8 +16,14 @@
 #define MAX_PACKET_ASSEMBLY     CONFIG_LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY
 #define MAX_SOCKET_CONNECTIONS  CONFIG_LASTLINK_STREAM_MAX_SIMULTANEOUS_CONNECTIONS
 
-#define STREAM_CONNECT_TIMEOUT   10000   /* 10 seconds */
+#define STREAM_CONNECT_TIMEOUT   5000   /* 5 seconds */
 #define STREAM_CONNECT_RETRIES   5
+
+#define STREAM_FLUSH_TIMEOUT     2000   /* 2 seconds */
+#define STREAM_FLUSH_RETRIES     5
+
+#define STREAM_DISCONNECT_TIMEOUT 5000  /* 5 seconds */
+#define STREAM_DISCONNECT_RETRIES 5
 
 typedef int ls_port_t;
 typedef int ls_address_t;
@@ -37,6 +43,7 @@ typedef enum {
     LSE_INVALID_MAXQUEUE = -1010,
     LSE_CONNECT_FAILED   = -1011,
     LSE_NOT_WRITABLE     = -1012,
+    LSE_SOCKET_BUSY      = -1013,
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;

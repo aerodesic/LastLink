@@ -61,7 +61,7 @@
 #define STREAM_ACK_SEQUENCE            (STREAM_SEQUENCE + SEQUENCE_NUMBER_LEN)
 #define STREAM_ACK_WINDOW              (STREAM_ACK_SEQUENCE + SEQUENCE_NUMBER_LEN)
 // Allocate number of bytes for ACK window
-#define ACK_WINDOW_LEN                 ((CONFIG_LASTLINK_STREAM_WINDOW_SIZE + 1)/8)
+#define ACK_WINDOW_LEN                 ((CONFIG_LASTLINK_STREAM_WINDOW_SIZE + 7)/8)
 #define STREAM_HEADER_END              (STREAM_ACK_WINDOW + ACK_WINDOW_LEN)
 #define STREAM_PAYLOAD                 (STREAM_HEADER_END)
 #define STREAM_LEN                     (STREAM_PAYLOAD - HEADER_LEN)
@@ -85,6 +85,7 @@ typedef enum {
     LS_STATE_INBOUND_CONNECT,
     LS_STATE_OUTBOUND_CONNECT,
     LS_STATE_CONNECTED,
+    LS_STATE_DISCONNECTING_FLUSH,
     LS_STATE_DISCONNECTING,
     LS_STATE_DISCONNECTED,
 } ls_socket_state_t;
@@ -93,8 +94,9 @@ typedef struct ls_socket ls_socket_t;
 typedef struct packet_window packet_window_t;
 
 typedef struct ls_socket {
+    os_mutex_t              lock;               /* MUTEX for user level access control - does not block I/O */
     bool                    inuse;              /* TRUE if socket is opened by user */
-    bool                    dead;               /* Failure marks socket as dead */
+    bool                    busy;               /* Set true when inside user code in ls_xxx function */
     ls_socket_type_t        socket_type;        /* Socket type (DATAGRAM or STREAM) */
 
     ls_socket_state_t       state;              /* Current state */
@@ -124,9 +126,9 @@ typedef struct ls_socket {
 
            /* state machine retry stuff */
            simpletimer_t           state_machine_timer;
-           int                     retries;
-           packet_t*               retry_packet;
-           os_queue_t              response_queue;
+           int                     state_machine_retries;
+           bool                    (*state_machine_action)(ls_socket_t *socket);
+           os_queue_t              state_machine_response;
 
            /* Deals with residue of left over data on packets between read calls */
            packet_t*               current_read_packet;
