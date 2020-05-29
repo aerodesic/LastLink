@@ -825,7 +825,7 @@ static bool stream_send_connect(ls_socket_t *socket)
 
 static bool stream_send_connect_ack(ls_socket_t *socket)
 {
-    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, 0));
+    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, socket->input_window->length));
     return false;
 }
 
@@ -890,7 +890,7 @@ linklayer_print_packet("stream packet", packet);
                         cancel_state_machine(socket);
                         if (socket->state == LS_STATE_INBOUND_CONNECT) {
                             /* Redundant CONNECT gets a CONNECT_ACK */
-                            linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, 0));
+                            stream_send_connect_ack(socket);
                             reject = false;
                         }
                     } else {
@@ -976,6 +976,12 @@ ls_dump_socket_ptr("new connection", new_connection);
                         } else if (socket->state == LS_STATE_CONNECTED) {
                             stream_send_connect_ack(socket);
                             reject = false;
+                        }
+
+                        int length = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
+                        if (length != 0 && length < socket->output_window->length) {
+ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__, socket->output_window->length, length, socket - socket_table);
+                            socket->output_window->length = length;
                         }
                     }
                     break;

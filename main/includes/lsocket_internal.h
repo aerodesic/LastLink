@@ -47,6 +47,11 @@
  *      -> CONNECT                               // One side starts with connect
  *         CONNECT_ACK <-                        // Receiver responds with CONNECT ACK
  *      -> CONNECT_ACK                           // Originator responds back with CONNECT ACK
+ *
+ * The STREAM_SEQUENCE number on connect ack is used to convey the maximum number of in-queue
+ * packets allowed by the sender.  When the packet is received, if it is non-zero, it will be
+ * used to minimize the number (length) of the receive * window (hence setting the transmit
+ * window length) of the sender.
  */
 #define   STREAM_FLAGS_CMD_CONNECT        0x03   /* Connect request */
 #define   STREAM_FLAGS_CMD_CONNECT_ACK    0x04   /* Ack to connect request or ack to ACK */

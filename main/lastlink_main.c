@@ -119,6 +119,8 @@ void app_main(void)
     #endif
 
     // linklayer_set_debug(true);
+    bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
+
     linklayer_set_listen_only(get_config_int("lastlink.listen_only", 0));
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
@@ -147,55 +149,33 @@ void app_main(void)
     wifi_init_softap();
 #endif
 
-#if 0
-    os_queue_t queue = linklayer_set_promiscuous_mode(true);
+    if (listen_only) {
+        linklayer_set_listen_only(true);
 
-    uint64_t starting_tick_count  = get_milliseconds();
+        os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
-    packet_t *packet; 
-    while (true) {
-        if (os_get_queue(queue, (os_queue_item_t*) &packet)) {
+        packet_t *packet; 
+        while (true) {
+            if (os_get_queue(queue, (os_queue_item_t*) &packet)) {
 
-            if (packet == NULL) {
-                ESP_LOGE(TAG, "%s: null packet", __func__);
-            } else {
-                uint64_t elapsed = get_milliseconds() - starting_tick_count;
+                if (packet == NULL) {
+                    ESP_LOGE(TAG, "%s: null packet", __func__);
+                } else {
+                    /* Format for log message */
+                    const char *p_message = linklayer_format_packet(packet);
 
-                int addresses[4];
-                addresses[0] = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-                addresses[1] = get_uint_field(packet, HEADER_ORIGIN_ADDRESS,  ADDRESS_LEN);
-                addresses[2] = get_uint_field(packet, HEADER_DEST_ADDRESS,    ADDRESS_LEN);
-                addresses[3] = get_uint_field(packet, HEADER_SENDER_ADDRESS,  ADDRESS_LEN);
-                int protocol = get_uint_field(packet, HEADER_PROTOCOL,        PROTOCOL_LEN);
-                bool transmitted = packet->transmitted;
+                    release_packet(packet);
 
-                /* Format for log message */
-                const char *p_message = linklayer_format_packet(packet);
+                    ESP_LOGI(TAG, "%s", p_message);
 
-                release_packet(packet);
-
-                char buffer[16];
-                char *p = buffer; 
-
-                for (int index = 0; index < 4; ++index) {
-                    if (addresses[index] == BROADCAST_ADDRESS) {
-                        p += snprintf(p, sizeof(buffer) - (p-buffer), " X");
-                    } else {
-                        p += snprintf(p, sizeof(buffer) - (p-buffer), " %x", addresses[index]);
-                    }
+                    free((void*) p_message);
                 }
-
-                add_line_to_buffer("%d%s%s %x", (unsigned int) (elapsed / 1000), transmitted ? ">" : "<", buffer, protocol);
-
-                ESP_LOGI(TAG, "%s %s", transmitted ? "OUT" : "IN ", p_message);
-
-                free((void*) p_message);
             }
         }
-    }
-#endif
-    while (true) {
-        os_delay(1000);
+    } else {
+        while (true) {
+            os_delay(1000);
+        }
     }
 }
 
