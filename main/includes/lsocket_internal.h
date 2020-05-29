@@ -39,13 +39,28 @@
  */
 #define STREAM_FLAGS                   (DATAGRAM_PAYLOAD)
 #define   STREAM_FLAGS_CMD                0x0F
-#define   STREAM_FLAGS_CMD_NOP            0x00   /* No operation */
-#define   STREAM_FLAGS_CMD_DATA           0x01   /* Data for socket */
-#define   STREAM_FLAGS_CMD_DATA_EOR       0x02   /* Data for socket with end of record */
+#define   STREAM_FLAGS_CMD_NOP            0x00   /* No operation (only look at FLAGS) */
+#define   STREAM_FLAGS_CMD_DATA           0x01   /* Data for stream connection */
+#define   STREAM_FLAGS_CMD_DATA_EOR       0x02   /* Data for stream connection with end of record */
+/*
+ * Connect is:
+ *      -> CONNECT                               // One side starts with connect
+ *         CONNECT_ACK <-                        // Receiver responds with CONNECT ACK
+ *      -> CONNECT_ACK                           // Originator responds back with CONNECT ACK
+ */
 #define   STREAM_FLAGS_CMD_CONNECT        0x03   /* Connect request */
 #define   STREAM_FLAGS_CMD_CONNECT_ACK    0x04   /* Ack to connect request or ack to ACK */
+/*
+ * Disconnect is:
+ *     -> DISCONNECT                   // One side send DISCONNECT
+ *        DISCONNECTED <-              // Other side responds with DISCONNECTED
+ *     -> DISCONNECTED                 // Originator responds back with DISCONNECTED
+ */
 #define   STREAM_FLAGS_CMD_DISCONNECT     0x05   /* Disconnect request */
 #define   STREAM_FLAGS_CMD_DISCONNECTED   0x06   /* Disconect ack */
+/*
+ * REJECT is sent when something went wrong.
+ */
 #define   STREAM_FLAGS_CMD_REJECT         0x07   /* Reject - something's wrong */
 // #define  STREAM_FLAGS_UNUSED_8         0x08
 // #define  STREAM_FLAGS_UNUSED_9         0x09
@@ -81,13 +96,16 @@ typedef struct packet_window {
 } packet_window_t;
 
 typedef enum {
-    LS_STATE_IDLE = 0,
-    LS_STATE_INBOUND_CONNECT,
-    LS_STATE_OUTBOUND_CONNECT,
-    LS_STATE_CONNECTED,
-    LS_STATE_DISCONNECTING_FLUSH,
-    LS_STATE_DISCONNECTING,
-    LS_STATE_DISCONNECTED,
+    LS_STATE_IDLE = 0,                           /* Idle - not connected */
+    LS_STATE_SOCKET,                             /* SOCKET has been instantiated */
+    LS_STATE_INBOUND_CONNECT,                    /* Inbound connect on listen socket received */
+    LS_STATE_OUTBOUND_CONNECT,                   /* Outbound connect sent */
+    LS_STATE_CONNECTED,                          /* Connected - bidirectional streams ready */
+    LS_STATE_DISCONNECTING_FLUSH,                /* Disconnecting but flush output first */
+    LS_STATE_INBOUND_DISCONNECTING,              /* Tearing down connection from external request */
+    LS_STATE_OUTBOUND_DISCONNECTING,             /* Tearing down connection from internal request */
+    LS_STATE_DISCONNECTED,                       /* Disconnected */
+    LS_STATE_LINGER,                             /* Lingering at end of connection */
 } ls_socket_state_t;
 
 typedef struct ls_socket ls_socket_t;
@@ -105,8 +123,6 @@ typedef struct ls_socket {
     bool                    rename_dest;        /* If datagram and true, dest_address gets value of last packet read */
                                                 /* This allows us to ls_write() back to return data */
     ls_address_t            dest_addr;          /* Destination address of the connection */
-
-    simpletimer_t           linger_timer;       /* Performs close after no more users */
 
     union {
         /* LISTEN SOCKET INFO */
@@ -128,7 +144,8 @@ typedef struct ls_socket {
            simpletimer_t           state_machine_timer;
            int                     state_machine_retries;
            bool                    (*state_machine_action)(ls_socket_t *socket);
-           os_queue_t              state_machine_response;
+           void                    (*state_machine_results)(ls_socket_t *socket, ls_error_t error);
+           os_queue_t              state_machine_results_queue;
 
            /* Deals with residue of left over data on packets between read calls */
            packet_t*               current_read_packet;

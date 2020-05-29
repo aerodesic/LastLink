@@ -44,6 +44,7 @@ typedef enum {
     LSE_CONNECT_FAILED   = -1011,
     LSE_NOT_WRITABLE     = -1012,
     LSE_SOCKET_BUSY      = -1013,
+    LSE_DISCONNECTING    = -1014,
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;
