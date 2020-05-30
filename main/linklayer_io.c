@@ -1,3 +1,5 @@
+/* Use byte-at-a-time for read/write buffer */
+//#define USE_SIMPLE_SPI_BUFFER_READ
 /*
  * linklayer_io.c
  *
@@ -94,7 +96,7 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
         .sclk_io_num = config->spi_sck,
         .quadwp_io_num = -1,  /* Not used */
         .quadhd_io_num = -1,  /* Not used */
-        .max_transfer_sz = MAX_PACKET_LEN,
+        .max_transfer_sz = 512,
     };
 
     ESP_LOGV(TAG, "%s: miso %d mosi %d sclk %d", __func__, buscfg.miso_io_num, buscfg.mosi_io_num, buscfg.sclk_io_num);
@@ -187,6 +189,12 @@ static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int
     ok = spi_device_transmit(radio->spi, &t) == ESP_OK;
 #endif
 
+#if 0
+if (!ok) {
+    spi_host_t *host = radio->spi->host;
+    ESP_LOGE(TAG, "%s: max_transfer_sz is %d", __func__, host->bus_attr->max_transfer_sz);
+}
+#endif
     return ok;
 }
 

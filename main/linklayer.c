@@ -354,7 +354,7 @@ packet_t* linklayer_create_generic_packet(int dest, int protocol, int length)
          set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
          set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
          // Sequence numbers are created whenever a packet is sent from this node.
-         set_uint_field(p, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+         // set_uint_field(p, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
          set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, protocol);
          set_uint_field(p, HEADER_METRIC, METRIC_LEN, 0);
     }
@@ -968,6 +968,11 @@ void linklayer_route_packet(packet_t* packet)
 
         /* Indicate coming from us */
         set_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
+
+        /* Generate new sequence number of we are originating the packet */
+        if (get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address) {
+            set_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+        }
 
         /* If packet is destined for local address, side-step and just put into receive queue for radio 0 */
         if (dest == linklayer_node_address) {

@@ -253,8 +253,10 @@ static bool ping_packet_process(packet_t *packet)
             /* Alter the protocol */
             set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, PINGREPLY_PROTOCOL);
 
+#if 0
             /* Give it a new serial number */
             set_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+#endif
 
             /* Turn the packet around */
             set_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN, get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
@@ -458,8 +460,11 @@ void ping_retry_thread(void* param)
 
             ping_table[slot].retries--;
 
+#if 0
             /* Retransmit packet with new sequence number */
             set_uint_field(ping_table[slot].packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+#endif
+
             linklayer_route_packet(ref_packet(ping_table[slot].packet));
 
         } else {
@@ -1621,6 +1626,10 @@ ESP_LOGI(TAG, "%s: retries is %d", __func__, socket->output_window->retries);
                 if (socket->output_window->slots[slot] != NULL) {
 ESP_LOGI(TAG, "%s: sending packet in slot %d", __func__, slot);
 //linklayer_print_packet("sending packet", socket->output_window->slots[slot]);
+                    /* Change the sequence number */
+#if 0
+                    set_uint_field(socket->output_window->slots[slot], HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
+#endif
                     linklayer_route_packet(add_data_ack(socket->input_window, ref_packet(socket->output_window->slots[slot])));
                 }
             }

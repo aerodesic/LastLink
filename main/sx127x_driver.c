@@ -122,9 +122,21 @@ static int          global_number_radios_active;
 
 #define MAX_IRQ_PENDING         50
 
+//#define SX127x_RECEIVE_MODE            SX127x_MODE_RX_CONTINUOUS
+  #define SX127x_RECEIVE_MODE            SX127x_MODE_RX_SINGLE
+
 #define RX_DONE_TX_DONE_IRQ_DIO    0
 
-#define RX_DIO_MAPPING             0b00111111    /* DIO0 to RX_DONE;  DIO1 to undefined;    DIO2 to undefined */
+#if SX127x_RECEIVE_MODE == SX127x_MODE_RX_SINGLE
+ #define SX127x_RECEIVE_INTERRUPTS  (SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT)
+ #define SX127x_TRANSMIT_INTERRUPTS (SX127x_IRQ_TX_DONE)
+ #define RX_TIMEOUT_IRQ_DIO        1
+ #define RX_DIO_MAPPING            0b00001111    /* DIO0 to RX_DONE;  DIO1 to RX_TIMEOUT;   DIO2 to undefined */
+#else
+ #define SX127x_RECEIVE_INTERRUPTS  (SX127x_IRQ_RX_DONE)
+ #define SX127x_TRANSMIT_INTERRUPTS (SX127x_IRQ_TX_DONE)
+ #define RX_DIO_MAPPING            0b00111111    /* DIO0 to RX_DONE;  DIO1 to undefined;    DIO2 to undefined */
+#endif
 #define TX_DIO_MAPPING             0b01111111    /* DIO0 to TX_DONE;  DIO1 to undefined;    DIO2 to undefined */
 
 #define GLOBAL_IRQ_THREAD_STACK    16000
@@ -242,19 +254,22 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
         length = radio->read_register(radio, SX127x_REG_RX_NUM_BYTES);
     }
 
+ESP_LOGI(TAG, "%s: -------- entry -------", __func__);
 ESP_LOGI(TAG, "%s: length              %02x", __func__, length);
 ESP_LOGI(TAG, "%s: fifo_current        %02x", __func__, fifo_current);
+ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
 ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
 ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
+ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
 ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
 ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
 ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
 ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
 ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
-ESP_LOGI(TAG, "%s: RX_FIFO_BYTE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BYTE));
 
     /* Cannot reliably capture packet if CRC error so don't even try */
-    if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT)) == 0) {
+    // if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT)) == 0) {
+    if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR )) == 0) {
         /* Get a packet */
         packet_t* packet = allocate_packet();
 
@@ -300,16 +315,30 @@ ESP_LOGI(TAG, "%s: RX_FIFO_BYTE        %02x", __func__, radio->read_register(rad
             data->packet_memory_failed++;
         }
     } else {
+ESP_LOGE(TAG, "%s: errors %02x", __func__, data->irq_flags);
         if ((data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) != 0) {
 ESP_LOGE(TAG, "%s: rxint with crc", __func__);
            data->packet_crc_errors++;
         }
         data->irq_flags &= ~(SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT);
+
     }
 
     data->receive_busy = false;
-    set_standby_mode(radio);
+//    set_standby_mode(radio);
     set_receive_mode(radio);
+
+
+ESP_LOGI(TAG, "%s: -------- exit --------", __func__);
+ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
+ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
+ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
+ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
+ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
+ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
+ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
+ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
+ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
 
     /* On receive, we delay one unit */
     simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
@@ -339,7 +368,7 @@ static bool start_packet(radio_t* radio)
     return set_standby_mode(radio)
            && radio->write_register(radio, SX127x_REG_FIFO_PTR, TX_FIFO_BASE)
            && radio->write_register(radio, SX127x_REG_TX_FIFO_BASE, TX_FIFO_BASE)
-           && radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0)
+           //&& radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0)
            ;
 }
 
@@ -555,6 +584,15 @@ static void global_interrupt_handler(void* param)
 #endif /* USE_FHSS */
 
 
+#if SX127x_RECEIVE_MODE == SX127x_MODE_RX_SINGLE
+                    /* Turn receiver back on */
+                    if ((data->irq_flags & (SX127x_IRQ_RX_TIMEOUT)) != 0) {
+                        data->irq_flags &= ~(SX127x_IRQ_RX_TIMEOUT | SX127x_IRQ_RX_DONE);
+//ESP_LOGI(TAG, "%s: RX TIMEOUT", __func__);
+                        set_receive_mode(radio);
+                    }
+#endif
+
                     if ((data->irq_flags & (SX127x_IRQ_RX_DONE)) != 0) {
 ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         rx_handle_interrupt(radio, data);
@@ -566,6 +604,7 @@ ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         }
                     }
 
+#if 0
                     /* Handle the force end receive if still lingering */
                     if ((data->irq_flags & SX127x_FORCE_END_RECEIVE) != 0) {
                         data->irq_flags &= ~(SX127x_FORCE_END_RECEIVE);
@@ -573,6 +612,7 @@ ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         set_standby_mode(radio);
                         set_receive_mode(radio);
                     }
+#endif
 
                     if (data->irq_flags & (SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE)) {
 ESP_LOGI(TAG, "%s: TX_DONE int %03x", __func__, data->irq_flags);
@@ -583,7 +623,9 @@ ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
                                 /* Transmitted - waiting for receive interrupt */
                                 /* Callback at max message length in case it didn't happen via interrupt */
 
+#if 0
                                 data->irq_flags |= SX127x_FORCE_END_RECEIVE;
+#endif
                                 simpletimer_extend(&data->transmit_timer, 2 * get_message_time(radio, MAX_PACKET_LEN));
 ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
 
@@ -602,7 +644,7 @@ ESP_LOGI(TAG, "%s: TX_IDLE", __func__);
                                 break;
                             }
                             case TX_WAIT_TX_INT: {
-//ESP_LOGI(TAG, "%s: TX_WAIT_TX_INT", __func__);
+ESP_LOGI(TAG, "%s: TX_WAIT_TX_INT", __func__);
                                 /* Waiting for transmit interrupt */
                                 data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
                                 break;
@@ -637,6 +679,9 @@ static bool radio_stop(radio_t* radio)
         /* Disable all interrupts */
         ok = disable_irq(radio, 0xFF)
              && radio->attach_interrupt(radio, RX_DONE_TX_DONE_IRQ_DIO,  GPIO_PIN_INTR_DISABLE, NULL)
+#ifdef RX_TIMEOUT_IRQ_DIO
+             && radio->attach_interrupt(radio, RX_TIMEOUT_IRQ_DIO, GPIO_PIN_INTR_DISABLE, NULL)
+#endif
              ;
 
         if (ok && --global_number_radios_active == 0) {
@@ -767,6 +812,9 @@ static bool radio_start(radio_t* radio)
             radio->write_register(radio, SX127x_REG_IRQ_FLAGS, 0xFF);
             /* Capture receive/transmit interrupts */
             radio->attach_interrupt(radio, RX_DONE_TX_DONE_IRQ_DIO, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+#ifdef RX_TIMEOUT_IRQ_DIO
+            radio->attach_interrupt(radio, RX_TIMEOUT_IRQ_DIO, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+#endif
 
 #ifdef USE_FHSS
             if (data->hop_period != 0) {
@@ -826,7 +874,7 @@ static bool set_standby_mode(radio_t* radio)
         ok =  disable_irq(radio, 0xFF)
            && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_STANDBY)
            // && radio->write_register(radio, SX127x_REG_FIFO_PTR, RX_FIFO_BASE)
-           && radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 1);
+           // && radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 1);
         ;
 
         release_lock(radio);
@@ -860,14 +908,14 @@ static bool set_receive_mode(radio_t* radio)
 
     /* Just put the unit into continuous receive */
     if (acquire_lock(radio)) {
-        ok =  disable_irq(radio, SX127x_IRQ_TX_DONE)
+        ok =  disable_irq(radio, SX127x_TRANSMIT_INTERRUPTS)
           // && radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 1)
           // && radio->write_register(radio, SX127x_REG_FIFO_PTR, RX_FIFO_BASE)
           // && radio->write_register(radio, SX127x_REG_RX_FIFO_BASE, RX_FIFO_BASE)
-           && radio->write_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH, 0xFF)
+          // && radio->write_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH, 0xFF)
            && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, RX_DIO_MAPPING)
-           && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_CONTINUOUS)
-           && enable_irq(radio, SX127x_IRQ_RX_DONE)
+           && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_RECEIVE_MODE)
+           && enable_irq(radio, SX127x_RECEIVE_INTERRUPTS)
            ;
 
 if (!ok) ESP_LOGE(TAG, "%s: failed", __func__);
@@ -882,8 +930,8 @@ static bool set_transmit_mode(radio_t* radio)
     bool ok = false;
 
     if (acquire_lock(radio)) {
-        ok =  disable_irq(radio, SX127x_IRQ_RX_DONE)
-           && enable_irq(radio, SX127x_IRQ_TX_DONE) 
+        ok =  disable_irq(radio, SX127x_RECEIVE_INTERRUPTS)
+           && enable_irq(radio, SX127x_TRANSMIT_INTERRUPTS) 
            && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, TX_DIO_MAPPING)
            && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_TX)
             ;
