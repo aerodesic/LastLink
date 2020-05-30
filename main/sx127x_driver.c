@@ -254,18 +254,18 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
         length = radio->read_register(radio, SX127x_REG_RX_NUM_BYTES);
     }
 
-ESP_LOGI(TAG, "%s: -------- entry -------", __func__);
-ESP_LOGI(TAG, "%s: length              %02x", __func__, length);
-ESP_LOGI(TAG, "%s: fifo_current        %02x", __func__, fifo_current);
-ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
-ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
-ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
-ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
-ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
-ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
-ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
-ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
-ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
+//ESP_LOGI(TAG, "%s: -------- entry -------", __func__);
+//ESP_LOGI(TAG, "%s: length              %02x", __func__, length);
+//ESP_LOGI(TAG, "%s: fifo_current        %02x", __func__, fifo_current);
+//ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
+//ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
+//ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
+//ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
+//ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
+//ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
+//ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
+//ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
+//ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
 
     /* Cannot reliably capture packet if CRC error so don't even try */
     // if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT)) == 0) {
@@ -315,13 +315,12 @@ ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(rad
             data->packet_memory_failed++;
         }
     } else {
-ESP_LOGE(TAG, "%s: errors %02x", __func__, data->irq_flags);
+//ESP_LOGE(TAG, "%s: errors %02x", __func__, data->irq_flags);
         if ((data->irq_flags & SX127x_IRQ_PAYLOAD_CRC_ERROR) != 0) {
 ESP_LOGE(TAG, "%s: rxint with crc", __func__);
            data->packet_crc_errors++;
         }
         data->irq_flags &= ~(SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT);
-
     }
 
     data->receive_busy = false;
@@ -329,16 +328,16 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
     set_receive_mode(radio);
 
 
-ESP_LOGI(TAG, "%s: -------- exit --------", __func__);
-ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
-ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
-ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
-ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
-ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
-ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
-ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
-ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
-ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
+//ESP_LOGI(TAG, "%s: -------- exit --------", __func__);
+//ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
+//ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
+//ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
+//ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
+//ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
+//ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
+//ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
+//ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
+//ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
 
     /* On receive, we delay one unit */
     simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
@@ -594,7 +593,7 @@ static void global_interrupt_handler(void* param)
 #endif
 
                     if ((data->irq_flags & (SX127x_IRQ_RX_DONE)) != 0) {
-ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
+//ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
                         rx_handle_interrupt(radio, data);
                         data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_CAD_DETECTED | SX127x_IRQ_CAD_DONE | SX127x_IRQ_RX_TIMEOUT | SX127x_FORCE_END_RECEIVE);
 
@@ -615,11 +614,11 @@ ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
 #endif
 
                     if (data->irq_flags & (SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE)) {
-ESP_LOGI(TAG, "%s: TX_DONE int %03x", __func__, data->irq_flags);
+//ESP_LOGI(TAG, "%s: TX_DONE int %03x", __func__, data->irq_flags);
                         /* If it's been long enough, start the transmit. */
                         switch (tx_handle_interrupt(radio, data)) {
                             case TX_WAIT_RX_INT: {
-ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
+//ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
                                 /* Transmitted - waiting for receive interrupt */
                                 /* Callback at max message length in case it didn't happen via interrupt */
 
@@ -627,24 +626,24 @@ ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
                                 data->irq_flags |= SX127x_FORCE_END_RECEIVE;
 #endif
                                 simpletimer_extend(&data->transmit_timer, 2 * get_message_time(radio, MAX_PACKET_LEN));
-ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
+//ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
 
                                 break;
                             }
                             case TX_CALLBACK: {
-ESP_LOGI(TAG, "%s: TX_CALLBACK %d (%llu)", __func__, simpletimer_remaining(&data->transmit_timer), get_milliseconds());
+//ESP_LOGI(TAG, "%s: TX_CALLBACK %d (%llu)", __func__, simpletimer_remaining(&data->transmit_timer), get_milliseconds());
                                 /* Set a callback to happen after transmit delay */
                                 data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
                                 os_set_timer(data->wakeup_timer_id, simpletimer_remaining(&data->transmit_timer));
                                 break;
                             }
                             case TX_IDLE: {
-ESP_LOGI(TAG, "%s: TX_IDLE", __func__);
+//ESP_LOGI(TAG, "%s: TX_IDLE", __func__);
                                 data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
                                 break;
                             }
                             case TX_WAIT_TX_INT: {
-ESP_LOGI(TAG, "%s: TX_WAIT_TX_INT", __func__);
+//ESP_LOGI(TAG, "%s: TX_WAIT_TX_INT", __func__);
                                 /* Waiting for transmit interrupt */
                                 data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
                                 break;

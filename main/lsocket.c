@@ -1,4 +1,10 @@
 /*
+ * TODO:
+ *  When receiving an empty non-eor packet, don't bother putting it into the receive window.
+ *  Just pretend it went in by advancing sequence numbers.  This might be only possible if it
+ *  is empty.
+ */
+/*
  * lsocket.c
  *
  * Lightweight Socket layer.
@@ -127,7 +133,7 @@ static void cancel_state_machine(ls_socket_t *socket);
 static void state_machine_timeout(ls_socket_t *socket);
 static void send_state_machine_results(ls_socket_t *socket, ls_error_t response);
 static ls_error_t get_state_machine_results(ls_socket_t *socket);
-static void socket_flush_stream(ls_socket_t *socket);
+static bool socket_flush_stream(ls_socket_t *socket, bool force_ack);
 static void ack_output_window(ls_socket_t *socket, int ack_sequence, unsigned int ack_window);
 static void send_output_window(ls_socket_t *socket);
 static bool socket_linger_check(ls_socket_t *socket);
@@ -813,8 +819,9 @@ static packet_t *assemble_socket_data(packet_t *packet_to_send, packet_t *packet
 static bool stream_flush_output_window(ls_socket_t *socket)
 {
     /* Flush output window until we are done */
-    socket_flush_stream(socket);
-    send_output_window(socket);
+    if (socket_flush_stream(socket, /* force_ack */ false)) {
+        send_output_window(socket);
+    }
 
 ESP_LOGI(TAG, "%s: next_in is %d", __func__, socket->output_window->next_in);
 
@@ -883,7 +890,9 @@ linklayer_print_packet("stream packet", packet);
                      *
                      * If there is no data in this packet, it will be ignored if it is the first packet in the queue.
                      */
-                    receive_packet_to_window(socket->input_window, packet);
+                    if (receive_packet_to_window(socket->input_window, packet)) {
+                        simpletimer_start(&socket->socket_flush_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
+                    }
                     reject = false;
                     break;
                 }
@@ -1530,9 +1539,17 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
     return err;
 }
 
-static void socket_flush_stream(ls_socket_t *socket)
+/*
+ * Returns true if stuff to send.
+ */
+static bool socket_flush_stream(ls_socket_t *socket, bool force_ack)
 {
     assert(socket->output_window != NULL);
+
+    if (force_ack && socket->current_write_packet == NULL) {
+        /* Create empty packet to receive the ACK fields */
+        socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DATA, 0);
+    }
 
     if (socket->output_window != NULL && socket->current_write_packet != NULL) {
         write_packet_to_window(socket->output_window, ref_packet(socket->current_write_packet));
@@ -1541,6 +1558,8 @@ static void socket_flush_stream(ls_socket_t *socket)
 ESP_LOGI(TAG, "%s: start output_window_timer", __func__);
         simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
     }
+
+    return socket->output_window->next_in != 0;
 }
 
 /*
@@ -2659,7 +2678,7 @@ ESP_LOGI(TAG, "%s: **************************** state_machine_timer for socket %
                 if (simpletimer_is_expired_or_remaining(&socket->socket_flush_timer, &next_time)) {
                     simpletimer_stop(&socket->socket_flush_timer);
 ESP_LOGI(TAG, "%s: **************************** socket_flush_timer for socket %d fired", __func__, socket_index);
-                    socket_flush_stream(socket);
+                    socket_flush_stream(socket, /* force_ack */ true);
                 }
 
                 if (simpletimer_is_expired_or_remaining(&socket->output_window_timer, &next_time)) {
@@ -2938,7 +2957,7 @@ static int stconnect_command(int argc, const char **argv)
                         char buffer[80];
                         sprintf(buffer, "%s: line %d\n", argv[3], line);
                         //ret = ls_write(socket, buffer, strlen(buffer));
-                        printf("ls_write returned %d\n", ret);
+                        //printf("ls_write returned %d\n", ret);
                         ret = write(socket, buffer, strlen(buffer));
                         printf("write returned %d\n", ret);
                     }
@@ -2948,7 +2967,9 @@ static int stconnect_command(int argc, const char **argv)
             } else {
                 printf("ls_bind returned %d\n", ret);
             }
-            ls_close(socket);
+            printf("closing socket\n");
+            ret = ls_close(socket);
+            printf("close returned %d\n", ret);
         } else {
             printf("Unable to open socket: %d\n", socket);
         }
