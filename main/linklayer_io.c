@@ -21,7 +21,7 @@
 #include "driver/gpio.h"
 
 #include "packets.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "linklayer_io.h"
 
 #define TAG  "linklayer_io"

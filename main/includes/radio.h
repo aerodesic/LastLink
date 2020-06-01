@@ -4,7 +4,7 @@
 #include "driver/spi_master.h"
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "packets.h"
 
 #ifdef NOTUSED

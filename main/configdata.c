@@ -13,7 +13,7 @@
 #include "esp_system.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 
 #include "configdata.h"
 

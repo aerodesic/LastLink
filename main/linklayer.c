@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "driver/gpio.h"
 #include "esp_intr_alloc.h"
 

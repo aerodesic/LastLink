@@ -18,7 +18,7 @@
 
 #include "radio.h"
 #include "packets.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "sx127x_driver.h"
 #include "linklayer.h"
 #include "simpletimer.h"

@@ -7,7 +7,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 
-#include "os_freertos.h"
+#include "os_specific.h"
 
 #include "linklayer.h"
 #include "packets.h"

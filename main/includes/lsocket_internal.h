@@ -9,7 +9,7 @@
 #include <stdbool.h>
 
 #include "sdkconfig.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "lsocket.h"
 #include "simpletimer.h"
 
@@ -97,7 +97,8 @@ typedef struct packet_window {
     int              next_in;                    /* Next input slot to use */
     int              sequence;                   /* Sequence number of next packet to be added to window */
     os_semaphore_t   available;                  /* Semaphore used to release access to packets */
-    packet_t         *slots[1];                  /* 1..length slots */
+    bool             closing;                    /* Set to true when input side is closing */ 
+    packet_t         *slots[1];                  /* 1..length slots (must be last entry in structure) */
 } packet_window_t;
 
 typedef enum {
@@ -118,6 +119,8 @@ typedef struct packet_window packet_window_t;
 
 typedef struct ls_socket {
     os_mutex_t              lock;               /* MUTEX for user level access control - does not block I/O */
+    const char              *last_lock_file;
+    int                     last_lock_line;
     bool                    inuse;              /* TRUE if socket is opened by user */
     bool                    busy;               /* Set true when inside user code in ls_xxx function */
     ls_socket_type_t        socket_type;        /* Socket type (DATAGRAM or STREAM) */

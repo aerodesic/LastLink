@@ -34,12 +34,13 @@
 #include "lsocket.h"
 #include "configdata.h"
 #include "default_config.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "packets.h"
 #include "service_names.h"
 
 #include "commands.h"
 #include "ssd1306_i2c.h"
+#include "packet_window.h"
 
 
 /* TEST */
@@ -148,6 +149,8 @@ void app_main(void)
 #if 0
     wifi_init_softap();
 #endif
+
+    init_packet_window();
 
     if (listen_only) {
         linklayer_set_listen_only(true);

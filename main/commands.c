@@ -9,7 +9,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "lsocket.h"
 #include "commands.h"
 #include "linklayer.h"

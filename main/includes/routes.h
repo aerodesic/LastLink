@@ -6,7 +6,7 @@
 #ifndef __routes_h_included
 #define __routes_h_included
 
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "sdkconfig.h"
 #include "listops.h"
 #include "simpletimer.h"

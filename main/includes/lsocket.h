@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 
 #include "sdkconfig.h"
-#include "os_freertos.h"
+#include "os_specific.h"
 #include "packets.h"
 
 #define MAX_PACKET_ASSEMBLY     CONFIG_LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY

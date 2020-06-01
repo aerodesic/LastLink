@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "os_freertos.h"
+#include "os_specific.h"
 
 #include "esp_system.h"
 #include "esp_err.h"
@@ -290,7 +290,7 @@ bool set_int_field(packet_t *p, size_t from, size_t length, int value)
     return ok;
 }
 
-bool or_uint_field(packet_t *p, size_t from, size_t length, unsigned int value)
+bool set_bits_field(packet_t *p, size_t from, size_t length, unsigned int value)
 {
     bool ok = true;
     if (validate_field(p, from, length)) {
@@ -306,7 +306,7 @@ bool or_uint_field(packet_t *p, size_t from, size_t length, unsigned int value)
 
 
 /* Remove bits */
-bool unset_uint_field(packet_t *p, size_t from, size_t length, unsigned int value)
+bool clear_bits_field(packet_t *p, size_t from, size_t length, unsigned int value)
 {
     bool ok = true;
     if (validate_field(p, from, length)) {

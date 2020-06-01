@@ -6,7 +6,7 @@
 #ifndef __simpletimer_h_included
 #define __simpletimer_h_included
 
-#include "os_freertos.h"
+#include "os_specific.h"
 
 typedef struct simpletimer {
     enum {

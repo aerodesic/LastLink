@@ -48,6 +48,16 @@ typedef struct packet {
 bool init_packets(int num_packets);
 int deinit_packets(void);
 
+packet_t *allocate_packet_plain(void);
+packet_t *create_packet_plain(uint8_t *buf, size_t length);
+packet_t *duplicate_packet_plain(packet_t *packet);
+bool release_packet_plain(packet_t *packet);
+packet_t* ref_packet_plain(packet_t* packet);
+inline packet_t *touch_packet_plain(packet_t *packet)
+{
+    return packet;
+}
+
 /*
  * Return number of available packets.
  */
@@ -74,22 +84,13 @@ packet_t *touch_packet_debug(const char *filename, int lineno, packet_t *packet)
 
 #else
 
-packet_t *allocate_packet_plain(void);
-#define allocate_packet()  allocate_packet_plain()
-
-packet_t *create_packet_plain(uint8_t *buf, size_t length);
+#define allocate_packet()           allocate_packet_plain()
 #define create_packet(buf, length)  create_packet_plain(buf, length)
+#define duplicate_packet(packet)    duplicate_packet_plain(packet)
+#define release_packet(packet)      release_packet_plain(packet)
+#define ref_packet(packet)          ref_packet_plain(packet)
+#define touch_packet(packet)        (packet)
 
-packet_t *duplicate_packet_plain(packet_t *packet);
-#define duplicate_packet(packet) duplicate_packet_plain(packet)
-
-bool release_packet_plain(packet_t *packet);
-#define release_packet(packet) release_packet_plain(packet)
-
-packet_t* ref_packet_plain(packet_t* packet);
-#define ref_packet(packet) ref_packet_plain(packet)
-
-#define touch_packet(packet) (packet)
 #endif
 
 /*
@@ -105,10 +106,10 @@ bool set_int_field(packet_t *p, size_t from, size_t length, int value);
 #define set_uint_field(p, from, length, value) set_int_field(p, from, length, value)
 
 /* Or in bits */
-bool or_uint_field(packet_t *p, size_t from, size_t length, unsigned int value);
+bool set_bits_field(packet_t *p, size_t from, size_t length, unsigned int value);
 
 /* Remove bits */
-bool unset_uint_field(packet_t *p, size_t from, size_t length, unsigned int value);
+bool clear_bits_field(packet_t *p, size_t from, size_t length, unsigned int value);
 
 /*
  * Get a string from a field.  If length < 0, field is to end of buffer.
