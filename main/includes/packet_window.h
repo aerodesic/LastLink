@@ -17,18 +17,17 @@ typedef struct packet_slot {
     packet_t           *packet;
 } packet_slot_t;
 
-typedef struct new_packet_window {
-    os_mutex_t          lock;        /* Exclusivity lock for thread safety */
-    os_semaphore_t      available;   /* Number of sequentially available packets from queue[0] */
-    os_semaphore_t      room;        /* 'released' when a slot may have become available */
-    int                 sequence;    /* Sequence number of first packet in queue */
-    int                 length;      /* Number of slots in queue */
-    int                 next_in;     /* Number of sequential packets from beginning */
-    packet_slot_t       queue[1];    /* Queue of packets with sequence numbers */
-} new_packet_window_t;
-
-/* Remove before incorporating in hew driver */
-#define packet_window_t new_packet_window_t
+typedef struct packet_window {
+    os_mutex_t          lock;              /* Exclusivity lock for thread safety */
+    os_semaphore_t      available;         /* Number of sequentially available packets from queue[0] */
+    os_semaphore_t      room;              /* 'released' when a slot may have become available */
+    bool                shutdown;          /* Shuts down input stream when queue is empty */
+    int                 sequence;          /* Sequence number of first packet in queue */
+    int                 length;            /* Number of slots in queue */
+    int                 next_in;           /* Number of sequential packets from beginning */
+    int                 num_in_queue;      /* Slots in use */
+    packet_slot_t       queue[1];          /* Queue of packets with sequence numbers */
+} packet_window_t;
 
 void init_packet_window(void);
 void deinit_packet_window(void);
@@ -53,5 +52,11 @@ void get_accepted_packet_sequence_numbers(packet_window_t *window, int *sequence
 
 /* Release and trim queue for all packets processed. */
 int release_accepted_packets_in_window(packet_window_t *window, int sequence, uint32_t packet_mask, bool (*release_packet)(packet_t*));
+
+void shutdown_window(packet_window_t *window);
+
+bool is_shutdown(packet_window_t *window);
+
+int packets_in_window(packet_window_t *window);
 
 #endif /* __packet_window_h_include */

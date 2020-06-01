@@ -88,6 +88,7 @@
 #define STREAM_MAX_DATA                (MAX_PACKET_LEN - STREAM_PAYLOAD)
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
+#ifdef NOTUSED
 typedef struct packet_window {
     os_mutex_t       lock;                       /* For exclusive access */
     int              retry_time;                 /* Next time for retry delay */
@@ -100,6 +101,7 @@ typedef struct packet_window {
     bool             closing;                    /* Set to true when input side is closing */ 
     packet_t         *slots[1];                  /* 1..length slots (must be last entry in structure) */
 } packet_window_t;
+#endif
 
 typedef enum {
     LS_STATE_IDLE = 0,                           /* Idle - not connected */
@@ -163,6 +165,9 @@ typedef struct ls_socket {
            packet_window_t         *input_window;
            simpletimer_t           output_window_timer;
            packet_window_t         *output_window;
+           int                     output_retries;
+           int                     output_retry_time;
+ 
            simpletimer_t           socket_flush_timer;
            packet_t                *current_write_packet;
         };

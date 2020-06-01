@@ -151,9 +151,7 @@ ESP_LOGI(TAG, "%s: sequence %d window %d to %d", __func__, sequence, window->seq
             if (window->queue[slot].packet == NULL) {
                 window->queue[slot].packet = packet;
                 window->queue[slot].sequence = sequence;
-   //         } else {
-   //             /* We used a new slot so acquire the room but don't wait for it as nothing may have released one yet */
-   //             os_acquire_counting_semaphore_with_timeout(window->room, 0);
+                window->num_in_queue++;
             }
 
             /* We've added a packet and need to inform delayed readers */
@@ -214,27 +212,32 @@ bool remove_packet_from_window(packet_window_t *window, packet_t **packet, int t
 {
     bool ok = false;
 
+    if (is_shutdown(window) && window->num_in_queue == 0) {
+        packet = NULL;
+        ok = true;
+    } else {
+        /* Test or wait for a packet to be available.  Note that a NULL
+         * packet can be returned when the originator sends one to indicate
+         * <end of data>.
+         */
+        do {
+            ok =  os_acquire_counting_semaphore_with_timeout(window->available, timeout);
 
-    /* Test or wait for a packet to be available.  Note that a NULL
-     * packet can be returned when the originator sends one to indicate
-     * <end of data>.
-     */
-    do {
-        ok =  os_acquire_counting_semaphore_with_timeout(window->available, timeout);
-
-        if (ok) {
-            os_acquire_recursive_mutex(window->lock);
-            *packet = window->queue[0].packet;
-            if (*packet != NULL) {
-                remove_top_packet(window);
-                ok = *packet != place_holder_packet;
-            } else {
-                ok = false;
+            if (ok) {
+                os_acquire_recursive_mutex(window->lock);
+                *packet = window->queue[0].packet;
+                if (*packet != NULL) {
+                    window->num_in_queue--;
+                    remove_top_packet(window);
+                    ok = *packet != place_holder_packet;
+                } else {
+                    ok = false;
+                }
+                os_release_recursive_mutex(window->lock);
             }
-            os_release_recursive_mutex(window->lock);
-        }
-
-    } while (!ok && timeout < 0);
+    
+        } while (!ok && timeout < 0);
+    }
 
 
     return ok;
@@ -313,6 +316,7 @@ int release_accepted_packets_in_window(packet_window_t *window, int sequence, ui
     /* Remove all directly acknowledged packets */
     while (window->queue[0].packet != NULL && window->queue[0].sequence < sequence) {
         if (window->queue[0].packet != place_holder_packet) {
+            window->num_in_queue--;
             release_packet(window->queue[0].packet);
         }
         remove_top_packet(window);
@@ -324,6 +328,7 @@ int release_accepted_packets_in_window(packet_window_t *window, int sequence, ui
         if ((packet_mask & 1) != 0) {
             if (window->queue[slot].packet != NULL && window->queue[slot].packet != place_holder_packet) {
                 /* Release the packet to the pool */
+                window->num_in_queue--;
                 release_packet(window->queue[slot].packet);
                 /* Count the packet as processed */
                 ++packets_released;
@@ -346,6 +351,21 @@ int release_accepted_packets_in_window(packet_window_t *window, int sequence, ui
     os_release_recursive_mutex(window->lock);
 
     return packets_released;
+}
+
+void shutdown_window(packet_window_t *window)
+{
+    window->shutdown = true;
+}
+
+bool is_shutdown(packet_window_t *window)
+{
+    return window->shutdown;
+}
+
+int packets_in_window(packet_window_t *window)
+{
+    return window->num_in_queue;
 }
 
 #if CONFIG_LASTLINK_TABLE_COMMANDS
