@@ -145,7 +145,7 @@ void app_main(void)
     asprintf(&buffer, "Lastlink #%d", get_config_int("lastlink.address", 0));
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
-    
+
 #if 0
     wifi_init_softap();
 #endif
@@ -157,7 +157,7 @@ void app_main(void)
 
         os_queue_t queue = linklayer_set_promiscuous_mode(true);
 
-        packet_t *packet; 
+        packet_t *packet;
         while (true) {
             if (os_get_queue(queue, (os_queue_item_t*) &packet)) {
 

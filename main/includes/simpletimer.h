@@ -118,7 +118,7 @@ static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uin
         if (time_to_fire < *remaining) {
             *remaining = time_to_fire;
         }
-    } 
+    }
 
     return expired;
 }

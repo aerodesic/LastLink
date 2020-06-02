@@ -13,8 +13,9 @@
 typedef struct packet packet_t;    /* Foward reference - internals are not  needed */
 
 typedef struct packet_slot {
-    int                sequence;
-    packet_t           *packet;
+    int                sequence;           /* Sequence of packet (for verification and easy access) */
+    bool               inuse;              /* true if the slot represents a (possibly freed) packet */
+    packet_t           *packet;            /* The packet if it hasn't been processed */
 } packet_slot_t;
 
 typedef struct packet_window {
@@ -24,7 +25,9 @@ typedef struct packet_window {
     bool                shutdown;          /* Shuts down input stream when queue is empty */
     int                 sequence;          /* Sequence number of first packet in queue */
     int                 length;            /* Number of slots in queue */
+#ifdef NOTUSED
     int                 next_in;           /* Number of sequential packets from beginning */
+#endif
     int                 num_in_queue;      /* Slots in use */
     packet_slot_t       queue[1];          /* Queue of packets with sequence numbers */
 } packet_window_t;
@@ -39,7 +42,7 @@ packet_window_t *create_packet_window(int slots);
 void release_packet_window(packet_window_t *window, bool (*release_packet)(packet_t*));
 
 /* Put a packet into the window at the sequence number position. */
-bool insert_packet_into_window(packet_window_t *window, packet_t *packet, int sequence, int timeout);
+bool add_packet_to_window(packet_window_t *window, packet_t *packet, int sequence, int timeout);
 
 /* Remove the next packet from the front of the window. */
 bool remove_packet_from_window(packet_window_t *window, packet_t **packet,  int timeout);
@@ -58,5 +61,7 @@ void shutdown_window(packet_window_t *window);
 bool is_shutdown(packet_window_t *window);
 
 int packets_in_window(packet_window_t *window);
+
+int next_sequence(packet_window_t *window);
 
 #endif /* __packet_window_h_include */

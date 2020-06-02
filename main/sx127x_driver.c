@@ -474,7 +474,7 @@ static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *dat
 #if 1
                 uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
                 if ((modem_status & (SX127x_MODEM_STATUS_SIG_DETECTED | SX127x_MODEM_STATUS_SIG_SYNCED | SX127x_MODEM_STATUS_HEADER_VALID)) != 0) {
-     
+
                     /* Freshen the irq_flags */
                     data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
 
@@ -501,8 +501,8 @@ ESP_LOGE(TAG, "%s: receive busy detected: %03x", __func__, data->irq_flags);
                     radio->activity_indicator(radio, true);
 
                     tx_state = TX_WAIT_TX_INT;
-    
-                    simpletimer_extend(&data->transmit_timer, radio->transmit_delay + 2 * get_message_time(radio, data->current_packet->length));
+
+                    simpletimer_extend(&data->transmit_timer, radio->transmit_delay + 4 * get_message_time(radio, data->current_packet->length));
 //ESP_LOGI(TAG, "%s: tx; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
                 }
             }
@@ -930,7 +930,7 @@ static bool set_transmit_mode(radio_t* radio)
 
     if (acquire_lock(radio)) {
         ok =  disable_irq(radio, SX127x_RECEIVE_INTERRUPTS)
-           && enable_irq(radio, SX127x_TRANSMIT_INTERRUPTS) 
+           && enable_irq(radio, SX127x_TRANSMIT_INTERRUPTS)
            && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, TX_DIO_MAPPING)
            && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_TX)
             ;

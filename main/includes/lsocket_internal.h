@@ -98,7 +98,7 @@ typedef struct packet_window {
     int              next_in;                    /* Next input slot to use */
     int              sequence;                   /* Sequence number of next packet to be added to window */
     os_semaphore_t   available;                  /* Semaphore used to release access to packets */
-    bool             closing;                    /* Set to true when input side is closing */ 
+    bool             closing;                    /* Set to true when input side is closing */
     packet_t         *slots[1];                  /* 1..length slots (must be last entry in structure) */
 } packet_window_t;
 #endif
@@ -164,10 +164,11 @@ typedef struct ls_socket {
            /* Packet assembly buffers */
            packet_window_t         *input_window;
            simpletimer_t           output_window_timer;
+           simpletimer_t           output_window_forced_timer;
            packet_window_t         *output_window;
            int                     output_retries;
            int                     output_retry_time;
- 
+
            simpletimer_t           socket_flush_timer;
            packet_t                *current_write_packet;
         };

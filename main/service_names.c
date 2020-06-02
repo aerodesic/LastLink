@@ -83,7 +83,7 @@ static service_cache_t* create_service(const char* name)
 static void add_service(service_cache_t *service)
 {
     os_acquire_recursive_mutex(service_lock);
-    
+
     ADD_TO_LIST(&service_cache, service);
 
     os_release_recursive_mutex(service_lock);
@@ -195,7 +195,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                         os_release_recursive_mutex(service_lock);
                     }
 
-                    /* Do a scan and expire entries */     
+                    /* Do a scan and expire entries */
                     os_acquire_recursive_mutex(service_lock);
 
                     service_cache_t *service = (service_cache_t*) FIRST_LIST_ITEM(&service_cache);
@@ -362,7 +362,7 @@ static int service_table_commands(int argc, const char **argv)
         service_cache_copy_t services[NUM_IN_LIST(&service_cache)];
 
         int num_services = 0;
-    
+
         while (service != NULL) {
             services[num_services].p = service;
             services[num_services].next = service->next;
@@ -380,7 +380,7 @@ static int service_table_commands(int argc, const char **argv)
         }
 
         os_release_recursive_mutex(service_lock);
-    
+
         if (num_services != 0) {
             printf("P           Next        Prev        Address  Timer  Type  Port  Name\n");
             for (int index = 0; index < num_services; ++index) {
@@ -406,7 +406,7 @@ static int service_table_commands(int argc, const char **argv)
             }
         } else {
             printf("wrong number of parameters\n");
-        } 
+        }
     } else if (strcmp(argv[1], "del") == 0) {
         if (argc == 3) {
             if (!deregister_service_name(argv[2])) {
@@ -418,8 +418,8 @@ static int service_table_commands(int argc, const char **argv)
     } else {
         int               address;
         ls_socket_type_t  socket_type;
-        ls_port_t         port; 
-        
+        ls_port_t         port;
+
         if (find_service_by_name(argv[1], &address, &socket_type, &port) == LSE_NO_ERROR) {
             printf("Service %s found on %d type %d port %d\n", argv[1], address, socket_type, port);
         } else {

@@ -269,7 +269,7 @@ static int contrast_command(int argc, const char **argv)
             printf("Value must be from 0 to 255\n");
         } else {
             display->contrast(display, val);
-        } 
+        }
     }
 
     return 0;
@@ -293,7 +293,7 @@ static int reboot_command(int argc, const char **argv)
 
 typedef struct command_entry command_entry_t;
 typedef struct command_entry {
-    command_entry_t *next; 
+    command_entry_t *next;
     command_entry_t *prev;
     const char*      name;
     int              (*function)(int argc, const char **argv);
@@ -399,7 +399,7 @@ static int tasks_command(int argc, const char **argv)
 
             /* Generate raw status information about each task. */
             BaseType_t num_tasks = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalRunTime );
-     
+
             /* For each populated position in the pxTaskStatusArray array,
             format the raw data as human readable ASCII data. */
             printf("\nTask Name         Runtime  State      Priority  Cpu  High Stack\n");
@@ -505,7 +505,7 @@ bool add_command(const char* name, int (*function)(int argc, const char **argv))
 
     return entry != NULL;
 }
- 
+
 static void delete_command(command_entry_t *command_entry)
 {
     if (command_entry != NULL) {
@@ -523,7 +523,7 @@ bool remove_command(const char *name)
     if (command_entry != NULL) {
         delete_command(command_entry);
     }
-    
+
     os_release_recursive_mutex(command_lock);
 
     return command_entry != NULL;

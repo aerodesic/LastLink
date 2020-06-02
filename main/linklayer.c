@@ -314,16 +314,16 @@ static bool is_valid_address(int address)
 //      int sender = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
 //      int origin = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
 //      int dest   = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
-//  
+//
 //      return is_valid_address(sender) && origin != linklayer_node_address && (dest == linklayer_node_address || dest == BROADCAST_ADDRESS);
 //  }
-//  
+//
 //  static inline bool is_routed_through(const packet_t* packet)
 //  {
 //      return get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == linklayer_node_address ||
 //             get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS;
 //  }
-//  
+//
 //  static inline bool is_internal_packet(const packet_t* packet)
 //  {
 //      return get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) == linklayer_node_address &&
@@ -1249,8 +1249,8 @@ static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
                 int dest    = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
                 int sender  = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
                 int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-        
-                /* we will process packets that are local (from us and to us but not broadcast) 
+
+                /* we will process packets that are local (from us and to us but not broadcast)
                  * or not from us and not duplicate.
                  */
                 if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */

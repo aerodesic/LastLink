@@ -18,7 +18,7 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
     int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
     int sequence = get_int_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
     int hash     = origin % NUM_ORIGIN_MAP;
-    
+
     list_head_t *list_head = &duplist->origin_map[hash];
 
     bool found = false;

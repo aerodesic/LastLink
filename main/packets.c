@@ -74,7 +74,7 @@ packet_t *allocate_packet_plain(void)
             /* Check for the impossible... */
             if (packet != NULL) {
 
-                if (packet->ref != 0) { 
+                if (packet->ref != 0) {
                     ESP_LOGE(TAG, "%s: ref not zero: %d", __func__, packet->ref);
                 }
 
@@ -151,6 +151,7 @@ bool release_packet_plain(packet_t *packet)
                 packet->routed_callback_data = NULL;
                 ok = os_put_queue_with_timeout(free_packets_queue, packet, 0);
                 packets_in_use--;
+ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
             } else {
                 ok = true;
             }
@@ -591,7 +592,7 @@ bool init_packets(int num_packets)
 
                 if (free_packets_queue != NULL) {
                     // ESP_LOGD(TAG, "free_packets_queue created");
-    
+
                     ok = true;
 
                     int count = 0;
@@ -605,7 +606,7 @@ bool init_packets(int num_packets)
 
                         dma_buffers += ALLOCATED_PACKET_LEN;
                         ++count;
-                    }      
+                    }
                 } else {
                     ESP_LOGE(TAG, "%s: Unable to allocate packet queue", __func__);
                 }

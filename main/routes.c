@@ -119,7 +119,7 @@ route_t* create_route(int radio_num, int dest, int metric, int routeto, int orig
 	        r->sequence  = sequence;
 	        r->flags     = flags;
 
-            simpletimer_start(&r->lifetime, ROUTE_LIFETIME); 
+            simpletimer_start(&r->lifetime, ROUTE_LIFETIME);
             simpletimer_stop(&r->pending_timer);
 
 	        r->pending_retries = 0;
@@ -212,7 +212,7 @@ route_t* update_route(int radio_num, int dest, int metric, int routeto, int orig
             /* Ignore it - it's no better */
             r = NULL;
         } else {
-            r->origin     = origin;  
+            r->origin     = origin;
             r->sequence   = sequence;
             r->metric     = metric;
             r->routeto    = routeto;
@@ -371,7 +371,7 @@ static int print_route_table(int argc, const char **argv)
             table[rt_used].pending_packets = route->pending_packets ? os_items_in_queue(route->pending_packets) : 0;
             table[rt_used].pending_timer = simpletimer_remaining(&route->pending_timer);
             table[rt_used].pending_retries = route->pending_retries;
-            
+
             ++rt_used;
 
             route = NEXT_LIST_ITEM(route, &routes);

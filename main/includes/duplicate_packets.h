@@ -21,7 +21,7 @@ typedef struct duplicate_sequence {
     duplicate_sequence_t *next;
     duplicate_sequence_t *prev;
     int                  origin;
-    int                  sequence;    
+    int                  sequence;
 } duplicate_sequence_t;
 
 bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packet);
