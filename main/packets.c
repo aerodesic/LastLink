@@ -95,6 +95,7 @@ packet_t *allocate_packet_plain(void)
     if (packet == NULL) {
         /* Record the fact we dropped this one */
         ++dropped_allocations;
+printf("no packets\n");
     }
 
     packet_unlock();

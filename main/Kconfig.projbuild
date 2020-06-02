@@ -375,6 +375,12 @@ menu "LastLink Configuration"
         default 10
         range 10 600
 
+        config LASTLINK_STREAM_UPDATE_TIME
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        int "Update period in mS for sending ACKS when reads outstanding."
+        default 1000
+        range 200 5000
+
         config LASTLINK_SOCKET_LINGER_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Time to 'linger' socket after closing"

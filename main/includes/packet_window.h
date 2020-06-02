@@ -25,43 +25,44 @@ typedef struct packet_window {
     bool                shutdown;          /* Shuts down input stream when queue is empty */
     int                 sequence;          /* Sequence number of first packet in queue */
     int                 length;            /* Number of slots in queue */
-#ifdef NOTUSED
-    int                 next_in;           /* Number of sequential packets from beginning */
-#endif
     int                 num_in_queue;      /* Slots in use */
+    bool                reader_busy;       /* True when reader is blocked on waiting for packet */
     packet_slot_t       queue[1];          /* Queue of packets with sequence numbers */
 } packet_window_t;
 
-void init_packet_window(void);
-void deinit_packet_window(void);
+void packet_window_init(void);
+void packet_window_deinit(void);
 
 /* Create a new packet window with <slots> entries in the queue */
-packet_window_t *create_packet_window(int slots);
+packet_window_t *packet_window_create(int slots);
 
 /* Free all subordinate information and free a packet window */
-void release_packet_window(packet_window_t *window, bool (*release_packet)(packet_t*));
+void packet_window_release(packet_window_t *window, bool (*release_packet)(packet_t*));
 
 /* Put a packet into the window at the sequence number position. */
-bool add_packet_to_window(packet_window_t *window, packet_t *packet, int sequence, int timeout);
+bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout);
 
 /* Remove the next packet from the front of the window. */
-bool remove_packet_from_window(packet_window_t *window, packet_t **packet,  int timeout);
+bool packet_window_remove_packet(packet_window_t *window, packet_t **packet,  int timeout);
 
 /* Get a list of all packets in the window.  Caller needs to release when done */
-int get_packets_in_window(packet_window_t *window, packet_t *packets[], size_t num_packets);
+int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], size_t num_packets);
 
 /* Get the list of accepted and processed packets in the queue to provide acknowledgement */
-void get_accepted_packet_sequence_numbers(packet_window_t *window, int *sequence, uint32_t *packet_mask);
+void packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask);
 
 /* Release and trim queue for all packets processed. */
-int release_accepted_packets_in_window(packet_window_t *window, int sequence, uint32_t packet_mask, bool (*release_packet)(packet_t*));
+int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask, bool (*release_packet)(packet_t*));
 
-void shutdown_window(packet_window_t *window);
+void packet_window_shutdown_window(packet_window_t *window);
 
-bool is_shutdown(packet_window_t *window);
+bool packet_window_is_window_shutdown(packet_window_t *window);
 
-int packets_in_window(packet_window_t *window);
+int packet_window_packet_count(packet_window_t *window);
 
-int next_sequence(packet_window_t *window);
+int packet_window_next_sequence(packet_window_t *window);
+
+bool packet_window_is_reader_busy(packet_window_t *window);
+
 
 #endif /* __packet_window_h_include */

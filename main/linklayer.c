@@ -1141,7 +1141,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         release_packet(packet);
     } else {
 //ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
-linklayer_print_packet("transmit", packet);
+//linklayer_print_packet("transmit", packet);
         if (os_put_queue(radio->transmit_queue, packet)) {
             /* See if the queue was empty */
             // if (os_items_in_queue(radio->transmit_queue) == 1) {
@@ -1389,9 +1389,11 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
     if (buffer != NULL) {
 
 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-        ESP_LOGE(TAG, "%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
+//        ESP_LOGE(TAG, "%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
+        printf("%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
 #else
-        ESP_LOGE(TAG, "%s: (%p) %s", reason, packet, buffer);
+//        ESP_LOGE(TAG, "%s: (%p) %s", reason, packet, buffer);
+        printf("%s: (%p) %s", reason, packet, buffer);
 #endif
 
         free((void*) buffer);
