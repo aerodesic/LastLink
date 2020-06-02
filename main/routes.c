@@ -17,9 +17,9 @@
 
 #define ROUTE_SCANNER_STACK_SIZE  8192
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 #define TAG  "routes"
 
@@ -328,7 +328,7 @@ route_t* find_route(int address)
 }
 
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 /*
  * For delivering the contents for display.
  */
@@ -401,7 +401,7 @@ static int print_route_table(int argc, const char **argv)
 
     return 0;
 }
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 void route_table_init(void)
 {
@@ -416,16 +416,16 @@ void route_table_init(void)
         route_scanner_thread_id = os_create_thread(route_scanner_thread, "route_scanner", ROUTE_SCANNER_STACK_SIZE, 0, NULL);
     }
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("routes", print_route_table);
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 }
 
 bool route_table_deinit(void)
 {
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     remove_command("routes");
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     if (routes_lock != NULL) {
 

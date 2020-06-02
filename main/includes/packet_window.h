@@ -8,6 +8,8 @@
 #ifndef __packet_window_h_included
 #define __packet_window_h_included
 
+#define PACKET_WINDOW_LOCKING_DEBUG
+
 #include "os_specific.h"
 
 typedef struct packet packet_t;    /* Foward reference - internals are not  needed */
@@ -20,6 +22,10 @@ typedef struct packet_slot {
 
 typedef struct packet_window {
     os_mutex_t          lock;              /* Exclusivity lock for thread safety */
+#ifdef PACKET_WINDOW_LOCKING_DEBUG
+    const char         *last_lock_file;
+    int                 last_lock_line;
+#endif /* PACKET_WINDOW_LOCKING_DEBUG */
     os_semaphore_t      available;         /* Number of sequentially available packets from queue[0] */
     os_semaphore_t      room;              /* 'released' when a slot may have become available */
     bool                shutdown;          /* Shuts down input stream when queue is empty */
@@ -29,6 +35,22 @@ typedef struct packet_window {
     bool                reader_busy;       /* True when reader is blocked on waiting for packet */
     packet_slot_t       queue[1];          /* Queue of packets with sequence numbers */
 } packet_window_t;
+
+#ifdef PACKET_WINDOW_LOCKING_DEBUG
+bool packet_window_lock_debug(packet_window_t *window, const char *file, int line);
+bool packet_window_unlock_debug(packet_window_t *window, const char *file, int line);
+#define packet_window_lock(window)        packet_window_lock_debug(window, __FILE__, __LINE__)
+#define packet_window_unlock(window)      packet_window_unlock_debug(window, __FILE__, __LINE__)
+#else
+inline bool packet_window_lock(packet_window_t *window)
+{
+    os_acquire_recursive_mutex(window->lock);
+}
+inline bool packet_window_unlock(packet_window_t *window)
+{
+    os_release_recursive_mutex(window->lock);
+}
+#endif /* PACKET_WINDOW_LOCKING_DEBUG */
 
 void packet_window_init(void);
 void packet_window_deinit(void);

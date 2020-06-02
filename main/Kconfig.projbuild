@@ -4,27 +4,27 @@ menu "LastLink Configuration"
         default 0
         help
             This table will define a list of address from which this node
-            will accept packets.  This is used to test a network environment
+            will only accept packets.  This is used to test a network environment
             where all nodes are close but we want to limit paths to simulate
             a disperse array.  A blank string means no limits.
 
             The contents of this table is filled from a configuration variable.
 
-    config LASTLINK_TABLE_COMMANDS
-        bool "Add table lists"
+    config LASTLINK_EXTRA_DEBUG_COMMANDS
+        bool "Add table debug commands"
         default y
         help
-            If enabled, adds extra table lists to status command.
+            If enabled, adds extra table lists to command  processor.
 
     config LASTLINK_WIFI_SSID
         string "WiFi SSID"
-        default "myssid"
+        default "lastlink"
         help
             SSID (network name) for the example to connect to.
 
     config LASTLINK_WIFI_PASSWORD
         string "WiFi Password"
-        default "mypassword"
+        default ""
         help
             WiFi password (WPA or WPA2) for the example to use.
 
@@ -327,8 +327,8 @@ menu "LastLink Configuration"
         config LASTLINK_STREAM_ACK_DELAY
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Delay (in mS) between receiving a packet and the automatic ack"
-        default 50
-        range 5 500
+        default 500
+        range 50 5000
         help
             This value determines how long a stream will wait to acknowledge a
             packet if there is no traffic going back to the sender.  ACKS are
@@ -338,27 +338,38 @@ menu "LastLink Configuration"
         config LASTLINK_STREAM_TRANSMIT_RETRIES
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Number of retries"
-        default 5
-        range 2 10
+        default 10
+        range 2 30
         help
             The number of times to retry sending the output queue before giving up.
 
         config LASTLINK_STREAM_TRANSMIT_RETRY_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Initial mS between tries"
-        default 100
-        range 50 2000
+        default 500
+        range 50 1000
         help
             The delay between retries; doubles each retry.
+
+
+        config LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        int "Maximum retry interval"
+        default 5000
+        range 1000 20000
+        help
+            The maximum backoff between retries.
+
 
         config LASTLINK_STREAM_TRANSMIT_DELAY
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "How long (in mS) to hold a packet with data before it is sent"
-        default 50
-        range 5 500
+        default 200
+        range 50 5000
         help
             This value determines how long a packet with fresh data will stay
             in the output queue before it is sent.
+
 
         config LASTLINK_STREAM_KEEP_ALIVE_ENABLE
         depends on LASTLINK_ENABLE_SOCKET_LAYER
@@ -368,6 +379,7 @@ menu "LastLink Configuration"
              If set, keep-alive packets will go between socket endpoints
              every <N> seconds determined by KEEP ALIVE timer.
 
+
         config LASTLINK_STREAM_KEEP_ALIVE
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         depends on LASTLINK_STREAM_KEEP_ALIVE_ENABLE
@@ -375,17 +387,19 @@ menu "LastLink Configuration"
         default 10
         range 10 600
 
+
         config LASTLINK_STREAM_UPDATE_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Update period in mS for sending ACKS when reads outstanding."
         default 1000
-        range 200 5000
+        range 200 10000
+
 
         config LASTLINK_SOCKET_LINGER_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Time to 'linger' socket after closing"
-        default 1000
-        range 50 20000
+        default 5000
+        range 1000 60000
         help
             Timer after socket closes before it is cleaned and reclaimed.
 

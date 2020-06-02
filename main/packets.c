@@ -17,7 +17,7 @@
 #include "linklayer.h" /*DEBUG*/
 #include "packets.h"
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
 #endif
 
@@ -438,7 +438,7 @@ void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *pac
     packet->routed_callback_data = data;
 }
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 typedef struct {
     void*         address;
     void*         buffer;
@@ -551,7 +551,7 @@ int print_packet_table(int argc, const char **argv)
 
     return 0;
 }
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 /*
  * init_packets
@@ -625,9 +625,9 @@ bool init_packets(int num_packets)
         /* Undo failed initialization */
         deinit_packets();
     } else {
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
         add_command("p", print_packet_table);
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
     }
 
     return ok;
@@ -679,9 +679,9 @@ int deinit_packets(void)
             dma_buffers = NULL;
             packet_table_len = 0;
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
             remove_command("p");
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
         }
     }
 

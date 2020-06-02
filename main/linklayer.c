@@ -32,7 +32,7 @@
 #include "linklayer_io.h"
 #include "duplicate_packets.h"
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
 #endif
 
@@ -1463,7 +1463,11 @@ void linklayer_release_packets_in_queue(os_queue_t queue) {
 
 static int linklayer_print_lock_status(int argc, const char** argv)
 {
-    printf("linklayer_lock: %s\n", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
+    if (argc == 0) {
+        show_help(argv[0], "", "Print linklayer lock status");
+    } else {
+        printf("linklayer_lock: %s\n", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
+    }
     return 0;
 }
 
@@ -1540,9 +1544,9 @@ bool linklayer_init(int address, int flags, int announce)
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
 
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("ll", linklayer_print_lock_status);
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;
 }
@@ -1550,9 +1554,9 @@ bool linklayer_init(int address, int flags, int announce)
 
 bool linklayer_deinit(void)
 {
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     remove_command("ll");
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     if (linklayer_lock()) {
 

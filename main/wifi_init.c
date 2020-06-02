@@ -54,6 +54,7 @@ void wifi_init_softap(void)
             .authmode = WIFI_AUTH_WPA_WPA2_PSK
         },
     };
+
     if (strlen(CONFIG_LASTLINK_WIFI_PASSWORD) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }

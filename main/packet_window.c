@@ -25,6 +25,39 @@
 
 #define TAG "packet_window"
 
+#ifdef PACKET_WINDOW_LOCKING_DEBUG
+bool packet_window_lock_debug(packet_window_t *window, const char *file, int line)
+{
+    /* Try without waiting */
+    bool ok = os_acquire_recursive_mutex_with_timeout(window->lock, 0);
+    if (!ok) {
+        /* Didn't get it, so go ahead and wait and show message */
+        ESP_LOGI(TAG, "%s: **********************************************************************", __func__);
+        ESP_LOGI(TAG, "%s: waiting for window lock [%s:%d] last locked at %s:%d", __func__,
+                           file, line, window->last_lock_file ? window->last_lock_file : "<NULL>", window->last_lock_line);
+        ESP_LOGI(TAG, "%s: **********************************************************************", __func__);
+        ok = os_acquire_recursive_mutex(window->lock);
+        ESP_LOGI(TAG, "%s: **********************************************************************", __func__);
+        ESP_LOGI(TAG, "%s: got window lock", __func__);
+        ESP_LOGI(TAG, "%s: **********************************************************************", __func__);
+    }
+
+    if (ok) {
+        window->last_lock_file = file;
+        window->last_lock_line = line;
+    }
+
+    return ok;
+}
+
+bool packet_window_unlock_debug(packet_window_t *window, const char *file, int line)
+{
+    (void) file;
+    (void) line;
+    return os_release_recursive_mutex(window->lock);
+}
+#endif
+
 static bool dummy_release(packet_t* packet)
 {
     ESP_LOGE(TAG, "%s: called when shouldn't be for %p", __func__, packet);
@@ -80,7 +113,7 @@ packet_window_t *packet_window_create(int slots)
  */
 void packet_window_release(packet_window_t *window, bool (*release_packet)(packet_t*))
 {
-    os_acquire_recursive_mutex(window->lock);
+    packet_window_lock(window);
 
     /* Release packets in slots */
     for (int slot = 0; slot < window->length; ++slot) {
@@ -102,7 +135,7 @@ void packet_window_release(packet_window_t *window, bool (*release_packet)(packe
     }
 
 
-    os_release_recursive_mutex(window->lock);
+    packet_window_unlock(window);
 
     os_delete_mutex(window->lock);
 
@@ -133,7 +166,7 @@ bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int seq
     bool fail = false;
 
 ESP_LOGI(TAG, "%s: called with sequence %d of %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-    os_acquire_recursive_mutex(window->lock);
+    packet_window_lock(window);
 
     while (!ok && !fail) {
 
@@ -165,13 +198,13 @@ ESP_LOGI(TAG, "%s: adding %d window %d to %d", __func__, sequence, window->seque
 ESP_LOGI(TAG, "%s: no room for %d in %d to %d; waiting", __func__, sequence, window->sequence, window->sequence + window->length - 1);
 
             /* No place for packet, so wait until room */
-            os_release_recursive_mutex(window->lock);
+            packet_window_unlock(window);
 
             /* Wait for something to release some room */
             os_acquire_counting_semaphore_with_timeout(window->room, timeout);
 
             /* Acquire the window and scan again */
-            os_acquire_recursive_mutex(window->lock);
+            packet_window_lock(window);
 
             /* Don't wait second time through if not a forever wait */
             if (timeout > 0) {
@@ -182,7 +215,7 @@ ESP_LOGI(TAG, "%s: no room for %d in %d to %d; waiting", __func__, sequence, win
         }
     }
 
-    os_release_recursive_mutex(window->lock);
+    packet_window_unlock(window);
 
     return ok;
 }
@@ -217,7 +250,7 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
             }
 
             if (window->queue[0].inuse && window->queue[0].packet != NULL) {
-                os_acquire_recursive_mutex(window->lock);
+                packet_window_lock(window);
 
                 if (window->queue[0].inuse && window->queue[0].packet != NULL) {
                     *packet = window->queue[0].packet;
@@ -228,7 +261,7 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
                     ok = false;
                 }
 
-                os_release_recursive_mutex(window->lock);
+                packet_window_unlock(window);
             }
         }
 
@@ -247,7 +280,7 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
  */
 int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], size_t num_packets)
 {
-    os_acquire_recursive_mutex(window->lock);
+    packet_window_lock(window);
 
     int packet_count = 0;
     for (int slot = 0; slot < window->length && packet_count < num_packets; ++slot) {
@@ -256,7 +289,7 @@ int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], 
         }
     }
 
-    os_release_recursive_mutex(window->lock);
+    packet_window_unlock(window);
 
     return packet_count;
 }
@@ -276,7 +309,7 @@ int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], 
  */
 void packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask)
 {
-    os_acquire_recursive_mutex(window->lock);
+    packet_window_lock(window);
 
     int slot;
 
@@ -306,7 +339,7 @@ void packet_window_get_processed_packets(packet_window_t *window, int *sequence,
         ++slot;
     }
 
-    os_release_recursive_mutex(window->lock);
+    packet_window_unlock(window);
 }
 
 /* packet_window_release_processed_packets
@@ -321,7 +354,7 @@ void packet_window_get_processed_packets(packet_window_t *window, int *sequence,
  */
 int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask, bool (*release_packet)(packet_t*))
 {
-    os_acquire_recursive_mutex(window->lock);
+    packet_window_lock(window);
 
     /* Remove all directly acknowledged packets */
     while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
@@ -357,7 +390,7 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
         packet_window_discard_top_packet(window);
     }
 
-    os_release_recursive_mutex(window->lock);
+    packet_window_unlock(window);
 
     return packet_window_packet_count(window);
 }
@@ -391,7 +424,7 @@ bool packet_window_is_reader_busy(packet_window_t *window)
     return window->reader_busy;
 }
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
 
 static int sequence_number_order[] = {
@@ -575,19 +608,19 @@ int run_packet_window_test(int argc, const char **argv)
 
     return 0;
 }
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 void packet_window_init(void)
 {
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("pwt", run_packet_window_test);
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 }
 
 void packet_window_deinit(void)
 {
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     remove_command("pwt");
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 }
 

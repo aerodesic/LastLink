@@ -1,5 +1,5 @@
 /*
- * lsocket.h
+ * lsocket_internal.h
  *
  * Lightweight Socket layer.
  */
@@ -88,24 +88,15 @@
 #define STREAM_MAX_DATA                (MAX_PACKET_LEN - STREAM_PAYLOAD)
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
-#ifdef NOTUSED
-typedef struct packet_window {
-    os_mutex_t       lock;                       /* For exclusive access */
-    int              retry_time;                 /* Next time for retry delay */
-    int              retries;                    /* Count of remaining tries */
-    uint8_t          length;                     /* Number of slots */
-    uint8_t          released;                   /* Number of packets freed that have not issued release_semaphore */
-    int              next_in;                    /* Next input slot to use */
-    int              sequence;                   /* Sequence number of next packet to be added to window */
-    os_semaphore_t   available;                  /* Semaphore used to release access to packets */
-    bool             closing;                    /* Set to true when input side is closing */
-    packet_t         *slots[1];                  /* 1..length slots (must be last entry in structure) */
-} packet_window_t;
-#endif
+/* Set to add debugging logic to socket and global socket locking */
+#define SOCKET_LOCKING_DEBUG
 
 typedef enum {
     LS_STATE_IDLE = 0,                           /* Idle - not connected */
+    LS_STATE_INUSE,                              /* In use but not assigned */
     LS_STATE_SOCKET,                             /* SOCKET has been instantiated */
+    LS_STATE_BOUND,                              /* SOCKET has been bound to an address / port */
+    LS_STATE_LISTENING,                          /* SOCKET is in listen mode */
     LS_STATE_INBOUND_CONNECT,                    /* Inbound connect on listen socket received */
     LS_STATE_OUTBOUND_CONNECT,                   /* Outbound connect sent */
     LS_STATE_CONNECTED,                          /* Connected - bidirectional streams ready */
@@ -117,22 +108,23 @@ typedef enum {
 } ls_socket_state_t;
 
 typedef struct ls_socket ls_socket_t;
-typedef struct packet_window packet_window_t;
+typedef struct packet_window packet_window_t;    /* Forward declaration for external structure */
 
 typedef struct ls_socket {
-    os_mutex_t              lock;               /* MUTEX for user level access control - does not block I/O */
+    os_mutex_t              lock;                /* MUTEX for user level access control - does not block I/O */
+#ifdef SOCKET_LOCKING_DEBUG
     const char              *last_lock_file;
     int                     last_lock_line;
-    bool                    inuse;              /* TRUE if socket is opened by user */
-    bool                    busy;               /* Set true when inside user code in ls_xxx function */
-    ls_socket_type_t        socket_type;        /* Socket type (DATAGRAM or STREAM) */
+#endif /* SOCKET_LOCKING_DEBUG */
+    bool                    busy;                /* Set true when inside user code in ls_xxx function */
+    ls_socket_type_t        socket_type;         /* Socket type (DATAGRAM or STREAM) */
 
-    ls_socket_state_t       state;              /* Current state */
-    ls_port_t               local_port;         /* Local port number of the connection */
-    ls_port_t               dest_port;          /* Destination port of the connection */
-    bool                    rename_dest;        /* If datagram and true, dest_address gets value of last packet read */
-                                                /* This allows us to ls_write() back to return data */
-    ls_address_t            dest_addr;          /* Destination address of the connection */
+    ls_socket_state_t       state;               /* Current state */
+    ls_port_t               local_port;          /* Local port number of the connection */
+    ls_port_t               dest_port;           /* Destination port of the connection */
+    bool                    rename_dest;         /* If datagram and true, dest_address gets value of last packet read */
+                                                 /* This allows us to ls_write() back to return data */
+    ls_address_t            dest_addr;           /* Destination address of the connection */
 
     union {
         /* LISTEN SOCKET INFO */
@@ -164,7 +156,7 @@ typedef struct ls_socket {
            /* Packet assembly buffers */
            packet_window_t         *input_window;
            simpletimer_t           output_window_timer;
-           simpletimer_t           output_window_forced_timer;
+           simpletimer_t           input_window_timer;
            packet_window_t         *output_window;
            int                     output_retries;
            int                     output_retry_time;
@@ -174,8 +166,6 @@ typedef struct ls_socket {
         };
     };
 
-    bool                    listen;             /* True when listening */
-    bool                    record_mark_seen;   /* Detects two record marks in a row to signal socket closed */
     ls_error_t              last_error;         /* Error code if something goes wrong. */
 } ls_socket_t;
 

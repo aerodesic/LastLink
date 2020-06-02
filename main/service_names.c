@@ -30,9 +30,9 @@
 #include "simpletimer.h"
 #include "lsocket.h"
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 #define TAG "service_names"
 
@@ -332,7 +332,7 @@ bool deregister_service_name(const char* name)
     return service != NULL;
 }
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 typedef struct service_cache_copy {
     void*             p;
     void*             prev;
@@ -429,7 +429,7 @@ static int service_table_commands(int argc, const char **argv)
 
     return rc;
 }
-#endif /* CONFIG_LASTLINK_TABLE_COMMANDS */
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 bool init_service_names(void)
 {
@@ -440,11 +440,11 @@ bool init_service_names(void)
 
     bool ok = service_lock && service_thread_id;
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     if (ok) {
         ok = add_command("service", service_table_commands);
     }
-#endif
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;
 }
@@ -453,9 +453,9 @@ bool deinit_service_names(void)
 {
     bool ok = true;
 
-#if CONFIG_LASTLINK_TABLE_COMMANDS
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     ok = remove_command("service");
-#endif
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     service_running = -1;
 
