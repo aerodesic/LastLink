@@ -166,7 +166,7 @@ void app_main(void)
 
                     release_packet(packet);
 
-                    ESP_LOGI(TAG, "%s", p_message);
+                    printf("%s\n", p_message);
 
                     free((void*) p_message);
                 }

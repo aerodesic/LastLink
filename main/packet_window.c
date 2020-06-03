@@ -26,6 +26,37 @@
 #define TAG "packet_window"
 
 #ifdef PACKET_WINDOW_LOCKING_DEBUG
+#if 1
+bool packet_window_lock_debug(packet_window_t *window, const char *file, int line)
+{
+    /* Try without waiting */
+    bool ok = os_acquire_recursive_mutex_with_timeout(window->lock, 0);
+    if (!ok) {
+        /* Didn't get it, so go ahead and wait and show message */
+        printf("%s: **********************************************************************\n", __func__);
+        printf("%s: waiting for window lock [%s:%d] last locked at %s:%d\n", __func__,
+               file, line, window->last_lock_file ? window->last_lock_file : "<NULL>", window->last_lock_line);
+        printf("%s: **********************************************************************\n", __func__);
+        ok = os_acquire_recursive_mutex(window->lock);
+        printf("%s: **********************************************************************\n", __func__);
+        printf("%s: got window lock\n", __func__);
+        printf("%s: **********************************************************************\n", __func__);
+    }
+
+    if (ok) {
+        window->last_lock_file = file;
+        window->last_lock_line = line;
+    }
+
+    return ok;
+}
+bool packet_window_unlock_debug(packet_window_t *window, const char *file, int line)
+{
+    (void) file;
+    (void) line;
+    return os_release_recursive_mutex(window->lock);
+}
+#else
 bool packet_window_lock_debug(packet_window_t *window, const char *file, int line)
 {
     /* Try without waiting */
@@ -57,6 +88,7 @@ bool packet_window_unlock_debug(packet_window_t *window, const char *file, int l
     return os_release_recursive_mutex(window->lock);
 }
 #endif
+#endif
 
 static bool dummy_release(packet_t* packet)
 {
@@ -79,7 +111,7 @@ ESP_LOGI(TAG, "%s: removing packet %d", __func__, window->queue[0].sequence);
     /* The first packet sequence number is now + 1 */
     window->sequence++;
 
-    os_release_counting_semaphore(window->room, 1);
+    os_release_counting_semaphore(window->room);
 }
 
 packet_window_t *packet_window_create(int slots)
@@ -133,7 +165,6 @@ void packet_window_release(packet_window_t *window, bool (*release_packet)(packe
     if (window->room != NULL) {
         os_delete_semaphore(window->room);
     }
-
 
     packet_window_unlock(window);
 
@@ -189,7 +220,7 @@ ESP_LOGI(TAG, "%s: adding %d window %d to %d", __func__, sequence, window->seque
                 release_packet(packet);
             }
 
-            os_release_counting_semaphore(window->available, 1);
+            os_release_counting_semaphore(window->available);
 
             ok = true;
 
@@ -249,20 +280,18 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
                 window->reader_busy = false;
             }
 
+            packet_window_lock(window);
+
             if (window->queue[0].inuse && window->queue[0].packet != NULL) {
-                packet_window_lock(window);
-
-                if (window->queue[0].inuse && window->queue[0].packet != NULL) {
-                    *packet = window->queue[0].packet;
-                    window->num_in_queue--;
-                    packet_window_discard_top_packet(window);
-                    ok = true;
-                } else {
-                    ok = false;
-                }
-
-                packet_window_unlock(window);
+                *packet = window->queue[0].packet;
+                window->num_in_queue--;
+                packet_window_discard_top_packet(window);
+                ok = true;
+            } else {
+                ok = false;
             }
+
+            packet_window_unlock(window);
         }
 
     } while (!ok && timeout < 0);
@@ -361,6 +390,8 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
         window->num_in_queue--;
         if (window->queue[0].packet != NULL) {
             release_packet(window->queue[0].packet);
+            /* Keep available count correct */
+            assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
         }
         packet_window_discard_top_packet(window);
     }
@@ -373,9 +404,13 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
                 window->num_in_queue--;
                 if (window->queue[slot].packet != NULL) {
                     release_packet(window->queue[slot].packet);
+
+                    /* Count the packet as processed */
+                    window->queue[slot].packet = NULL;
+
+                    /* Remove from available count */
+                    assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
                 }
-                /* Count the packet as processed */
-                window->queue[slot].packet = NULL;
             } else {
                 ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
                          __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
@@ -399,8 +434,8 @@ void packet_window_shutdown_window(packet_window_t *window)
 {
     window->shutdown = true;
 
-    /* Give it at least one more signal to wake up the reader */
-    os_release_counting_semaphore(window->available, 1);
+    /* Give it at least one more signal to wake up the output side */
+    os_release_counting_semaphore(window->available);
 }
 
 bool packet_window_is_window_shutdown(packet_window_t *window)

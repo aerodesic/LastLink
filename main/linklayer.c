@@ -1390,10 +1390,10 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
 
 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
 //        ESP_LOGE(TAG, "%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
-        printf("%s: (%p) %s [%s:%d]", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
+        printf("%s: (%p) %s [%s:%d]\n", reason, packet, buffer, packet->last_referenced_filename, packet->last_referenced_lineno);
 #else
 //        ESP_LOGE(TAG, "%s: (%p) %s", reason, packet, buffer);
-        printf("%s: (%p) %s", reason, packet, buffer);
+        printf("%s: (%p) %s\n", reason, packet, buffer);
 #endif
 
         free((void*) buffer);

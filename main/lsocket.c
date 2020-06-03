@@ -152,6 +152,47 @@ static os_mutex_t    global_socket_lock;
 static ls_socket_t   socket_table[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 
 #ifdef SOCKET_LOCKING_DEBUG
+
+#if 1
+#define GLOBAL_SOCKET_LOCK() \
+    do {                                                            \
+        printf("%s: locking\n", __func__);                     \
+        os_acquire_recursive_mutex(global_socket_lock);             \
+        printf("%s: locked\n", __func__);                      \
+    } while(0)
+
+#define GLOBAL_SOCKET_UNLOCK() \
+    do {                                                            \
+        printf("%s: unlocking\n", __func__);                   \
+        os_release_recursive_mutex(global_socket_lock);             \
+    } while(0)
+
+static inline bool lock_socket_debug(ls_socket_t* socket, bool try, const char *file, int line)
+{
+    /* Try without waiting */
+    bool ok = os_acquire_recursive_mutex_with_timeout(socket->lock, 0);
+    if (!ok) {
+        /* Didn't get it, so if we are not just 'trying', go ahead and wait and show message */
+        if (!try) {
+            printf("%s: **********************************************************************\n", __func__);
+            printf("%s: waiting for socket %d at lock [%s:%d] last locked at %s:%d\n", __func__,
+                   socket - socket_table, file, line, socket->last_lock_file ? socket->last_lock_file : "<NULL>", socket->last_lock_line);
+            printf("%s: **********************************************************************\n", __func__);
+            ok = os_acquire_recursive_mutex(socket->lock);
+            printf("%s: **********************************************************************\n", __func__);
+            printf("%s: got socket %d lock\n", __func__, socket - socket_table);
+            printf("%s: **********************************************************************\n", __func__);
+        }
+    }
+
+    if (ok) {
+        socket->last_lock_file = file;
+        socket->last_lock_line = line;
+    }
+
+    return ok;
+}
+#else
 #define GLOBAL_SOCKET_LOCK() \
     do {                                                            \
         ESP_LOGI(TAG, "%s: locking", __func__);                     \
@@ -189,6 +230,8 @@ static inline bool lock_socket_debug(ls_socket_t* socket, bool try, const char *
 
     return ok;
 }
+#endif
+
 #define LOCK_SOCKET(socket)      lock_socket_debug(socket, false, __FILE__, __LINE__)
 #define LOCK_SOCKET_TRY(socket)  lock_socket_debug(socket, true, __FILE__, __LINE__)
 
@@ -1081,8 +1124,8 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
                                             STREAM_DISCONNECT_TIMEOUT,
                                             STREAM_DISCONNECT_RETRIES);
 
-                        reject = false;
                     }
+                    reject = false;
                     break;
                 }
             }
@@ -1307,7 +1350,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
         if (socket->busy != 0) {
             err = LSE_SOCKET_BUSY;
         } else {
-            socket->busy = true;
+            socket->busy++;
 
             /* Has to be a stream socket in freshly-created mode */
             if (socket->socket_type == LS_STREAM && (socket->state == LS_STATE_BOUND || socket->state == LS_STATE_LISTENING)) {
@@ -1344,7 +1387,9 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
                 err = LSE_INVALID_SOCKET;
             }
 
-            socket->busy = false;
+            LOCK_SOCKET(socket);
+            socket->busy--;
+            UNLOCK_SOCKET(socket);
         }
 
         if (release) {
@@ -1511,10 +1556,10 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
 
     if (socket != NULL && socket->state == LS_STATE_BOUND) {
 
-        if (socket->busy) {
+        if (socket->busy != 0) {
             err = LSE_SOCKET_BUSY;
         } else {
-            socket->busy = true;
+            socket->busy++;
             socket->dest_port = port;
             socket->dest_addr = address;
 
@@ -1555,7 +1600,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                 err = LSE_INVALID_SOCKET;
             }
 
-            socket->busy = false;
+            socket->busy--;
         }
 
         UNLOCK_SOCKET(socket);
@@ -1825,10 +1870,10 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
         err = LSE_INVALID_SOCKET;
 
     } else {
-         if (socket->busy) {
+         if (socket->busy != 0) {
              err = LSE_SOCKET_BUSY;
          } else {
-             socket->busy = true;
+             socket->busy++;
 
              switch (socket->socket_type) {
                  case LS_DATAGRAM: {
@@ -1926,7 +1971,7 @@ ESP_LOGI(TAG, "%s: setting socket_flush_timer for %d ms", __func__, CONFIG_LASTL
                 }
             }
 
-            socket->busy = false;
+            socket->busy--;
         }
 
         UNLOCK_SOCKET(socket);
@@ -1994,10 +2039,10 @@ ESP_LOGI(TAG, "%s: bad socket", __func__);
         err = LSE_INVALID_SOCKET;
     } else {
 
-        if (socket->busy) {
+        if (socket->busy != 0) {
             err = LSE_SOCKET_BUSY;
         } else {
-            socket->busy = true;
+            socket->busy++;
 
             if (socket->socket_type == LS_DATAGRAM) {
                 if (socket->state != LS_STATE_BOUND) {
@@ -2114,7 +2159,7 @@ ESP_LOGI(TAG, "%s: received NULL packet - eor", __func__);
                 err = LSE_INVALID_SOCKET;
             }
 
-            socket->busy = false;
+            socket->busy--;
         }
 
         UNLOCK_SOCKET(socket);
@@ -2146,71 +2191,63 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
     ls_error_t err = LSE_NO_ERROR;
 
     if (socket != NULL) {
-        if (socket->busy) {
-            err = LSE_SOCKET_BUSY;
-        } else {
-            socket->busy = true;
+        socket->busy++;
 
-            switch (socket->socket_type) {
-                default: {
-                    err = LSE_INVALID_SOCKET;
-                    break;
-                }
-
-                case LS_DATAGRAM: {
-                    err = release_socket(socket);
-                    break;
-                }
-
-                case LS_STREAM: {
-                    if (socket->state == LS_STATE_LISTENING) {
-                        err = release_socket(socket);
-                    } else {
-                        /* Let others know this is the end... */
-                        packet_window_shutdown_window(socket->output_window);
-
-//ESP_LOGI(TAG, "%s: start_state_machine ls_close DISCONNECTING_FLUSH stream_flush_output_window on socket %d", __func__, socket - socket_table);
-                        start_state_machine(socket,
-                                            LS_STATE_DISCONNECTING_FLUSH,
-                                            stream_flush_output_window,
-                                            NULL,
-                                            STREAM_FLUSH_TIMEOUT,
-                                            STREAM_FLUSH_RETRIES);
-
-//ESP_LOGI(TAG, "%s: release socket lock...", __func__);
-                        UNLOCK_SOCKET(socket);
-//ESP_LOGI(TAG, "%s: read state machine response...", __func__);
-                        err = get_state_machine_results(socket);
-//ESP_LOGI(TAG, "%s: response was %d...", __func__, err);
-                        LOCK_SOCKET(socket);
-//ESP_LOGI(TAG, "%s: relock socket lock...", __func__);
-
-//ESP_LOGI(TAG, "%s: start_state_machine ls_close DISCONNECTING stream_send_disconnect on socket %d", __func__, socket - socket_table);
-                        start_state_machine(socket,
-                                            LS_STATE_OUTBOUND_DISCONNECTING,
-                                            stream_send_disconnect,
-                                            NULL,
-                                            STREAM_DISCONNECT_TIMEOUT,
-                                            STREAM_DISCONNECT_RETRIES);
-
-                        UNLOCK_SOCKET(socket);
-                        err = get_state_machine_results(socket);
-                        LOCK_SOCKET(socket);
-
-                        /* Start a linger to leave socket intact for a short while */
-                        start_state_machine(socket,
-                                            LS_STATE_LINGER,
-                                            socket_linger_check,
-                                            socket_linger_finish,
-                                            CONFIG_LASTLINK_SOCKET_LINGER_TIME,
-                                            5);
-                    }
-                    break;
-                }
+        switch (socket->socket_type) {
+            default: {
+                err = LSE_INVALID_SOCKET;
+                break;
             }
 
-            socket->busy = false;
+            case LS_DATAGRAM: {
+                err = release_socket(socket);
+                break;
+            }
+
+            case LS_STREAM: {
+                if (socket->state == LS_STATE_LISTENING) {
+                    err = release_socket(socket);
+                } else {
+
+                    start_state_machine(socket,
+                                        LS_STATE_DISCONNECTING_FLUSH,
+                                        stream_flush_output_window,
+                                        NULL,
+                                        STREAM_FLUSH_TIMEOUT,
+                                        STREAM_FLUSH_RETRIES);
+
+                    UNLOCK_SOCKET(socket);
+
+                    err = get_state_machine_results(socket);
+
+                    packet_window_shutdown_window(socket->output_window);
+
+                    LOCK_SOCKET(socket);
+
+                    start_state_machine(socket,
+                                        LS_STATE_OUTBOUND_DISCONNECTING,
+                                        stream_send_disconnect,
+                                        NULL,
+                                        STREAM_DISCONNECT_TIMEOUT,
+                                        STREAM_DISCONNECT_RETRIES);
+
+                    UNLOCK_SOCKET(socket);
+                    err = get_state_machine_results(socket);
+                    LOCK_SOCKET(socket);
+
+                    /* Start a linger to leave socket intact for a short while */
+                    start_state_machine(socket,
+                                        LS_STATE_LINGER,
+                                        socket_linger_check,
+                                        socket_linger_finish,
+                                        CONFIG_LASTLINK_SOCKET_LINGER_TIME,
+                                        5);
+                }
+                break;
+            }
         }
+
+        socket->busy--;
 
         UNLOCK_SOCKET(socket);
 

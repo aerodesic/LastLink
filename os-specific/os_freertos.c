@@ -165,17 +165,9 @@ bool os_release_semaphore_from_isr(os_semaphore_t sem, bool *awakened)
     return os_release_mutex_from_isr((os_mutex_t) sem, awakened);
 }
 
-bool os_release_counting_semaphore(os_semaphore_t sem, int count)
+bool os_release_counting_semaphore(os_semaphore_t sem)
 {
-    bool ok = false;
-
-assert(sem != NULL);
-
-    while ((count != 0) && (ok = os_release_mutex(sem))) {
-        --count;
-    }
-
-    return ok;
+    return  os_release_mutex(sem);
 }
 
 bool os_acquire_counting_semaphore(os_semaphore_t sem)

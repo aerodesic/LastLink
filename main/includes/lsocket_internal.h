@@ -116,7 +116,7 @@ typedef struct ls_socket {
     const char              *last_lock_file;
     int                     last_lock_line;
 #endif /* SOCKET_LOCKING_DEBUG */
-    bool                    busy;                /* Set true when inside user code in ls_xxx function */
+    int                     busy;                /* Busy when non-zero */
     ls_socket_type_t        socket_type;         /* Socket type (DATAGRAM or STREAM) */
 
     ls_socket_state_t       state;               /* Current state */

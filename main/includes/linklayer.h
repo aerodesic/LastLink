@@ -53,6 +53,7 @@
  *******************************************************************************************/
 #define HEADER_ROUTETO_ADDRESS         0                                              // Node to receive packet
 #define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)         // Flags from origin.
+#define  HEADER_FLAGS_RANDOMIZE_REPLY  0x80                                           // Causes returns to be randomized in time
 #define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)                     // Original sender
 #define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)          // Final destination
 #define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)            // Last sender

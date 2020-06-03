@@ -51,7 +51,7 @@ os_semaphore_t os_create_binary_semaphore(void);
 bool os_acquire_semaphore(os_semaphore_t sem);
 bool os_release_semaphore(os_semaphore_t sem);
 bool os_release_semaphore_from_isr(os_semaphore_t sem, bool *awakened);
-bool os_release_counting_semaphore(os_semaphore_t sem, int count);
+bool os_release_counting_semaphore(os_semaphore_t sem);
 bool os_acquire_counting_semaphore(os_semaphore_t sem);
 bool os_acquire_counting_semaphore_with_timeout(os_semaphore_t sem, int timeout);
 bool os_delete_semaphore(os_semaphore_t sem);
