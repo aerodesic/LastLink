@@ -10,9 +10,8 @@
 
 #define PACKET_WINDOW_LOCKING_DEBUG
 
+#include "packets.h"
 #include "os_specific.h"
-
-typedef struct packet packet_t;    /* Foward reference - internals are not  needed */
 
 typedef struct packet_slot {
     int                sequence;           /* Sequence of packet (for verification and easy access) */
@@ -25,6 +24,7 @@ typedef struct packet_window {
 #ifdef PACKET_WINDOW_LOCKING_DEBUG
     const char         *last_lock_file;
     int                 last_lock_line;
+    int                 lock_count;
 #endif /* PACKET_WINDOW_LOCKING_DEBUG */
     os_semaphore_t      available;         /* Number of sequentially available packets from queue[0] */
     os_semaphore_t      room;              /* 'released' when a slot may have become available */
@@ -59,7 +59,7 @@ void packet_window_deinit(void);
 packet_window_t *packet_window_create(int slots);
 
 /* Free all subordinate information and free a packet window */
-void packet_window_release(packet_window_t *window, bool (*release_packet)(packet_t*));
+void packet_window_release(packet_window_t *window);
 
 /* Put a packet into the window at the sequence number position. */
 bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout);
@@ -68,13 +68,13 @@ bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int seq
 bool packet_window_remove_packet(packet_window_t *window, packet_t **packet,  int timeout);
 
 /* Get a list of all packets in the window.  Caller needs to release when done */
-int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], size_t num_packets);
+int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], int num_packets);
 
 /* Get the list of accepted and processed packets in the queue to provide acknowledgement */
 void packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask);
 
 /* Release and trim queue for all packets processed. */
-int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask, bool (*release_packet)(packet_t*));
+int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask);
 
 void packet_window_shutdown_window(packet_window_t *window);
 

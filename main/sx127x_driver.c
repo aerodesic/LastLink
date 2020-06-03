@@ -339,6 +339,8 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
 //ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
 //ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
 
+printf("%llu: rx\n", get_milliseconds());
+
     /* On receive, we delay one unit */
     simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
 //ESP_LOGI(TAG, "%s: receive; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
@@ -443,6 +445,7 @@ static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *dat
             data->current_packet = NULL;
         }
 
+        /* Wait one unit after completing a transmit */
         simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
     }
 
@@ -495,6 +498,7 @@ ESP_LOGE(TAG, "%s: receive busy detected: %03x", __func__, data->irq_flags);
 #endif
                 } else {
 
+printf("%llu: tx\n", get_milliseconds());
                     start_packet(radio);
                     write_packet(radio, data->current_packet);
                     set_transmit_mode(radio);

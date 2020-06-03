@@ -105,6 +105,7 @@ typedef enum {
     LS_STATE_OUTBOUND_DISCONNECTING,             /* Tearing down connection from internal request */
     LS_STATE_DISCONNECTED,                       /* Disconnected */
     LS_STATE_LINGER,                             /* Lingering at end of connection */
+    LS_STATE_CLOSED,                             /* When complete idle but still in use */
 } ls_socket_state_t;
 
 typedef struct ls_socket ls_socket_t;
@@ -157,6 +158,7 @@ typedef struct ls_socket {
            packet_window_t         *input_window;
            simpletimer_t           output_window_timer;
            simpletimer_t           input_window_timer;
+           simpletimer_t           ack_delay_timer;
            packet_window_t         *output_window;
            int                     output_retries;
            int                     output_retry_time;

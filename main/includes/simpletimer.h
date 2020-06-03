@@ -13,15 +13,12 @@ typedef struct simpletimer {
         ST_STOPPED = 0,
         ST_RUNNING,
         ST_EXPIRED,
+        ST_TIMING,
     } state;
 
     uint32_t interval;
     uint64_t target;
 } simpletimer_t;
-
-#define SIMPLETIMER_NEVER_STOPS 0xFFFFFFFF
-
-#define SIMPLETIMER_INFINITE    0xFFFFFFFFFFFFFFFFLL
 
 /*
  * Forward declarations.
@@ -58,7 +55,7 @@ static inline bool simpletimer_is_running(simpletimer_t *timer)
 static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval)
 {
     simpletimer_set_interval(timer, interval);
-    timer->target = (interval == SIMPLETIMER_NEVER_STOPS) ? SIMPLETIMER_INFINITE : (get_milliseconds() + timer->interval);
+    timer->target = get_milliseconds() + timer->interval;
     timer->state = ST_RUNNING;
 }
 
