@@ -50,14 +50,7 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 static void fhss_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 #endif /* USE_FHSS */
 
-typedef enum {
-    TX_WAIT_RX_INT,    /* Wait for receive interrupt */
-    TX_CALLBACK,       /* Post a timed callback */
-    TX_WAIT_TX_INT,    /* Done waiting for interrupt */
-    TX_IDLE,           /* Done and idle */
-} tx_state_t;
-
-static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
+static void tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 static void transmit_start(radio_t *radio);
 static void global_interrupt_handler(void* param);
 static bool radio_stop(radio_t* radio);
@@ -84,35 +77,54 @@ static bool disable_irq(radio_t* radio, uint8_t mask);
 /* Define the selected frequency domain */
 #include "sx127x_table.h"
 
+typedef enum {
+    HS_RECEIVING = 0,         /* Handler is receiving (default state) */
+    HS_WAIT_RX_INT,           /* Waiting for RX to finish */
+    HS_WAIT_TX_INT,           /* Wait for TX to finish */
+} handler_state_t;
+
+inline const char *handler_state_of(handler_state_t state)
+{
+    switch (state) {
+        case HS_RECEIVING:    return "HS_RECEIVING";
+        case HS_WAIT_RX_INT:  return "HS_WAIT_RX_INT";
+        case HS_WAIT_TX_INT:  return "HS_WAIT_TX_INT";
+        default:              return "UNKNONWN";
+    }
+}
+
 /* Define private data structure */
 typedef struct sx127x_private_data {
-    uint8_t       sync_word;
-    uint8_t       preamble_length;
-    uint8_t       coding_rate;
-    bool          implicit_header;
-    bool          implicit_header_set;
-    int           hop_period;
-    bool          enable_crc;
-    int           channel;
-    int           datarate;
-    int           bandwidth;
-    uint8_t       spreading_factor;
-    uint8_t       tx_power;
-    int           rx_interrupts;
-    int           tx_interrupts;
+    uint8_t           sync_word;
+    uint8_t           preamble_length;
+    uint8_t           coding_rate;
+    bool              implicit_header;
+    bool              implicit_header_set;
+    int               hop_period;
+    bool              enable_crc;
+    int               channel;
+    int               datarate;
+    int               bandwidth;
+    uint8_t           spreading_factor;
+    uint8_t           tx_power;
+    int               rx_interrupts;
+    int               tx_interrupts;
 #ifdef USE_FHSS
-    int           fhss_interrupts;
+    int               fhss_interrupts;
 #endif /* USE_FHSS */
-    os_mutex_t    rlock;
-    int           packet_memory_failed;
-    packet_t     *current_packet;
-    int           packet_crc_errors;
-    simpletimer_t transmit_timer;
-    bool          receive_busy;
-    os_timer_t    wakeup_timer_id;
-    uint16_t      irq_flags;                      /* Bottom 8 are hardware flags acquired at irq scan time */
-#define SX127x_FORCE_START_TRANSMIT   0x100       /* Extra 'irq flag' for starting new transmit activity */
-#define SX127x_FORCE_END_RECEIVE      0x200       /* Status used to indicate a timeout on receive */
+    os_mutex_t        rlock;
+    int               packet_memory_failed;
+    packet_t         *current_packet;
+    int               packet_crc_errors;
+    //simpletimer_t     tx_delay_timer;;
+    os_timer_t        wakeup_timer_id;
+    uint8_t           irq_flags;                      /* Flags acquired at irq scan time */
+    simpletimer_t     tx_timeout_timer;               /* Used to force stop a tx that lost it's interrupt */
+    handler_state_t   handler_state;
+    handler_state_t   last_handler_state;
+
+#define SX_MAX_TIMEOUT  1000                      /* 1 second timeout */
+
 } sx127x_private_data_t;
 
 static os_thread_t  global_interrupt_handler_thread;
@@ -203,8 +215,11 @@ bool sx127x_create(radio_t* radio)
             data->tx_interrupts             = 0;
             data->rlock                     = os_create_recursive_mutex();
 
+            data->handler_state             = HS_RECEIVING;
+            data->last_handler_state        = -1;
+
             /* Set the interval to delay transmit after last receive or transmit */
-            simpletimer_start(&data->transmit_timer, radio->transmit_delay);
+            simpletimer_start(&data->tx_timeout_timer, radio->transmit_delay);
 
             /* Create the wakeup timer but don't start it */
             data->wakeup_timer_id = os_create_timer("wakeup_timer", 0, radio, wakeup_timer);
@@ -238,6 +253,9 @@ bool sx127x_create(radio_t* radio)
 static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
 {
     data->rx_interrupts++;
+
+    /* Clear rx interrupt */
+    data->irq_flags &= ~SX127x_IRQ_RX_DONE;
 
     uint8_t fifo_current = radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT);
     if (fifo_current != 0) {
@@ -323,8 +341,6 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
         data->irq_flags &= ~(SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_RX_TIMEOUT);
     }
 
-    data->receive_busy = false;
-//    set_standby_mode(radio);
     set_receive_mode(radio);
 
 
@@ -340,10 +356,6 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
 //ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
 
 printf("%llu: rx\n", get_milliseconds());
-
-    /* On receive, we delay one unit */
-    simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
-//ESP_LOGI(TAG, "%s: receive; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
 }
 
 #ifdef USE_FHSS
@@ -411,116 +423,73 @@ static bool write_packet(radio_t* radio, packet_t* packet)
     return ok;
 }
 
-/*
- * Transmit a packet.  If entered via interrupt, then release old packet
- * if we still have one.
- * Acquire a new packet if we need one.
- * If we are waiting for a delay before transmission, return state
- * to tell caller to wait until transmit_timer has expired (via a
- * callback or waiting on timer.
- */
-static tx_state_t tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
+/* Called upon interrupt */
+static void tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
 {
-    tx_state_t tx_state;
+    /* Remove flag so we don't call again until next interrupt */
+    data->irq_flags &= ~SX127x_IRQ_TX_DONE;
 
-// ESP_LOGI(TAG, "%s", __func__);
+    set_standby_mode(radio);
+    set_receive_mode(radio);
 
-    /* When a real interrupt occurs, we can remove the preceeding packet and obtain a new
-     * one if available.
-     */
-    if (data->irq_flags & SX127x_IRQ_TX_DONE) {
+    data->tx_interrupts++;
+    radio->activity_indicator(radio, false);
 
-        /* Remove flag so we don't call again until next interrupt */
-        data->irq_flags &= ~SX127x_IRQ_TX_DONE;
-
-        set_standby_mode(radio);
-        set_receive_mode(radio);
-
-        data->tx_interrupts++;
-        radio->activity_indicator(radio, false);
-
-        /* Discard current queue entry */
-        if (data->current_packet != NULL) {
-            release_packet(data->current_packet);
-            data->current_packet = NULL;
-        }
-
-        /* Wait one unit after completing a transmit */
-        simpletimer_extend(&data->transmit_timer, radio->transmit_delay);
+    /* Discard current queue entry */
+    if (data->current_packet != NULL) {
+        release_packet(data->current_packet);
+        data->current_packet = NULL;
     }
+}
 
+/*
+ * Called when we want to start a new packet.
+ */
+static bool tx_next_packet(radio_t *radio, sx127x_private_data_t *data)
+{
     /* Get a new packet if we have none */
     if (data->current_packet == NULL) {
         os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &data->current_packet, 0);
-        if (data->current_packet && data->current_packet->delay) {
-
-#if  0
-            simpletimer_extend(&data->transmit_timer, (data->current_packet->delay % 8) * (radio->transmit_delay + get_message_time(radio, data->current_packet->length)));
-            //ESP_LOGI(TAG, "%s: new; packet delay %d", __func__, simpletimer_remaining(&data->transmit_timer));
-#else
-            simpletimer_extend(&data->transmit_timer, (data->current_packet->delay % 9) * get_message_time(radio, MAX_PACKET_LEN));
-#endif
-        }
     }
+    return data->current_packet != NULL;
+}
 
+static handler_state_t tx_start_packet(radio_t *radio, sx127x_private_data_t *data)
+{
+    handler_state_t handler_state;
 
-    if (data->current_packet != NULL) {
+    if (data->current_packet == NULL) {
+        handler_state = HS_RECEIVING;
+    } else {
+        uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
+        if ((modem_status & (SX127x_MODEM_STATUS_SIG_DETECTED | SX127x_MODEM_STATUS_SIG_SYNCED | SX127x_MODEM_STATUS_HEADER_VALID)) != 0) {
 
-        if (simpletimer_is_expired(&data->transmit_timer)) {
-
-            if (data->receive_busy) {
-                tx_state = TX_WAIT_RX_INT;
-            } else {
-                /* Make stab at checking to see if activity is present on the receiver and abandon the
-                 * transmission until later.
-                 */
-#if 1
-                uint8_t modem_status = radio->read_register(radio, SX127x_REG_MODEM_STATUS);
-                if ((modem_status & (SX127x_MODEM_STATUS_SIG_DETECTED | SX127x_MODEM_STATUS_SIG_SYNCED | SX127x_MODEM_STATUS_HEADER_VALID)) != 0) {
-
-                    /* Freshen the irq_flags */
-                    data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
+            /* Freshen the irq_flags */
+            data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
 
 ESP_LOGE(TAG, "%s: modem status %02x irq_mask %02x: waiting...", __func__, modem_status, data->irq_flags);
 
-                    /* Wait for max packet length and if timeout, re-enter */
-                    data->receive_busy = true;
-//ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
+            handler_state = HS_WAIT_RX_INT;
 
-                    tx_state = TX_WAIT_RX_INT;
-#else
-                /* Freshen irq flags */
-                data->irq_flags |= radio->read_register(radio, SX127x_REG_IRQ_FLAGS);
-                if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_CAD_DETECTED | SX127x_IRQ_CAD_DONE)) != 0) {
-                     data->receive_busy = true;
-                     tx_state = TX_WAIT_RX_INT;
-ESP_LOGE(TAG, "%s: receive busy detected: %03x", __func__, data->irq_flags);
-#endif
-                } else {
-
-printf("%llu: tx\n", get_milliseconds());
-                    start_packet(radio);
-                    write_packet(radio, data->current_packet);
-                    set_transmit_mode(radio);
-                    radio->activity_indicator(radio, true);
-
-                    tx_state = TX_WAIT_TX_INT;
-
-                    simpletimer_extend(&data->transmit_timer, radio->transmit_delay + 4 * get_message_time(radio, data->current_packet->length));
-//ESP_LOGI(TAG, "%s: tx; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
-                }
-            }
         } else {
-            tx_state = TX_CALLBACK;
+
+            /* Start the packet and wait for interrupt */
+
+printf("%llu: tx %d\n", get_milliseconds(), get_uint_field(data->current_packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN));
+
+            start_packet(radio);
+            write_packet(radio, data->current_packet);
+            set_transmit_mode(radio);
+            radio->activity_indicator(radio, true);
+
+            /* Set a callback to finish restart the output if timed out */
+            simpletimer_start(&data->tx_timeout_timer, SX_MAX_TIMEOUT);
+           
+            handler_state = HS_WAIT_TX_INT;
         }
-    } else {
-
-//ESP_LOGI(TAG, "%s: no packet", __func__);
-
-        tx_state = TX_IDLE;
     }
 
-    return tx_state;
+    return handler_state;
 }
 
 
@@ -534,7 +503,6 @@ static void transmit_start(radio_t *radio)
         /* If transmitter is idle, force a startup */
         if (data->current_packet == NULL) {
             /* Transmitter is idle - issue a wakeup call */
-            data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
             os_put_queue(global_interrupt_handler_queue, (os_queue_item_t) radio);
         }
 
@@ -586,75 +554,76 @@ static void global_interrupt_handler(void* param)
                     }
 #endif /* USE_FHSS */
 
+                    if (data->handler_state != data->last_handler_state) {
+                        printf("Handler state %s\n", handler_state_of(data->handler_state));
+                        data->last_handler_state = data->handler_state;
+                    }
 
+// printf("%s %02x %02x\n", handler_state_of(data->handler_state),  data->irq_flags, radio->read_register(radio, SX127x_REG_IRQ_FLAGS_MASK));
+
+                    switch (data->handler_state) {
+                        default:
+                        /* Default state of receiving until interrupt seen or transmit packet is ready to go.
+                         * To start transmit, caller places packet into the transmit queue and puts a radio*
+                         * pointer into the handler queue.  The handler sees this pointer and determines if
+                         * it can start a new packet at that time.  If the handerl is in receive mode and
+                         * the transmit delay timer has expired, it attempts to start the packet.
+                         */
+                        case HS_RECEIVING: {
 #if SX127x_RECEIVE_MODE == SX127x_MODE_RX_SINGLE
-                    /* Turn receiver back on */
-                    if ((data->irq_flags & (SX127x_IRQ_RX_TIMEOUT)) != 0) {
-                        data->irq_flags &= ~(SX127x_IRQ_RX_TIMEOUT | SX127x_IRQ_RX_DONE);
-//ESP_LOGI(TAG, "%s: RX TIMEOUT", __func__);
-                        set_receive_mode(radio);
-                    }
+                            /* Turn receiver back on */
+                            if ((data->irq_flags & (SX127x_IRQ_RX_TIMEOUT)) != 0) {
+                                data->irq_flags &= ~(SX127x_IRQ_RX_TIMEOUT | SX127x_IRQ_RX_DONE);
+                                set_receive_mode(radio);
+                            } else
 #endif
 
-                    if ((data->irq_flags & (SX127x_IRQ_RX_DONE)) != 0) {
-//ESP_LOGI(TAG, "%s: RX_DONE detected", __func__);
-                        rx_handle_interrupt(radio, data);
-                        data->irq_flags &= ~(SX127x_IRQ_RX_DONE | SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_CAD_DETECTED | SX127x_IRQ_CAD_DONE | SX127x_IRQ_RX_TIMEOUT | SX127x_FORCE_END_RECEIVE);
+                            if (data->irq_flags & SX127x_IRQ_RX_DONE) {
+printf("rx\n");
+                                rx_handle_interrupt(radio, data);
+                                simpletimer_start(&data->tx_timeout_timer, radio->transmit_delay);
+                            } else if (simpletimer_is_expired(&data->tx_timeout_timer)) {
+                                if (tx_next_packet(radio, data)) {
+                                    data->handler_state = tx_start_packet(radio, data);
+                                }
+                            }
+                            break;
+                        }
 
-                        /* If we have a packet hanging around, try to start next */
-                        if (data->current_packet != NULL) {
-                            data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
+                        case HS_WAIT_RX_INT: {
+                            if (data->irq_flags & SX127x_IRQ_RX_DONE) {
+                                rx_handle_interrupt(radio, data);
+                                simpletimer_start(&data->tx_timeout_timer, radio->transmit_delay);
+                                data->handler_state = HS_RECEIVING;
+                            }
+                            break;
+                        }
+
+                        case HS_WAIT_TX_INT: {
+                            if (data->irq_flags & SX127x_IRQ_TX_DONE) {
+                                /* Turns off indicator and releases packet */
+                                tx_handle_interrupt(radio, data);
+
+                                /* Delay before we allow another transmit to start */ 
+                                simpletimer_extend(&data->tx_timeout_timer, 2 * get_message_time(radio, MAX_PACKET_LEN));
+
+                                if (tx_next_packet(radio, data)) {
+                                    data->handler_state = tx_start_packet(radio, data);
+                                } else {
+                                    data->handler_state = HS_RECEIVING;
+                                }
+                            } else if (simpletimer_is_expired(&data->tx_timeout_timer)) {
+                                /* Restart the packet */
+                                data->handler_state = tx_start_packet(radio, data);
+                            }
+                            break;
                         }
                     }
 
-#if 0
-                    /* Handle the force end receive if still lingering */
-                    if ((data->irq_flags & SX127x_FORCE_END_RECEIVE) != 0) {
-                        data->irq_flags &= ~(SX127x_FORCE_END_RECEIVE);
-                        //simpletimer_stop(&data->transmit_timer);
-                        set_standby_mode(radio);
-                        set_receive_mode(radio);
+                    /* Force a callback at end of timer */
+                    if (simpletimer_is_running(&data->tx_timeout_timer)) {
+                        os_set_timer(data->wakeup_timer_id, simpletimer_remaining(&data->tx_timeout_timer));
                     }
-#endif
-
-                    if (data->irq_flags & (SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE)) {
-//ESP_LOGI(TAG, "%s: TX_DONE int %03x", __func__, data->irq_flags);
-                        /* If it's been long enough, start the transmit. */
-                        switch (tx_handle_interrupt(radio, data)) {
-                            case TX_WAIT_RX_INT: {
-//ESP_LOGI(TAG, "%s: TX_WAIT_RX_INT", __func__);
-                                /* Transmitted - waiting for receive interrupt */
-                                /* Callback at max message length in case it didn't happen via interrupt */
-
-#if 0
-                                data->irq_flags |= SX127x_FORCE_END_RECEIVE;
-#endif
-                                simpletimer_extend(&data->transmit_timer, 2 * get_message_time(radio, MAX_PACKET_LEN));
-//ESP_LOGI(TAG, "%s: delay; transmit_timer set to %d", __func__, simpletimer_remaining(&data->transmit_timer));
-
-                                break;
-                            }
-                            case TX_CALLBACK: {
-//ESP_LOGI(TAG, "%s: TX_CALLBACK %d (%llu)", __func__, simpletimer_remaining(&data->transmit_timer), get_milliseconds());
-                                /* Set a callback to happen after transmit delay */
-                                data->irq_flags |= SX127x_FORCE_START_TRANSMIT;
-                                os_set_timer(data->wakeup_timer_id, simpletimer_remaining(&data->transmit_timer));
-                                break;
-                            }
-                            case TX_IDLE: {
-//ESP_LOGI(TAG, "%s: TX_IDLE", __func__);
-                                data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
-                                break;
-                            }
-                            case TX_WAIT_TX_INT: {
-//ESP_LOGI(TAG, "%s: TX_WAIT_TX_INT", __func__);
-                                /* Waiting for transmit interrupt */
-                                data->irq_flags &= ~(SX127x_FORCE_START_TRANSMIT | SX127x_IRQ_TX_DONE);
-                                break;
-                            }
-                        }
-                    }
-
                     release_lock(radio);
 
                 } else {

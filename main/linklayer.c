@@ -1094,6 +1094,7 @@ void linklayer_route_packet(packet_t* packet)
                 }
 //else linklayer_print_packet("not delayed", packet);
 
+linklayer_print_packet("OUT", packet);
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
@@ -1253,9 +1254,12 @@ static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
                 /* we will process packets that are local (from us and to us but not broadcast)
                  * or not from us and not duplicate.
                  */
-                if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
+                if (is_duplicate_packet(&duplicate_packets, packet)) {
+                    /* Duplicate */
+linklayer_print_packet("duplicate", packet);
+                } else if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
                     ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS)
-                              && origin != linklayer_node_address && is_valid_address(sender) && !is_duplicate_packet(&duplicate_packets, packet))) {
+                              && origin != linklayer_node_address && is_valid_address(sender))) {
 
                     bool handled = false;
 

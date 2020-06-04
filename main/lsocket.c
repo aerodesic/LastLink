@@ -921,7 +921,7 @@ static bool stream_packet_process(packet_t *packet)
     bool reject = true;
 
     if (packet != NULL) {
-linklayer_print_packet("stream packet", packet);
+linklayer_print_packet("IN ", packet);
         if (linklayer_packet_is_for_this_node(packet)) {
             /* Read the flags field for later use */
             uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
@@ -956,16 +956,19 @@ linklayer_print_packet("stream packet", packet);
                     if (socket != NULL) {
                         int sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
 
-                        /* Attempt to insert packet into window */
-                        if (! packet_window_add_packet(socket->input_window, ref_packet(packet), sequence, 0)) {
-                            /* Wasn't accepted - perhaps the ACK got lost - will be retransmitted when force timer expires */
-                            //simpletimer_restart(&socket->output_window_forced_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
-                            /* Release unused packet */
+                        /* Attempt to insert packet into window (0=ok 1=duplicate -1=error-out of sequence) */
+                        int results = packet_window_add_packet(socket->input_window, ref_packet(packet), sequence, 0);
+
+                        /* If failed (out of sequence) or accepted packet, start an ack.  Don't renew ack if a full queue */
+                        if (results != 0) {
                             release_packet(packet);
                         }
 
-                        /* Restart ack delay timer */
-                        simpletimer_start(&socket->ack_delay_timer, CONFIG_LASTLINK_STREAM_ACK_DELAY);
+                        /* If accepted or queue full, restart timer */
+                        if (results <= 0) {
+                            /* Restart ack delay timer - immediately if queue was full */
+                            simpletimer_start(&socket->ack_delay_timer, results < 0 ? 0 : CONFIG_LASTLINK_STREAM_ACK_DELAY);
+                        }
 
                         reject = false;
                     }
@@ -1244,6 +1247,7 @@ ESP_LOGI(TAG, "%s: releasing socket %d", __func__, socket - socket_table);
                 simpletimer_stop(&socket->state_machine_timer);
                 simpletimer_stop(&socket->socket_flush_timer);
                 simpletimer_stop(&socket->output_window_timer);
+                simpletimer_stop(&socket->ack_delay_timer);
                 simpletimer_stop(&socket->input_window_timer);
 
                 /* Otherwise forcibly shut everything down */
@@ -1654,6 +1658,9 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
  */
 static bool socket_flush_current_packet(ls_socket_t *socket, bool wait)
 {
+    /* Kill the automatic flush timer */
+    simpletimer_stop(&socket->socket_flush_timer);
+
     if (socket->output_window != NULL && socket->current_write_packet != NULL) {
         packet_t *packet = socket->current_write_packet;
 
@@ -1661,8 +1668,12 @@ static bool socket_flush_current_packet(ls_socket_t *socket, bool wait)
         set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
 
         /* Try a non-blocking insertion. */
-        if (! packet_window_add_packet(socket->output_window, packet, sequence, 0)) {
+        int results = packet_window_add_packet(socket->output_window, ref_packet(packet), sequence, 0);
 
+        /* Fail if a duplicate !! - cannot  happen */
+        assert(results != 1);
+
+        if (results < 0) {
             /* Failed, so see if we are requesting a blocking wait... */
             if (wait) {
                 /* Start bubble machine to transmit while we are waiting */
@@ -1670,7 +1681,7 @@ ESP_LOGI(TAG, "%s: start output_window_timer", __func__);
                 simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
 
                 /* Attempt moving packet to input window.  */
-                if (packet_window_add_packet(socket->output_window, packet, sequence, -1)) {
+                if (packet_window_add_packet(socket->output_window, packet, sequence, -1) == 0) {
                     socket->current_write_packet = NULL;
                 }
             }
@@ -1749,12 +1760,15 @@ ESP_LOGI(TAG, "%s: Added ACK sequence %d window %04x to packet", __func__, seque
 /*
  * ack_input_window
  *
- * If user is pending on the input window, send an ack to the current output window.
+ * If input isn't full - send ack to get more data.
  */
-static void ack_input_window(ls_socket_t* socket, bool force)
+static void ack_input_window(ls_socket_t* socket)
 {
-    if (force || (socket->state == LS_STATE_CONNECTED && packet_window_is_reader_busy(socket->input_window))) {
+    if (packet_window_packet_count(socket->input_window) != socket->input_window->length) {
+
         packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_NOP, 0);
+
+        simpletimer_restart(&socket->input_window_timer);
 
         /* Add sequence info to packet */
         add_data_ack(socket->input_window, packet);
@@ -1762,7 +1776,8 @@ static void ack_input_window(ls_socket_t* socket, bool force)
 int sequence;
 uint32_t ack_mask;
 packet_window_get_processed_packets(socket->input_window, &sequence, &ack_mask);
-printf("sending forced ack %02x sequence %d mask %04x\n", get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN), sequence, ack_mask);
+printf("%d packets in input queue; sending forced ack %02x sequence %d mask %04x\n",
+       packet_window_packet_count(socket->input_window),  get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN), sequence, ack_mask);
 
         /* Send it */
         linklayer_route_packet(packet);
@@ -1786,13 +1801,13 @@ static void send_output_window(ls_socket_t *socket)
 {
 ESP_LOGI(TAG, "%s: waiting for window lock", __func__);
 
-
     packet_window_lock(socket->output_window);
 
 ESP_LOGI(TAG, "%s: output window has %d packets", __func__, packet_window_packet_count(socket->output_window));
 
     /* If packets in window, then send them. */
     if (packet_window_packet_count(socket->output_window) != 0) {
+
         /* Stop the ack_delay_timer since this subsumes the effort */
         simpletimer_stop(&socket->ack_delay_timer);
 
@@ -2595,12 +2610,13 @@ static void socket_scanner_thread(void* param)
             if (LOCK_SOCKET_TRY(socket)) {
 
                 if (count == 0) {
-                    ESP_LOGI(TAG, "%s: socket %d  state_machine_timer %d  socket_flush_timer %d  output_window_timer %d input_window_timer %d",
+                    ESP_LOGI(TAG, "%s: socket %d  state_machine %d  socket_flush %d  output_window %d ack_delay %d input_window %d",
                              __func__,
                              socket - socket_table,
                              simpletimer_remaining(&socket->output_window_timer),
                              simpletimer_remaining(&socket->socket_flush_timer),
                              simpletimer_remaining(&socket->output_window_timer),
+                             simpletimer_remaining(&socket->ack_delay_timer),
                              simpletimer_remaining(&socket->input_window_timer));
                 }
 
@@ -2616,6 +2632,7 @@ ESP_LOGI(TAG, "%s: **************************** state_machine_timer finished", _
 //ESP_LOGI(TAG, "%s: **************************** state_machine_timer remaining %d", __func__, simpletimer_remaining(&socket->state_machine_timer));
                 }
 
+                /* This fires to flush the data from the output buffer to the window */
                 if (simpletimer_is_expired_or_remaining(&socket->socket_flush_timer, &next_time)) {
                     simpletimer_stop(&socket->socket_flush_timer);
 ESP_LOGI(TAG, "%s: **************************** socket_flush_timer for socket %d fired", __func__, socket_index);
@@ -2631,19 +2648,25 @@ ESP_LOGI(TAG, "%s: **************************** output_window_timer for socket %
 ESP_LOGI(TAG, "%s: **************************** output_window_timer finished", __func__);
                 }
 
-                /* This one fires when we've received data that needs ack */
+                /* This one fires when we've received data that needs an ack */
                 if (simpletimer_is_expired_or_remaining(&socket->ack_delay_timer, &next_time)) {
-                   simpletimer_stop(&socket->ack_delay_timer);
+
+                    /* Finished with timer */
+                    simpletimer_stop(&socket->ack_delay_timer);
+
+                    ///* Delay input window ack until next time */
+                    //simpletimer_restart(&socket->input_window_timer);
 ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
-                    ack_input_window(socket, /* force */ true);
+                    ack_input_window(socket);
 ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
                 }
 
                 /* This one runs continually and only works when the socket is input-busy */
                 if (simpletimer_is_expired_or_remaining(&socket->input_window_timer, &next_time)) {
-                   simpletimer_restart(&socket->input_window_timer);
+
+                    // simpletimer_restart(&socket->input_window_timer);
 ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
-                    ack_input_window(socket, /* force */ false);
+                    ack_input_window(socket);
 ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
                 }
 

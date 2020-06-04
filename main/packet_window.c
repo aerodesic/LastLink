@@ -184,17 +184,17 @@ void packet_window_release(packet_window_t *window)
  *    sequence         The packet's sequence number.
  *    timeout          -1 to wait forever, otherwise ms to wait for data; 0 is test and return immediately.
  *
- * Returns true if successfully inserted into queue.
+ * Returns 0 if success; <0 if full and >0 if duplicate packet
  */
-bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout)
+int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout)
 {
-    bool ok = false;
+    int results = -1;
     bool fail = false;
 
 ESP_LOGI(TAG, "%s: called with sequence %d of %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
     packet_window_lock(window);
 
-    while (!ok && !fail) {
+    while (results < 0 && !fail) {
 
         if (sequence >= window->sequence && sequence < window->sequence + window->length) {
 
@@ -208,16 +208,15 @@ ESP_LOGI(TAG, "%s: adding %d window %d to %d", __func__, sequence, window->seque
                 window->queue[slot].sequence = sequence;
                 window->queue[slot].inuse = true;
                 window->num_in_queue++;
+                os_release_counting_semaphore(window->available);
+
+                results = 0;
             } else {
                 /* Packet already there - it must have the same sequence as expected */
                 assert(sequence == window->queue[slot].sequence);
-                /* Don't need to pack this one */
-                release_packet(packet);
+                /* Not using, so discard */
+                results = 1;
             }
-
-            os_release_counting_semaphore(window->available);
-
-            ok = true;
 
         /* If a timeout was specified, wait that amount and then try again but don't wait second time if not -1 */
         } else if (timeout != 0) {
@@ -243,7 +242,7 @@ ESP_LOGI(TAG, "%s: no room for %d in %d to %d; waiting", __func__, sequence, win
 
     packet_window_unlock(window);
 
-    return ok;
+    return results;
 }
 
 /*

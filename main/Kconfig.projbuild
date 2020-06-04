@@ -346,8 +346,8 @@ menu "LastLink Configuration"
         config LASTLINK_STREAM_TRANSMIT_RETRY_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "Initial mS between tries"
-        default 500
-        range 50 1000
+        default 1500
+        range 500 10000
         help
             The delay between retries; doubles each retry.
 
@@ -364,7 +364,7 @@ menu "LastLink Configuration"
         config LASTLINK_STREAM_TRANSMIT_DELAY
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         int "How long (in mS) to hold a packet with data before it is sent"
-        default 200
+        default 500
         range 50 5000
         help
             This value determines how long a packet with fresh data will stay

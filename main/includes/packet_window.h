@@ -62,7 +62,7 @@ packet_window_t *packet_window_create(int slots);
 void packet_window_release(packet_window_t *window);
 
 /* Put a packet into the window at the sequence number position. */
-bool packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout);
+int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout);
 
 /* Remove the next packet from the front of the window. */
 bool packet_window_remove_packet(packet_window_t *window, packet_t **packet,  int timeout);

@@ -28,7 +28,9 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
     while (!found && dupinfo != NULL) {
         if (dupinfo->origin == origin) {
             /* Return true if duplicate */
-            duplicate = (dupinfo->sequence - sequence) >= 0;
+            duplicate = (sequence <= dupinfo->sequence && dupinfo->sequence - sequence < (1 << (SEQUENCE_NUMBER_LEN*8 - 1))) ||
+                        (sequence  > dupinfo->sequence && sequence - dupinfo->sequence > (1 << (SEQUENCE_NUMBER_LEN*8 - 1)));
+
             if (!duplicate) {
                 /* Remember the new one now */
                 dupinfo->sequence = sequence;
@@ -48,10 +50,6 @@ bool is_duplicate_packet(duplicate_packet_list_t* duplist, const packet_t* packe
             ADD_TO_LIST(list_head, dupinfo);
         }
     }
-
-//if (duplicate) {
-//    ESP_LOGI(TAG, "%s: %d duplicate on node %d", __func__, sequence, origin);
-//}
 
     return duplicate;
 }
