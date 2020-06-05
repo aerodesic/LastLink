@@ -132,6 +132,7 @@ duplicate_packet_list_t           duplicate_packets;
     .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
+    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),      \
     .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),      \
@@ -153,6 +154,7 @@ duplicate_packet_list_t           duplicate_packets;
     .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
+    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
     .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),      \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),       \
@@ -168,6 +170,7 @@ duplicate_packet_list_t           duplicate_packets;
     .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
     .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
     .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
+    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
     .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
     .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),       \
     .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),       \
@@ -799,19 +802,26 @@ ESP_LOGD(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
             }
 #endif
             if (ok) {
-//                if (radio->set_channel(radio, config->channel)) {
-
-                    /* Put radio in active table. If no radio, create one. */
-                    if (radio_table == NULL) {
-                        /* Create radio table */
-                        radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
+                if (radio->set_channel(radio, config->channel)) {
+                    if (radio->set_datarate(radio, config->datarate)) {
+                        /* Put radio in active table. If no radio, create one. */
+                        if (radio_table == NULL) {
+                            /* Create radio table */
+                            radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
 
 ESP_LOGD(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
-                        if (radio_table != NULL) {
-                            memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
+                            if (radio_table != NULL) {
+                                memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
+                            }
                         }
+                    } else {
+                        printf("**** Invalid datarate: %d\n", config->datarate);
+                        ok = false;
                     }
-//                }
+                } else {
+                        printf("**** Invalid channel: %d\n", config->channel);
+                    ok = false;
+                }
             }
 
             if (radio_table != NULL) {
@@ -949,6 +959,8 @@ void linklayer_route_packet(packet_t* packet)
 {
     if (packet == NULL) {
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
+    } else if (packet->queued != 0) {
+        printf("packet is still queued\n");
     } else if (listen_only) {
         /* In listen-only mode, just discard sending packets */
         release_packet(packet);
@@ -1094,7 +1106,7 @@ void linklayer_route_packet(packet_t* packet)
                 }
 //else linklayer_print_packet("not delayed", packet);
 
-linklayer_print_packet("OUT", packet);
+//linklayer_print_packet("OUT", packet);
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
@@ -1143,12 +1155,9 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
     } else {
 //ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
 //linklayer_print_packet("transmit", packet);
+        packet->queued++;
         if (os_put_queue(radio->transmit_queue, packet)) {
-            /* See if the queue was empty */
-            // if (os_items_in_queue(radio->transmit_queue) == 1) {
-                /* Start the transmission */
-                radio->transmit_start(radio);
-            // }
+            radio->transmit_start(radio);
         }
     }
 }

@@ -1,4 +1,19 @@
 menu "LastLink Configuration"
+    menu "Other Configuration"
+        config LASTLINK_CONFIG_FILE
+            string "Name of config file"
+            default "/spiffs/.config"
+            help
+                Enter the name of the configuation control file
+
+        config SPIFFS_PARTITION_NAME
+            string "Name of SPIFFS partition"
+            default "storage"
+            help
+                Enter the name of the spiffs partition as used in the parition table.
+
+    endmenu
+
     config LASTLINK_RECEIVE_ONLY_FROM_TABLE
         int "Length of receive-only debug table"
         default 0
@@ -46,34 +61,38 @@ menu "LastLink Configuration"
         int "Activity (TRANSMIT) led GPIO"
         default 0
 
-    # Currently up to 8 radios
-    RADIO_NUM:=1
-    DEFAULT_RADIO_ENABLE=y
-    source "main/Kconfig.radio"
+    menu "Radio configuraation"
+        # Currently up to 8 radios
+        RADIO_NUM:=1
+        DEFAULT_RADIO_ENABLE=y
+        source "main/Kconfig.radio"
 
-    DEFAULT_RADIO_ENABLE=n
-    RADIO_NUM:=2
-    source "main/Kconfig.radio"
+        DEFAULT_RADIO_ENABLE=n
+        RADIO_NUM:=2
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=3
-    source "main/Kconfig.radio"
+        RADIO_NUM:=3
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=4
-    source "main/Kconfig.radio"
+        RADIO_NUM:=4
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=5
-    source "main/Kconfig.radio"
+        RADIO_NUM:=5
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=6
-    source "main/Kconfig.radio"
+        RADIO_NUM:=6
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=7
-    source "main/Kconfig.radio"
+        RADIO_NUM:=7
+        source "main/Kconfig.radio"
 
-    RADIO_NUM:=8
-    source "main/Kconfig.radio"
+        RADIO_NUM:=8
+        source "main/Kconfig.radio"
+
+    endmenu
 
     menu "Communication Parameters"
+
         config LASTLINK_ROUTE_LIFETIME
             int "Route Lifetime in mS"
             default 15000
@@ -99,7 +118,7 @@ menu "LastLink Configuration"
             default 5
             range 3 25
             help
-                Number of retries to receive a RouteAnnounce from RouteRequest
+                Number of retries to receive a RouteAnnounce from RouteRequest.
 
         config LASTLINK_ROUTE_MAX_QUEUED_PACKETS
             int "Route max queued packets"
@@ -108,27 +127,13 @@ menu "LastLink Configuration"
             help
                 The maximum number of packets queuable while waiting for a route.
 
-        config LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY
-            int "Maximum packets waiting for assembly"
-            default 8
-            range 1 16
-            help
-                The maximum number of packets waiting for out-of-order assembly.
-
-        config LASTLINK_STREAM_MAX_SIMULTANEOUS_CONNECTIONS
-            int "Maximum simultaneous connections"
-            default 10
-            range 1 20
-            help
-                The maximum number of simultaneous connections to a port.
-
         config LASTLINK_MAX_PROTOCOL_NUMBER
             int "Maximum packet protocol number"
             default 10
-            range 5 250
+            range 8 250
             help
                 The maximum protocol number allowed (starts with 0)
-                (0 to 4 are used internally.)
+                (0 to 7 are used internally.)
 
         config LASTLINK_CHANNEL_TABLE
             string "Select channel table"
@@ -136,14 +141,13 @@ menu "LastLink Configuration"
             help
                 Select one of the channel table files
 
-        config LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
-            bool "Create opportunistic routes"
-            default false
-            help
-                When a packet is received, capture a provisional route
-                to the SOURCE via the SENDER, marking with invalid
-                SEQUENCE and impossibly high METRIC.
-
+        # config LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
+        #    bool "Create opportunistic routes"
+        #    default true
+        #    help
+        #        When a packet is received, capture a provisional route
+        #        to the SOURCE via the SENDER, marking with invalid
+        #        SEQUENCE and impossibly high METRIC.
 
         source "main/Kconfig.service_names"
 
@@ -160,7 +164,7 @@ menu "LastLink Configuration"
 
         config LASTLINK_NUM_PACKETS
             int "Number of available packets"
-            default 10
+            default 50
             help
                 This defines the number of packets available.  No additional
                 memory is allocated beyond this limit, so if you run out,
@@ -193,7 +197,7 @@ menu "LastLink Configuration"
             hex "A Broadcast address"
             default 0xFFFF
             help
-                The address used for broadcast to all nodes
+                The address used for a broadcast to all nodes
 
         config LASTLINK_NULL_ADDRESS
             hex "A NULL address"
@@ -201,7 +205,8 @@ menu "LastLink Configuration"
             help
                 The address used when an address is unspecified.
                 Used to mark packets that need to be labeled with
-                source, destination and route.
+                source, destination and route.  This value cannot
+                be used as a node address.
 
         config LASTLINK_PROTOCOL_LENGTH
             int "Length of Protocol type field"
@@ -215,35 +220,35 @@ menu "LastLink Configuration"
             default 1
             range 1 4
             help
-                Number of bytes in Flags field.
+                The number of bytes in Flags field.
 
         config LASTLINK_SEQUENCE_NUMBER_LENGTH
             int "Length of a sequence number"
             default 2
             range 1 4
             help
-                The length of a sequence number field in the packet.
+                The number of bytes in a SEQUENCE_NUMBER field.
 
         config LASTLINK_INTERVAL_LENGTH
             int "Length of a interval number"
             default 2
             range 1 4
             help
-                The length of a interval field in the packet.
+                The number of bytes in an INTERVAL field.
 
         config LASTLINK_METRIC_LENGTH
             int "Length of a metric field in bytes"
             default 1
             range 1 4
             help
-                The length of a metric field.
+                The number of bytes in a METRIC field.
 
         config LASTLINK_MAX_METRIC
             int "Maximum value of a metric"
             default 64
             range 1 256
             help
-                The maximum metric value (distance from origin)
+                The maximum METRIC value (distance from origin)
 
         config LASTLINK_BEACON_NAME_LENGTH
            int "Length of name in beacon packet"
@@ -261,30 +266,16 @@ menu "LastLink Configuration"
 
     endmenu
 
-    menu "Other Configuration"
-        config LASTLINK_CONFIG_FILE
-            string "Name of config file"
-            default "/spiffs/.config"
-            help
-                Enter the name of the configuation control file
-
-        config SPIFFS_PARTITION_NAME
-            string "Name of SPIFFS partition"
-            default "storage"
-            help
-                Enter the name of the spiffs partition as used in the parition table.
-
-    endmenu
-
     menu "Socket layer"
+
         config LASTLINK_ENABLE_SOCKET_LAYER
         bool "Select to enable socket manager"
         default true
         help
-             Enables primitive datagram streaming sockets between nodes.
+             Enables datagram and streaming sockets between nodes.
 
         config LASTLINK_NUMBER_OF_SOCKETS
-        int "Number of available sockets"
+        int "Number of sockets"
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         default 10
         help
@@ -311,7 +302,8 @@ menu "LastLink Configuration"
         default 5
         range 3 20
         help
-            How many attempts are made to resend ping after it has been routed.
+            This many attempts will be made to resend a ping after it
+            has been routed.
 
         config LASTLINK_STREAM_WINDOW_SIZE
         depends on LASTLINK_ENABLE_SOCKET_LAYER
@@ -323,6 +315,8 @@ menu "LastLink Configuration"
             while waiting for an acknowledgement.  A large number means fewer
             acks required for a properly operating network, while a smaller
             number means better efficiency if a noisy or marginal network.
+            This sets the sizes of the outbound packet queue and the packet
+            assembly buffer on input.
 
         config LASTLINK_STREAM_ACK_DELAY
         depends on LASTLINK_ENABLE_SOCKET_LAYER
@@ -337,20 +331,27 @@ menu "LastLink Configuration"
 
         config LASTLINK_STREAM_TRANSMIT_RETRIES
         depends on LASTLINK_ENABLE_SOCKET_LAYER
-        int "Number of retries"
+        int "Number of stream packet retries"
         default 10
-        range 2 30
+        range 2 50
         help
             The number of times to retry sending the output queue before giving up.
 
         config LASTLINK_STREAM_TRANSMIT_RETRY_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
-        int "Initial mS between tries"
-        default 1500
-        range 500 10000
+        int "Packet retransmit delay"
+        default 100
+        range 50 10000
         help
-            The delay between retries; doubles each retry.
-
+            This is retransmission delay time for sending a window of
+            packets to the destination.  It represents how long to wait
+            for a reply to the transmission.  It is expressed in milliseconds,
+            but is adjusted by the metric delay to the target (based on the
+            current route table entry.)  The value will be multiplied by
+            "2 * metric" (allowing for receive and transmit at each routed
+            node.)  This value is multiplied by 2 for each failed reply until
+            it reaches a maximum of "MAXIMUM RETRY TIME".
+            
 
         config LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
@@ -383,16 +384,19 @@ menu "LastLink Configuration"
         config LASTLINK_STREAM_KEEP_ALIVE
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         depends on LASTLINK_STREAM_KEEP_ALIVE_ENABLE
-        int "Period in seconds between keep-alive packets"
+        int "Seconds between keep-alive packets"
         default 10
         range 10 600
 
 
         config LASTLINK_STREAM_UPDATE_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
-        int "Update period in mS for sending ACKS when reads outstanding."
+        int "milliseconds to ACK input on outstanding read"
         default 1000
-        range 200 10000
+        range 50 10000
+        help
+            This is a period for resending ACKS when a read on a socket
+            is outstanding. 
 
 
         config LASTLINK_SOCKET_LINGER_TIME
@@ -401,7 +405,8 @@ menu "LastLink Configuration"
         default 5000
         range 1000 60000
         help
-            Timer after socket closes before it is cleaned and reclaimed.
+            Time in milliseconds after socket closes before it is
+            cleaned and reclaimed.
 
     endmenu
 

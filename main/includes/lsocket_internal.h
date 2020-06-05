@@ -89,7 +89,7 @@
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
 /* Set to add debugging logic to socket and global socket locking */
-#define SOCKET_LOCKING_DEBUG
+#undef SOCKET_LOCKING_DEBUG
 
 typedef enum {
     LS_STATE_IDLE = 0,                           /* Idle - not connected */

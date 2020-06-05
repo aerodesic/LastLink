@@ -86,6 +86,7 @@ packet_t *allocate_packet_plain(void)
                 packet->radio_num = UNKNOWN_RADIO;
                 packet->rssi = 0;
                 packet->crc_ok = false;
+                packet->queued = 0;
 
                 ++packets_in_use;
             }
@@ -443,6 +444,7 @@ typedef struct {
     void*         address;
     void*         buffer;
     int           ref;
+    int           queued;
     int           radio_num;
     int           length;
     bool          routed_callback;
@@ -473,6 +475,7 @@ int print_packet_table(int argc, const char **argv)
                 table[num_packets].address                  = &packet_table[num_packets];
                 table[num_packets].buffer                   = packet_table[num_packets].buffer;
                 table[num_packets].ref                      = packet_table[num_packets].ref;
+                table[num_packets].queued                   = packet_table[num_packets].queued;
                 table[num_packets].radio_num                = packet_table[num_packets].radio_num;
                 table[num_packets].length                   = packet_table[num_packets].length;
                 table[num_packets].routed_callback          = packet_table[num_packets].routed_callback != NULL;
@@ -503,17 +506,18 @@ int print_packet_table(int argc, const char **argv)
                 if (all || table[index].ref != 0) {
                     if (! header_printed) {
                         #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
+                        printf("Packet      Buffer      Ref  Queued  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
                         #else
-                        printf("Packet      Buffer      Ref  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
+                        printf("Packet      Buffer      Ref  Queued  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
                         #endif
                         header_printed = true;
                     }
                     #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
                             table[index].address,
                             table[index].buffer,
                             table[index].ref,
+                            table[index].queued,
                             table[index].radio_num,
                             table[index].length,
                             table[index].routeto & 0xFFFF,
@@ -526,10 +530,11 @@ int print_packet_table(int argc, const char **argv)
                             table[index].last_referenced_filename,
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-10p  %-3d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
+                    printf("%-10p  %-10p  %-3d  %-5d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
                             table[index].address,
                             table[index].buffer,
                             table[index].ref,
+                            table[index].queued,
                             table[index].radio_num,
                             table[index].length,
                             table[index].routeto & 0xFFFF,

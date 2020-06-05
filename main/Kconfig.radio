@@ -120,6 +120,13 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Initial channel.  First 64 or narrow band.  Last 8 are wide band.
 
+    config LASTLINK_RADIO_$(RADIO_NUM)_DATARATE
+        int "Initial datarate"
+        default 0
+        range 0 7
+        help
+            Initial datarate.  Note: not all datarates are valied.
+
     config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_DELAY
         int "Transmit delay for RADIO $(RADIO_NUM)"
         default 50

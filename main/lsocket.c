@@ -71,6 +71,7 @@
 #include "lsocket_internal.h"
 #include "packets.h"
 #include "linklayer.h"
+#include "routes.h"
 #include "packet_window.h"
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
@@ -246,7 +247,7 @@ static inline void unlock_socket_debug(ls_socket_t *socket, const char *file, in
 #define GLOBAL_SOCKET_LOCK()     os_acquire_recursive_mutex(global_socket_lock)
 #define GLOBAL_SOCKET_UNLOCK()   os_release_recursive_mutex(global_socket_lock)
 #define LOCK_SOCKET(socket)      os_acquire_recursive_mutex((socket)->lock)
-#define LOCK_SOCKET_TRY(socket)  os_acquire_recursive_mutex_with_timeout((socket)->lock)
+#define LOCK_SOCKET_TRY(socket)  os_acquire_recursive_mutex_with_timeout((socket)->lock, 0)
 #define UNLOCK_SOCKET(socket)    os_release_recursive_mutex((socket)->lock)
 #endif /* SOCKET_LOCKING_DEBUG */
 
@@ -872,6 +873,7 @@ static packet_t *assemble_socket_data(packet_t *packet_to_send, packet_t *packet
 /* State machine actions */
 static bool stream_flush_output_window(ls_socket_t *socket)
 {
+//printf("stream_flush_output_window\n");
     /* Flush output window until we are done */
     if (socket_flush_current_packet(socket, /*wait*/ false)) {
         send_output_window(socket);
@@ -883,28 +885,24 @@ static bool stream_flush_output_window(ls_socket_t *socket)
 
 static bool stream_send_connect(ls_socket_t *socket)
 {
-ESP_LOGI(TAG, "%s: socket state %s", __func__, socket_state_of(socket));
     linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT, 0));
     return false;
 }
 
 static bool stream_send_connect_ack(ls_socket_t *socket)
 {
-ESP_LOGI(TAG, "%s: socket state %s", __func__, socket_state_of(socket));
     linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, socket->input_window->length));
     return false;
 }
 
 static bool stream_send_disconnect(ls_socket_t *socket)
 {
-ESP_LOGI(TAG, "%s: socket state %s", __func__, socket_state_of(socket));
     linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT, 0));
     return false;
 }
 
 static bool stream_send_disconnected(ls_socket_t *socket)
 {
-ESP_LOGI(TAG, "%s: socket state %s", __func__, socket_state_of(socket));
     linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0));
     return false;
 }
@@ -921,7 +919,7 @@ static bool stream_packet_process(packet_t *packet)
     bool reject = true;
 
     if (packet != NULL) {
-linklayer_print_packet("IN ", packet);
+//linklayer_print_packet("IN ", packet);
         if (linklayer_packet_is_for_this_node(packet)) {
             /* Read the flags field for later use */
             uint8_t flags = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN);
@@ -1160,6 +1158,7 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
 
             if (reject) {
                 linklayer_route_packet(stream_packet_create_from_packet(packet, STREAM_FLAGS_CMD_REJECT, 0));
+
             } else if (socket != NULL) {
                 /* Ack the output window if acknum is present */
                 if  ((flags & STREAM_FLAGS_ACKNUM) != 0) {
@@ -1388,8 +1387,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
             /* Has to be a stream socket in freshly-created mode */
             if (socket->socket_type == LS_STREAM && (socket->state == LS_STATE_BOUND || socket->state == LS_STATE_LISTENING)) {
 
-                if (max_queue > 0 && max_queue < MAX_SOCKET_CONNECTIONS) {
-
+                if (max_queue > 0) {
                     if (socket->connections == NULL) {
                         /* Create queue for connections */
                         socket->connections = os_create_queue(max_queue, sizeof(ls_socket_t*));
@@ -1716,22 +1714,25 @@ static void ack_output_window(ls_socket_t *socket, int ack_sequence, uint32_t ac
 {
     simpletimer_stop(&socket->output_window_timer);
 
-ESP_LOGI(TAG, "%s: waiting for output window lock...", __func__);
+//ESP_LOGI(TAG, "%s: waiting for output window lock...", __func__);
 
-printf("ack_output_window %d %04x\n", ack_sequence, ack_mask);
+//printf("ack_output_window %d %04x\n", ack_sequence, ack_mask);
 
     packet_window_lock(socket->output_window);
 
     /* Release these packets in window */
     if (packet_window_release_processed_packets(socket->output_window, ack_sequence, ack_mask)) {
 
-ESP_LOGI(TAG, "%s: released_packet_in_window done...", __func__);
+#if 1
+//ESP_LOGI(TAG, "%s: released_packet_in_window done...", __func__);
 
-printf("start timer to resend packets\n");
+//printf("start timer to resend packets\n");
 
         /* Packets remain in window, start the send_output_window timer again */
         socket->output_retries = 0;
-        simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME);
+        /* Start it immediately */
+        simpletimer_set_expired(&socket->output_window_timer);
+#endif
     }
 
     packet_window_unlock(socket->output_window);
@@ -1773,11 +1774,11 @@ static void ack_input_window(ls_socket_t* socket)
         /* Add sequence info to packet */
         add_data_ack(socket->input_window, packet);
 
-int sequence;
-uint32_t ack_mask;
-packet_window_get_processed_packets(socket->input_window, &sequence, &ack_mask);
-printf("%d packets in input queue; sending forced ack %02x sequence %d mask %04x\n",
-       packet_window_packet_count(socket->input_window),  get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN), sequence, ack_mask);
+//int sequence;
+//uint32_t ack_mask;
+//packet_window_get_processed_packets(socket->input_window, &sequence, &ack_mask);
+//printf("%d packets in input queue; sending forced ack %02x sequence %d mask %04x\n",
+//       packet_window_packet_count(socket->input_window),  get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN), sequence, ack_mask);
 
         /* Send it */
         linklayer_route_packet(packet);
@@ -1805,81 +1806,97 @@ ESP_LOGI(TAG, "%s: waiting for window lock", __func__);
 
 ESP_LOGI(TAG, "%s: output window has %d packets", __func__, packet_window_packet_count(socket->output_window));
 
-    /* If packets in window, then send them. */
-    if (packet_window_packet_count(socket->output_window) != 0) {
+    packet_t *packets[socket->output_window->length];
+
+    int num_packets = packet_window_get_all_packets(socket->output_window, packets, ELEMENTS_OF(packets));
+
+    if (num_packets != 0) {
 
         /* Stop the ack_delay_timer since this subsumes the effort */
         simpletimer_stop(&socket->ack_delay_timer);
 
-        /* If first time, set new timeout and retry count */
-        if (socket->output_retries == 0) {
-            socket->output_retries = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRIES;
-            socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME;
-
+        /* Make sure last packet has been sent */
+        if (packets[num_packets-1]->queued != 0) {
+            /* Last packet remains to be sent - pause 100 mS to let that happen */
+            simpletimer_start(&socket->output_window_timer, 100);
         } else {
-            socket->output_retries -= 1;
-        }
 
-        if (socket->output_retries != 0) {
-ESP_LOGI(TAG, "%s: retries is %d", __func__, socket->output_retries);
+            if (socket->output_retries == 0) {
+                /* If first time, set new timeout and retry count */
+                socket->output_retries = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRIES;
 
-            packet_t *packets[socket->output_window->length];
+                /* Look up the route to the destination */
+                route_table_lock();
+                route_t *route = find_route(socket->dest_addr);
+                if (route != NULL) {
+                    socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME * num_packets * route->metric * 2;
+                } else {
+                    /* No route so assume worst case */
+                    socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME * num_packets * MAX_METRIC * 2;
+                }
+                route_table_unlock();
+//printf("send_output_window: retry time %d\n", socket->output_retry_time);
 
-            int num_packets = packet_window_get_all_packets(socket->output_window, packets, ELEMENTS_OF(packets));
-
-            int to_send = num_packets;
-
-            /* If second try, only send the first packet */
-            if (socket->output_retries != CONFIG_LASTLINK_STREAM_TRANSMIT_RETRIES) {
-                to_send = 1;
+            } else {
+                socket->output_retries -= 1;
             }
 
-            packet_window_unlock(socket->output_window);
+            if (socket->output_retries != 0) {
+//ESP_LOGI(TAG, "%s: retries is %d", __func__, socket->output_retries);
 
-            /* Packets in queue - send all that are here */
-            for (int slot = 0; slot < to_send; ++slot) {
-                packet_t *packet = packets[slot];
+                int to_send = num_packets;
 
-                if (slot == (to_send - 1)) {
-                    /* Add the current input window ack to the last packet */
-                    add_data_ack(socket->input_window, packet);
-                } else {
-                    /* Not last - remove ACKNUM */
-                    clear_bits_field(packet, STREAM_FLAGS, STREAM_FLAGS_ACKNUM, STREAM_FLAGS_ACKNUM);
+                /* If second try, only send the first packet */
+                if (socket->output_retries != CONFIG_LASTLINK_STREAM_TRANSMIT_RETRIES) {
+                    to_send = 1;
                 }
 
-                linklayer_route_packet(ref_packet(packet));
-                --to_send;
+                packet_window_unlock(socket->output_window);
+
+                /* Packets in queue - send all that are here */
+                for (int slot = 0; slot < to_send; ++slot) {
+                    packet_t *packet = packets[slot];
+
+                    if (slot == (to_send - 1)) {
+                        /* Add the current input window ack to the last packet */
+                        add_data_ack(socket->input_window, packet);
+                    } else {
+                        /* Not last - remove ACKNUM */
+                        clear_bits_field(packet, STREAM_FLAGS, STREAM_FLAGS_ACKNUM, STREAM_FLAGS_ACKNUM);
+                    }
+
+                    linklayer_route_packet(ref_packet(packet));
+                    --to_send;
+                }
+
+                packet_window_lock(socket->output_window);
+
+                /* Come back in exponential time */
+                simpletimer_start(&socket->output_window_timer, socket->output_retry_time);
+
+                /* Next time wait twice as long (up to a limit) */
+                socket->output_retry_time <<= 1;
+                if (socket->output_retry_time > CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME) {
+                    socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME;
+                }
+            } else {
+                /* Timed out */
+                /* Terminate input */
+                packet_window_shutdown_window(socket->input_window);
+
+                /* Start shutdown process */
+                start_state_machine(socket,
+                                    LS_STATE_OUTBOUND_DISCONNECTING,
+                                    stream_send_disconnect,
+                                    state_no_action,
+                                    STREAM_DISCONNECT_TIMEOUT,
+                                    STREAM_DISCONNECT_RETRIES);
             }
+        }
 
-            /* Release the packets */
-            for (int slot = 0; slot < num_packets; ++slot) {
-                release_packet(packets[slot]);
-            }
-
-            packet_window_lock(socket->output_window);
-
-            /* Come back in exponential time */
-            simpletimer_start(&socket->output_window_timer, socket->output_retry_time);
-
-            /* Next time wait twice as long (up to a limit) */
-            socket->output_retry_time <<= 1;
-            if (socket->output_retry_time > CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME) {
-                socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME;
-            }
-
-        } else {
-            /* Timed out */
-            /* Terminate input */
-            packet_window_shutdown_window(socket->input_window);
-
-            /* Start shutdown process */
-            start_state_machine(socket,
-                                LS_STATE_OUTBOUND_DISCONNECTING,
-                                stream_send_disconnect,
-                                state_no_action,
-                                STREAM_DISCONNECT_TIMEOUT,
-                                STREAM_DISCONNECT_RETRIES);
+        /* Release the packets */
+        for (int slot = 0; slot < num_packets; ++slot) {
+            release_packet(packets[slot]);
         }
     }
 
@@ -2625,9 +2642,10 @@ static void socket_scanner_thread(void* param)
                 /* Check the socket timers and fire action if ready */
                 if (simpletimer_is_expired_or_remaining(&socket->state_machine_timer, &next_time)) {
                     simpletimer_stop(&socket->state_machine_timer);
-ESP_LOGI(TAG, "%s: **************************** state_machine_timer for socket %d fired", __func__, socket_index);
+//printf("scanner: state_machine_timeout\n");
+//ESP_LOGI(TAG, "%s: **************************** state_machine_timer for socket %d fired", __func__, socket_index);
                     state_machine_timeout(socket);
-ESP_LOGI(TAG, "%s: **************************** state_machine_timer finished", __func__);
+//ESP_LOGI(TAG, "%s: **************************** state_machine_timer finished", __func__);
 //                } else if (simpletimer_is_running(&socket->state_machine_timer)) {
 //ESP_LOGI(TAG, "%s: **************************** state_machine_timer remaining %d", __func__, simpletimer_remaining(&socket->state_machine_timer));
                 }
@@ -2635,39 +2653,42 @@ ESP_LOGI(TAG, "%s: **************************** state_machine_timer finished", _
                 /* This fires to flush the data from the output buffer to the window */
                 if (simpletimer_is_expired_or_remaining(&socket->socket_flush_timer, &next_time)) {
                     simpletimer_stop(&socket->socket_flush_timer);
-ESP_LOGI(TAG, "%s: **************************** socket_flush_timer for socket %d fired", __func__, socket_index);
+//printf("scanner: socket_flush_current_packet\n");
+//ESP_LOGI(TAG, "%s: **************************** socket_flush_timer for socket %d fired", __func__, socket_index);
                     socket_flush_current_packet(socket, /* wait */ false);
-ESP_LOGI(TAG, "%s: **************************** socket_flush_timer finished", __func__);
+//ESP_LOGI(TAG, "%s: **************************** socket_flush_timer finished", __func__);
                 }
 
                 /* This one runs on demand to flush the output_window as needed - runs until successful or timesout closing connection */
                 if (simpletimer_is_expired_or_remaining(&socket->output_window_timer, &next_time)) {
                     simpletimer_stop(&socket->output_window_timer);
-ESP_LOGI(TAG, "%s: **************************** output_window_timer for socket %d fired", __func__, socket_index);
+//printf("scanner: send_output_window\n");
+//ESP_LOGI(TAG, "%s: **************************** output_window_timer for socket %d fired", __func__, socket_index);
                     send_output_window(socket);
-ESP_LOGI(TAG, "%s: **************************** output_window_timer finished", __func__);
+//ESP_LOGI(TAG, "%s: **************************** output_window_timer finished", __func__);
                 }
 
                 /* This one fires when we've received data that needs an ack */
                 if (simpletimer_is_expired_or_remaining(&socket->ack_delay_timer, &next_time)) {
+//printf("scanner: ack_input_window\n");
 
                     /* Finished with timer */
                     simpletimer_stop(&socket->ack_delay_timer);
 
                     ///* Delay input window ack until next time */
                     //simpletimer_restart(&socket->input_window_timer);
-ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
+//ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
                     ack_input_window(socket);
-ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
+//ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
                 }
 
                 /* This one runs continually and only works when the socket is input-busy */
                 if (simpletimer_is_expired_or_remaining(&socket->input_window_timer, &next_time)) {
-
+//printf("scanner: ack_input_window\n");
                     // simpletimer_restart(&socket->input_window_timer);
-ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
+//ESP_LOGI(TAG, "%s: **************************** ack_input_window for socket %d fired", __func__, socket_index);
                     ack_input_window(socket);
-ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
+//ESP_LOGI(TAG, "%s: **************************** ack_input_window finished", __func__);
                 }
 
                 UNLOCK_SOCKET(socket);

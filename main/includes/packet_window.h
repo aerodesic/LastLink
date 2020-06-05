@@ -8,7 +8,7 @@
 #ifndef __packet_window_h_included
 #define __packet_window_h_included
 
-#define PACKET_WINDOW_LOCKING_DEBUG
+#undef PACKET_WINDOW_LOCKING_DEBUG
 
 #include "packets.h"
 #include "os_specific.h"
@@ -44,11 +44,11 @@ bool packet_window_unlock_debug(packet_window_t *window, const char *file, int l
 #else
 inline bool packet_window_lock(packet_window_t *window)
 {
-    os_acquire_recursive_mutex(window->lock);
+    return os_acquire_recursive_mutex(window->lock);
 }
 inline bool packet_window_unlock(packet_window_t *window)
 {
-    os_release_recursive_mutex(window->lock);
+    return os_release_recursive_mutex(window->lock);
 }
 #endif /* PACKET_WINDOW_LOCKING_DEBUG */
 

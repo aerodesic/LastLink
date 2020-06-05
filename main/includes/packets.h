@@ -30,6 +30,7 @@ typedef struct packet {
     bool             (*routed_callback)(packet_t* packet, void* data);
     void             *routed_callback_data;
 
+    uint8_t          queued;                     /* Counts up one for each time transmit queue */
     bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
     int              delay;                      /* A delay factor before transmitting packet */
     uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */

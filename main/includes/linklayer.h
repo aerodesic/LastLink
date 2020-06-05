@@ -145,24 +145,25 @@ typedef struct radio_config {
     const char* type;
     radio_type_t radio_type;
     int crystal;
-    int channel;
-    int dios[MAX_DIOS];
-    int reset;
+    uint8_t channel;
+    uint8_t datarate;
+    uint8_t dios[MAX_DIOS];
+    uint8_t reset;
     int transmit_delay;
     union {
        struct {
-         int spi_host;
-         int spi_sck;
-         int spi_mosi;
-         int spi_miso;
-         int spi_cs;
-         int spi_clock;
+         uint8_t spi_host;
+         uint8_t spi_sck;
+         uint8_t spi_mosi;
+         uint8_t spi_miso;
+         uint8_t spi_cs;
+         int     spi_clock;
          void (*spi_pre_xfer_callback)(spi_transaction_t*);
-         int dma_chan;
+         uint8_t dma_chan;
        };
        struct {
-         int i2c_blah;
-         int i2c_blah2;
+         uint8_t i2c_blah;
+         uint8_t i2c_blah2;
        };
        struct {
          const char* dev;
