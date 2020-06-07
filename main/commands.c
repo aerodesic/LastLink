@@ -378,7 +378,27 @@ static int time_command(int argc, const char **argv)
     return 0;
 }
 
-static int tasks_command(int argc, const char **argv)
+static int kill_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<handle>", "Kill a task");
+    } else {
+        if (argc > 1) {
+            unsigned int handle = strtol(argv[1], NULL, 16);
+
+            printf("Killing thread %x\n", handle);
+
+            os_delete_thread((os_thread_t) handle);
+
+        } else {
+            printf("Insufficient args\n");
+        }
+    }
+
+    return 0;
+}
+
+static int ps_command(int argc, const char **argv)
 {
     if (argc == 0) {
         show_help(argv[0], "", "List all tasks");
@@ -402,13 +422,14 @@ static int tasks_command(int argc, const char **argv)
 
             /* For each populated position in the pxTaskStatusArray array,
             format the raw data as human readable ASCII data. */
-            printf("\nTask Name         Runtime  State      Priority  Cpu  High Stack\n");
+            printf("\nTask Name         Handle  Runtime  State      Priority  Cpu  High Stack\n");
             for( size_t x = 0; x < num_tasks; x++ ) {
                 char runtime[20];
                 sprintf(runtime, "%u.%u", pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 1000, (pdTICKS_TO_MS(pxTaskStatusArray[x].ulRunTimeCounter) / 100) % 10);
 
-                printf("%-16s  %-7s  %-9s  %-8u  %-3d  %-5d\n",
+                printf("%-16s  %-6x  %-7s  %-9s  %-8u  %-3d  %-5d\n",
                        pxTaskStatusArray[x].pcTaskName,
+                       (unsigned int) pxTaskStatusArray[x].xHandle,
                        runtime,
                        task_state(pxTaskStatusArray[x].eCurrentState),
                        pxTaskStatusArray[x].uxCurrentPriority,
@@ -544,7 +565,8 @@ void init_commands(void)
     add_command("loglevel",   loglevel_command);
     add_command("config",     config_command);
     add_command("reboot",     reboot_command);
-    add_command("tasks",      tasks_command);
+    add_command("ps",         ps_command);
+    add_command("kill",       kill_command);
     add_command("time",       time_command);
 
     os_release_recursive_mutex(command_lock);

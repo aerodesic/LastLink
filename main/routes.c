@@ -327,6 +327,25 @@ route_t* find_route(int address)
     return found;
 }
 
+/*
+ * Return the metric (hops) to the target destination.
+ * For no route, assume the worst.
+ */
+int route_metric(int address)
+{
+    int metric = MAX_METRIC;
+
+    route_table_lock();
+    route_t *route = find_route(address);
+
+    if (route != NULL) {
+        metric = route->metric;
+    }
+
+    route_table_unlock();
+
+    return metric;
+}
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 /*

@@ -210,6 +210,8 @@ void linklayer_release_packets_in_queue(os_queue_t queue);
 
 radio_t* linklayer_get_radio_from_number(int radio_num);
 
+bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate);
+
 #if CONFIG_LASTLINK_RADIO_SX126x_ENABLED
 bool sx126x_radio(radio_t* radio);
 #endif

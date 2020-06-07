@@ -53,6 +53,7 @@ bool route_put_pending_packet(route_t* r, packet_t* p);
 void route_start_routerequest(route_t* r);
 void route_release_packets(route_t* r);
 bool route_is_expired(route_t* r);
+int route_metric(int address);
 
 route_t* find_route(int address);
 

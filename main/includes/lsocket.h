@@ -19,8 +19,13 @@
 #define STREAM_CONNECT_TIMEOUT   5000   /* 5 seconds */
 #define STREAM_CONNECT_RETRIES   10
 
-#define STREAM_FLUSH_TIMEOUT     5000   /* 5 seconds */
-#define STREAM_FLUSH_RETRIES     5
+/*
+ * How often we check the send_output_window results when closing.
+ * The send_output_window is running on its own timer so this only
+ * affects how often we *check* the results.
+ */
+#define STREAM_FLUSH_TIMEOUT     500    /* .5 seconds */
+#define STREAM_FLUSH_RETRIES     60     /* 30 seconds worth */
 
 #define STREAM_DISCONNECT_TIMEOUT 5000  /* 5 seconds */
 #define STREAM_DISCONNECT_RETRIES 5
@@ -42,10 +47,11 @@ typedef enum {
     LSE_SYSTEM_ERROR     = -1009,
     LSE_INVALID_MAXQUEUE = -1010,
     LSE_CONNECT_FAILED   = -1011,
-    LSE_NOT_WRITABLE     = -1012,
-    LSE_SOCKET_BUSY      = -1013,
-    LSE_DISCONNECTING    = -1014,
-    LSE_NOT_BOUND        = -1015,
+    LSE_CONNECT_REJECTED = -1012,
+    LSE_NOT_WRITABLE     = -1013,
+    LSE_SOCKET_BUSY      = -1014,
+    LSE_DISCONNECTING    = -1015,
+    LSE_NOT_BOUND        = -1016,
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;

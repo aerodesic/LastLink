@@ -71,7 +71,7 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet,  in
 int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], int num_packets);
 
 /* Get the list of accepted and processed packets in the queue to provide acknowledgement */
-void packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask);
+bool packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask);
 
 /* Release and trim queue for all packets processed. */
 int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask);

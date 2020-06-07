@@ -111,14 +111,14 @@ typedef struct radio {
     /* Get current transmit power */
     int (*get_txpower)(radio_t* radio);
 
-    /* Set channel */
-    bool (*set_channel)(radio_t* radio, int channel);
+    /* Set channel; return old channel or -1 if error */
+    int (*set_channel)(radio_t* radio, int channel);
 
     /* Get channel */
     int (*get_channel)(radio_t* radio);
 
-    /* Set datarate */
-    bool (*set_datarate)(radio_t* radio, int datarate);
+    /* Set datarate; return old datarate or -1 if error */
+    int (*set_datarate)(radio_t* radio, int datarate);
 
     /* Get datarate */
     int (*get_datarate)(radio_t* radio);

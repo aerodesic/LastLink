@@ -92,22 +92,48 @@ bool packet_window_unlock_debug(packet_window_t *window, const char *file, int l
 #endif
 #endif
 
-static void packet_window_discard_top_packet(packet_window_t *window)
+/* Return number of slots discarded */
+static int packet_window_discard_top_packet(packet_window_t *window)
 {
-    assert(window->queue[0].inuse);
+    int slot;
+
+    if (window != NULL) {
+
+        assert(window->queue[0].inuse);
 
 ESP_LOGI(TAG, "%s: removing packet %d", __func__, window->queue[0].sequence);
+printf("%s: removing packet %d\n", __func__, window->queue[0].sequence);
 
-    /* Roll up the queue to remove this element */
-    memcpy(window->queue, window->queue + 1, sizeof(window->queue[0]) * (window->length - 1));
-    window->queue[window->length - 1].packet = NULL;
-    window->queue[window->length - 1].inuse = false;
-    window->queue[window->length - 1].sequence = 0;
+        /*
+         * Move up list of packets to overright the top item.
+         * Continue the process for all NULL but 'inuse' placeholders until we run into a
+         * active packet or the end of list list.
+         */
+        do {
+printf("%s: removing sequence %d %s\n", __func__, window->queue[0].sequence, window->queue[0].packet ? "packet" : "hole");
 
-    /* The first packet sequence number is now + 1 */
-    window->sequence++;
+            memcpy(window->queue, window->queue + 1, sizeof(window->queue[0]) * (window->length - 1));
+            window->queue[window->length -  1].packet = NULL;
+            window->queue[window->length -  1].inuse = false;
+            window->queue[window->length -  1].sequence = 0;
 
-    os_release_counting_semaphore(window->room);
+            /* Release the slot for reuse */
+            os_release_counting_semaphore(window->room);
+
+            /* Adjust to the first sequence number in the list */
+            window->sequence++;
+
+if (window->queue[0].inuse) {
+    printf("%s: top element is sequence %d; window sequence is %d\n", __func__, window->queue[0].sequence, window->sequence);
+}
+
+        } while (window->queue[0].inuse && window->queue[0].packet == NULL);
+
+    } else {
+        slot = 0;
+    }
+
+    return slot;
 }
 
 packet_window_t *packet_window_create(int slots)
@@ -140,32 +166,34 @@ packet_window_t *packet_window_create(int slots)
  */
 void packet_window_release(packet_window_t *window)
 {
-    packet_window_lock(window);
+    if (window != NULL) {
+        packet_window_lock(window);
 
-    /* Release packets in slots */
-    for (int slot = 0; slot < window->length; ++slot) {
-        if (window->queue[slot].packet != NULL) {
-            release_packet(window->queue[slot].packet);
+        /* Release packets in slots */
+        for (int slot = 0; slot < window->length; ++slot) {
+            if (window->queue[slot].packet != NULL) {
+                release_packet(window->queue[slot].packet);
+            }
         }
-    }
 
-    if (window->lock != NULL) {
+        if (window->lock != NULL) {
+            os_delete_mutex(window->lock);
+        }
+
+        if (window->available != NULL) {
+            os_delete_semaphore(window->available);
+        }
+
+        if (window->room != NULL) {
+            os_delete_semaphore(window->room);
+        }
+
+        packet_window_unlock(window);
+    
         os_delete_mutex(window->lock);
+
+        free((void*) window);
     }
-
-    if (window->available != NULL) {
-        os_delete_semaphore(window->available);
-    }
-
-    if (window->room != NULL) {
-        os_delete_semaphore(window->room);
-    }
-
-    packet_window_unlock(window);
-
-    os_delete_mutex(window->lock);
-
-    free((void*) window);
 }
 
 
@@ -191,56 +219,62 @@ int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequ
     int results = -1;
     bool fail = false;
 
+    if (window != NULL) {
+
 ESP_LOGI(TAG, "%s: called with sequence %d of %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-    packet_window_lock(window);
+printf("%s: called with sequence %d of %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
+        packet_window_lock(window);
 
-    while (results < 0 && !fail) {
+        while (results < 0 && !fail) {
 
-        if (sequence >= window->sequence && sequence < window->sequence + window->length) {
+            if (sequence >= window->sequence && sequence < window->sequence + window->length) {
 
 ESP_LOGI(TAG, "%s: adding %d window %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
+printf("%s: adding %d window %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
 
-            int slot = sequence - window->sequence;
+                int slot = sequence - window->sequence;
 
-            /* if slot is already occupied, just say we did it */
-            if (! window->queue[slot].inuse) {
-                window->queue[slot].packet = packet;
-                window->queue[slot].sequence = sequence;
-                window->queue[slot].inuse = true;
-                window->num_in_queue++;
-                os_release_counting_semaphore(window->available);
+                /* if slot is already occupied, just say we did it */
+                if (! window->queue[slot].inuse) {
+                    window->queue[slot].packet = packet;
+                    window->queue[slot].sequence = sequence;
+                    window->queue[slot].inuse = true;
+                    window->num_in_queue++;
+                    os_release_counting_semaphore(window->available);
 
-                results = 0;
-            } else {
-                /* Packet already there - it must have the same sequence as expected */
-                assert(sequence == window->queue[slot].sequence);
-                /* Not using, so discard */
-                results = 1;
-            }
+                    results = 0;
+                } else {
+                    /* Packet already there - it must have the same sequence as expected */
+                    assert(sequence == window->queue[slot].sequence);
+                    /* Not using, so discard */
+                    results = 1;
+                }
 
-        /* If a timeout was specified, wait that amount and then try again but don't wait second time if not -1 */
-        } else if (timeout != 0) {
+            /* If a timeout was specified, wait that amount and then try again but don't wait second time if not -1 */
+            } else if (timeout != 0) {
 ESP_LOGI(TAG, "%s: no room for %d in %d to %d; waiting", __func__, sequence, window->sequence, window->sequence + window->length - 1);
+printf("%s: no room for %d in %d to %d; waiting...\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
 
-            /* No place for packet, so wait until room */
-            packet_window_unlock(window);
+                /* No place for packet, so wait until room */
+                packet_window_unlock(window);
 
-            /* Wait for something to release some room */
-            os_acquire_counting_semaphore_with_timeout(window->room, timeout);
+                /* Wait for something to release some room */
+                os_acquire_counting_semaphore_with_timeout(window->room, timeout);
 
-            /* Acquire the window and scan again */
-            packet_window_lock(window);
+                /* Acquire the window and scan again */
+                packet_window_lock(window);
 
-            /* Don't wait second time through if not a forever wait */
-            if (timeout > 0) {
-                timeout = 0;
+                /* Don't wait second time through if not a forever wait */
+                if (timeout > 0) {
+                    timeout = 0;
+                }
+            } else {
+                fail = true;
             }
-        } else {
-            fail = true;
         }
-    }
 
-    packet_window_unlock(window);
+        packet_window_unlock(window);
+    }
 
     return results;
 }
@@ -261,34 +295,36 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
 {
     bool ok = false;
 
-    do {
-        /* If shutdown is set when the queue is empty, return a NULL packet */
-        if (packet_window_is_window_shutdown(window) && window->num_in_queue == 0) {
-            *packet = NULL;
-            ok = true;
-        } else {
-            if (window->queue[0].packet == NULL) {
-                /* Wait for a release */
-                window->reader_busy = true;
-                os_acquire_counting_semaphore_with_timeout(window->available, timeout);
-                window->reader_busy = false;
-            }
-
-            packet_window_lock(window);
-
-            if (window->queue[0].inuse && window->queue[0].packet != NULL) {
-                *packet = window->queue[0].packet;
-                window->num_in_queue--;
-                packet_window_discard_top_packet(window);
+    if (window != NULL) {
+        do {
+            /* If shutdown is set when the queue is empty, return a NULL packet */
+            if (packet_window_is_window_shutdown(window) && window->num_in_queue == 0) {
+                *packet = NULL;
                 ok = true;
             } else {
-                ok = false;
+                if (window->queue[0].packet == NULL) {
+                    /* Wait for a release */
+                    window->reader_busy = true;
+                    os_acquire_counting_semaphore_with_timeout(window->available, timeout);
+                    window->reader_busy = false;
+                }
+
+                packet_window_lock(window);
+
+                if (window->queue[0].inuse && window->queue[0].packet != NULL) {
+                    *packet = window->queue[0].packet;
+                    window->num_in_queue--;
+                    packet_window_discard_top_packet(window);
+                    ok = true;
+                } else {
+                    ok = false;
+                }
+
+                packet_window_unlock(window);
             }
 
-            packet_window_unlock(window);
-        }
-
-    } while (!ok && timeout < 0);
+        } while (!ok && timeout < 0);
+    }
 
     return ok;
 }
@@ -304,17 +340,19 @@ bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int
  */
 int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], int num_packets)
 {
-    packet_window_lock(window);
-
     int packet_count = 0;
 
-    for (int slot = 0; slot < window->length && packet_count < num_packets; ++slot) {
-        if (window->queue[slot].inuse && window->queue[slot].packet != NULL) {
-            packets[packet_count++] = ref_packet(window->queue[slot].packet);
-        }
-    }
+    if (window != NULL) {
+        packet_window_lock(window);
 
-    packet_window_unlock(window);
+        for (int slot = 0; slot < window->length && packet_count < num_packets; ++slot) {
+            if (window->queue[slot].inuse && window->queue[slot].packet != NULL) {
+                packets[packet_count++] = ref_packet(window->queue[slot].packet);
+            }
+        }
+
+        packet_window_unlock(window);
+    }
 
     return packet_count;
 }
@@ -331,40 +369,50 @@ int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], 
  *                   corresponding to '*sequence' + 1 and so forth.
  *                   We skip sequence + 1, because had been in the queue,
  *                   the 'sequence' would be updated as well.
+ *
+ * Returns true if successful, other false to indicate window is shutdown.
  */
-void packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask)
+bool packet_window_get_processed_packets(packet_window_t *window, int *sequence, uint32_t *packet_mask)
 {
-    packet_window_lock(window);
+    bool ok = false;
 
-    int slot;
+    if (window != NULL) {
+        packet_window_lock(window);
 
-    bool done = false;
+        ok = true;
 
-    int window_sequence = window->sequence;
+        int slot;
 
-    /* Find first packet out of sequence and ack to include that */
-    for (slot = 0; !done && slot < window->length; ++slot) {
-        if (window->queue[slot].inuse) {
-            /* The sequence number of the packet must be the window sequence number + slot number */
-            assert(window->queue[slot].sequence == window_sequence);
-            window_sequence++;
-        } else {
-            done = true;
+        bool done = false;
+
+        int window_sequence = window->sequence;
+
+        /* Find first packet out of sequence and ack to include that */
+        for (slot = 0; !done && slot < window->length; ++slot) {
+            if (window->queue[slot].inuse) {
+                /* The sequence number of the packet must be the window sequence number + slot number */
+                assert(window->queue[slot].sequence == window_sequence);
+                window_sequence++;
+            } else {
+                done = true;
+            }
         }
+
+        *sequence = window_sequence;   /* Next *expected* sequence number */
+        *packet_mask = 0;
+
+        while (slot < window->length) {
+            if (window->queue[slot].inuse && window->queue[slot].packet == NULL) {
+                /* Bitmask of extra packets that have been removed */
+                *packet_mask |= (1 << (slot - 1));
+            }
+            ++slot;
+        }
+    
+        packet_window_unlock(window);
     }
 
-    *sequence = window_sequence;   /* Next *expected* sequence number */
-    *packet_mask = 0;
-
-    while (slot < window->length) {
-        if (window->queue[slot].inuse && window->queue[slot].packet == NULL) {
-            /* Bitmask of extra packets that have been removed */
-            *packet_mask |= (1 << (slot - 1));
-        }
-        ++slot;
-    }
-
-    packet_window_unlock(window);
+    return ok;
 }
 
 /* packet_window_release_processed_packets
@@ -379,80 +427,85 @@ void packet_window_get_processed_packets(packet_window_t *window, int *sequence,
  */
 int packet_window_release_processed_packets(packet_window_t *window, int sequence, uint32_t packet_mask)
 {
-    packet_window_lock(window);
+    if (window != NULL) {
 
-    /* Remove all directly acknowledged packets */
-    while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
-        window->num_in_queue--;
-        if (window->queue[0].packet != NULL) {
-            release_packet(window->queue[0].packet);
-            /* Keep available count correct */
-            assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
-        }
-        packet_window_discard_top_packet(window);
-    }
-
-    /* Release packets for all bits in the packet_mask */
-    for (int slot = 1; packet_mask != 0 && slot < window->length; ++slot) {
-        if ((packet_mask & 1) != 0) {
-            if (window->queue[slot].inuse) {
-                /* Release the packet to the pool */
-                window->num_in_queue--;
-                if (window->queue[slot].packet != NULL) {
-                    release_packet(window->queue[slot].packet);
-
-                    /* Count the packet as processed */
-                    window->queue[slot].packet = NULL;
-
-                    /* Remove from available count */
-                    assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
-                }
-            } else {
-                ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
-                         __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
+        packet_window_lock(window);
+    
+        /* Remove all directly acknowledged packets */
+        while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
+            window->num_in_queue--;
+            if (window->queue[0].packet != NULL) {
+                release_packet(window->queue[0].packet);
+                /* Keep available count correct */
+                assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
             }
+            packet_window_discard_top_packet(window);
         }
-        packet_mask >>= 1;
+    
+        /* Release packets for all bits in the packet_mask */
+        for (int slot = 1; packet_mask != 0 && slot < window->length; ++slot) {
+            if ((packet_mask & 1) != 0) {
+                if (window->queue[slot].inuse) {
+                    /* Release the packet to the pool */
+                    window->num_in_queue--;
+                    if (window->queue[slot].packet != NULL) {
+                        release_packet(window->queue[slot].packet);
+    
+                        /* Count the packet as processed */
+                        window->queue[slot].packet = NULL;
+    
+                        /* Remove from available count */
+                        assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
+                    }
+                } else {
+                    ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
+                             __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
+                }
+            }
+            packet_mask >>= 1;
+        }
+    
+        /* Now roll up all empty slots and adjust window counts */
+        /* Remove all directly acknowledged packets */
+        while (window->queue[0].inuse && window->queue[0].packet == NULL) {
+            packet_window_discard_top_packet(window);
+        }
+    
+        packet_window_unlock(window);
     }
-
-    /* Now roll up all empty slots and adjust window counts */
-    /* Remove all directly acknowledged packets */
-    while (window->queue[0].inuse && window->queue[0].packet == NULL) {
-        packet_window_discard_top_packet(window);
-    }
-
-    packet_window_unlock(window);
 
     return packet_window_packet_count(window);
 }
 
 void packet_window_shutdown_window(packet_window_t *window)
 {
-    window->shutdown = true;
+    if (window != NULL) {
+        window->shutdown = true;
 
-    /* Give it at least one more signal to wake up the output side */
-    os_release_counting_semaphore(window->available);
+        /* Give it at least one more signal to wake up the output side */
+        os_release_counting_semaphore(window->available);
+    }
 }
 
 bool packet_window_is_window_shutdown(packet_window_t *window)
 {
-    return window->shutdown;
+    return window ? window->shutdown : true;
 }
 
 int packet_window_packet_count(packet_window_t *window)
 {
-    return window->num_in_queue;
+    return window ? window->num_in_queue : 0;
 }
 
 /* The next available sequence number for outbound packets */
 int packet_window_next_sequence(packet_window_t *window)
 {
-    return window->sequence + packet_window_packet_count(window);
+    return window ? (window->sequence + packet_window_packet_count(window)) : 0;
 }
 
 bool packet_window_is_reader_busy(packet_window_t *window)
 {
-    return window->reader_busy;
+    return window ? window->reader_busy : false;
 }
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS

@@ -28,6 +28,7 @@ static inline bool simpletimer_is_stopped(simpletimer_t *timer);
 static inline bool simpletimer_is_running(simpletimer_t *timer);
 static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval);
+static inline void simpletimer_update(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_set_expired(simpletimer_t *timer);
 static inline void simpletimer_stop(simpletimer_t *timer);
 static inline bool simpletimer_is_expired(simpletimer_t *timer);
@@ -62,11 +63,20 @@ static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval)
 /*
  * Make sure the timer is set for at least <interval>.  Don't decrease if smaller.
  */
-static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval)
+static inline void simpletimer_update(simpletimer_t *timer, uint32_t interval)
 {
     if (!simpletimer_is_running(timer) || simpletimer_remaining(timer) < interval) {
         /* Increase to new interval */
         simpletimer_start(timer, interval);
+    }
+}
+
+static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval)
+{
+    if (!simpletimer_is_running(timer)) {
+        simpletimer_start(timer, interval);
+    } else {
+        timer->target += interval;
     }
 }
 

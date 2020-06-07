@@ -61,7 +61,7 @@ menu "LastLink Configuration"
         int "Activity (TRANSMIT) led GPIO"
         default 0
 
-    menu "Radio configuraation"
+    menu "Radio configuration"
         # Currently up to 8 radios
         RADIO_NUM:=1
         DEFAULT_RADIO_ENABLE=y
@@ -389,15 +389,26 @@ menu "LastLink Configuration"
         range 10 600
 
 
+#        config LASTLINK_STREAM_UPDATE_TIME_ENABLE
+#        depends on LASTLINK_ENABLE_SOCKET_LAYER
+#        bool "Enable sending ack for outstanding socket read"
+#        default false
+#        help
+#            This is a period for resending ACKS when a read on a socket
+#            is outstanding. 
+
         config LASTLINK_STREAM_UPDATE_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
+#        depends on LASTLINK_STREAM_UPDATE_TIME_ENABLE
         int "milliseconds to ACK input on outstanding read"
         default 1000
-        range 50 10000
+        range 50 30000
         help
-            This is a period for resending ACKS when a read on a socket
-            is outstanding. 
-
+            This is the period to retransmit ACKs for input window
+            that have a read-in-process and do not have a full window.
+            It is expressed in milliseconds, but is adjusted by the metric
+            delay to the originating node so as not to produce ACKS
+            faster than should be able to propagate through the network.
 
         config LASTLINK_SOCKET_LINGER_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER

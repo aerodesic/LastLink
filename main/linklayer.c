@@ -717,14 +717,6 @@ static const char* default_packet_format(const packet_t* packet)
     return info;
 }
 
-#ifdef NOTUSED
-int button_interrupts;
-static void test_button_handler(void* param)
-{
-    ++button_interrupts;
-}
-#endif
-
 os_queue_t linklayer_set_promiscuous_mode(bool mode) {
 
     if (mode) {
@@ -746,6 +738,67 @@ bool linklayer_set_debug(bool enable)
     bool old_debug = debug_flag;
     debug_flag = enable;
     return old_debug;
+}
+
+/*
+ * Set radio channel and datarate.
+ *
+ * If <radio> is <0 then set all radios.
+ *
+ * else set specific radio.
+ */
+bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate)
+{
+    bool ok = true;
+
+    if (radio_num < 0) {
+        int old_channel[NUM_RADIOS];
+        int old_datarate[NUM_RADIOS];
+
+        /* Read and save old values */
+        for (radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+            radio_t *radio = radio_table[radio_num];
+
+            if (radio != NULL) {
+                old_channel[radio_num] = radio->set_channel(radio, channel);
+                old_datarate[radio_num] = radio->set_datarate(radio, datarate);
+                ok = ok && old_channel[radio_num] >= 0 && old_datarate[radio_num] >= 0;
+            } else {
+                old_channel[radio_num] = -1;
+                old_datarate[radio_num] = -1;
+            }
+        }
+
+        if (!ok) {
+            /* Put back all that aren't -1 */
+            for (radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+                if (old_channel[radio_num] >= 0) {
+                    radio_table[radio_num]->set_channel(radio_table[radio_num], old_channel[radio_num]);
+                }
+                if (old_datarate[radio_num] >= 0) {
+                    radio_table[radio_num]->set_datarate(radio_table[radio_num], old_datarate[radio_num]);
+                }
+            }
+        }
+
+    /* Otherwise do a single rate */
+    } else if (radio_num >= 0 && radio_num < NUM_RADIOS) {
+        radio_t *radio = radio_table[radio_num];
+
+        int old_channel = radio->set_channel(radio, channel);
+        int old_datarate = radio->set_datarate(radio, datarate);
+
+        if (old_channel < 0) {
+            radio->set_channel(radio, old_channel);
+        }
+        if (old_datarate < 0) {
+            radio->set_datarate(radio, old_datarate);
+        }
+
+        ok = old_channel >= 0 && old_datarate >= 0;
+    }
+
+    return ok;
 }
 
 /*
@@ -802,8 +855,8 @@ ESP_LOGD(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
             }
 #endif
             if (ok) {
-                if (radio->set_channel(radio, config->channel)) {
-                    if (radio->set_datarate(radio, config->datarate)) {
+                if (radio->set_channel(radio, config->channel) >= 0) {
+                    if (radio->set_datarate(radio, config->datarate) >= 0) {
                         /* Put radio in active table. If no radio, create one. */
                         if (radio_table == NULL) {
                             /* Create radio table */
@@ -963,7 +1016,6 @@ void linklayer_route_packet(packet_t* packet)
         printf("packet is still queued\n");
     } else if (listen_only) {
         /* In listen-only mode, just discard sending packets */
-        release_packet(packet);
     } else {
         int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
 
@@ -1099,8 +1151,9 @@ void linklayer_route_packet(packet_t* packet)
 
                 if (get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS ||
                     get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
-                    /* Issue a random delay on each transmit request based on current node number */
-                    packet->delay = linklayer_node_address;
+
+                    /* Issue a random delay on each transmit request based on current node number and sequence number */
+                    packet->delay = linklayer_node_address + get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);;
 //ESP_LOGI(TAG, "%s: setting delay to %d", __func__, linklayer_node_address);
 //linklayer_print_packet("delayed", packet);
                 }
@@ -1263,57 +1316,62 @@ static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
                 /* we will process packets that are local (from us and to us but not broadcast)
                  * or not from us and not duplicate.
                  */
-                if (is_duplicate_packet(&duplicate_packets, packet)) {
-                    /* Duplicate */
-linklayer_print_packet("duplicate", packet);
-                } else if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
+                if ((routeto == linklayer_node_address && dest == linklayer_node_address) ||   /* Local packet */
                     ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS)
-                              && origin != linklayer_node_address && is_valid_address(sender))) {
+                              && origin != linklayer_node_address)) {
 
-                    bool handled = false;
+                    if (!is_valid_address(sender)) {
+                        /* Ignored */
+                    } else if (is_duplicate_packet(&duplicate_packets, packet)) {
+                        /* Duplicate */
+linklayer_print_packet("duplicate", packet);
+                    } else {
 
-                    /* Update route table */
-                    update_route(packet->radio_num,
-                                 origin,                                                               /* This is the destination */
-                                 get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
-                                 sender,                                                               /* Route to this node to send it */
-                                 origin,                                                               /* Route provided by this node */
-                                 get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
-                                 get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
-
-                    /* Try to process the packet by the protocol field */
-                    int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
-
-                    /* Is it a valid protocol? */
-                    if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
-                        /* Does it have a process function? */
-                        if (protocol_table[protocol].process != NULL) {
-                            ++packet_processed;  /* It is processed */
-
-                            /* Perform the processing and remember if we did something local */
-                            handled = protocol_table[protocol].process(ref_packet(packet));
-
+                        bool handled = false;
+    
+                        /* Update route table */
+                        update_route(packet->radio_num,
+                                     origin,                                                               /* This is the destination */
+                                     get_uint_field(packet, HEADER_METRIC, METRIC_LEN) + 1,                /* Metric is 1+ hops */
+                                     sender,                                                               /* Route to this node to send it */
+                                     origin,                                                               /* Route provided by this node */
+                                     get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
+                                     get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
+    
+                        /* Try to process the packet by the protocol field */
+                        int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
+    
+                        /* Is it a valid protocol? */
+                        if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
+                            /* Does it have a process function? */
+                            if (protocol_table[protocol].process != NULL) {
+                                ++packet_processed;  /* It is processed */
+    
+                                /* Perform the processing and remember if we did something local */
+                                handled = protocol_table[protocol].process(ref_packet(packet));
+    
+                            } else {
+                                linklayer_print_packet("NOT REGISTERED", packet);
+                                //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                                handled = true;
+                            }
                         } else {
-                            linklayer_print_packet("NOT REGISTERED", packet);
-                            //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
+                            linklayer_print_packet("BAD PROTOCOL", packet);
+                            //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
                             handled = true;
                         }
-                    } else {
-                        linklayer_print_packet("BAD PROTOCOL", packet);
-                        //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
-                        handled = true;
-                    }
-
-                    /* If the packet was not handled, see how to forward on */
-                    if (!handled) {
-                        /* If routed to this node, then send onward by routing or rebroadcasting */
-                        if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
-                            /* re-route if not broadcast */
-                            if (routeto != BROADCAST_ADDRESS) {
-                                set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+    
+                        /* If the packet was not handled, see how to forward on */
+                        if (!handled) {
+                            /* If routed to this node, then send onward by routing or rebroadcasting */
+                            if (routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS) {
+                                /* re-route if not broadcast */
+                                if (routeto != BROADCAST_ADDRESS) {
+                                    set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
+                                }
+    
+                                linklayer_route_packet_update_metric(ref_packet(packet));
                             }
-
-                            linklayer_route_packet_update_metric(ref_packet(packet));
                         }
                     }
                 }
@@ -1327,38 +1385,6 @@ ESP_LOGI(TAG, "%s: packet crc error; len %d bytes", __func__, packet->length);
         release_packet(touch_packet(packet));
     }
 }
-
-#if 0
-/*
- * linklayer_on_transmit.
- *
- * Called from the radio driver when it is ready to transmit another packet.
- *
- * Returns next packet to transmit or NULL if nothing available.
- */
-static packet_t* linklayer_on_transmit(radio_t* radio, bool first_packet)
-{
-    /* Pull packet from transmit queue and discard */
-    packet_t* packet = NULL;
-
-    if (first_packet) {
-        if (!os_peek_queue(radio->transmit_queue, (os_queue_item_t*) &packet)) {
-            packet = NULL;
-        }
-
-    } else if (os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t*) &packet, 0)) {
-        release_packet(packet);
-
-        /* Peek next packet to send */
-        if (!os_peek_queue(radio->transmit_queue, (os_queue_item_t*) &packet)) {
-            packet = NULL;
-        }
-    }
-
-    /* Return next packet to send or NULL if no more. */
-    return packet;
-}
-#endif
 
 static void linklayer_activity_indicator(radio_t* radio, bool active)
 {

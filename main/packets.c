@@ -441,12 +441,13 @@ void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *pac
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 typedef struct {
-    void*         address;
     void*         buffer;
     int           ref;
     int           queued;
+    const char    *direction;
     int           radio_num;
     int           length;
+    int           delay;
     bool          routed_callback;
     void*         routed_callback_data;
     int           routeto;
@@ -463,7 +464,7 @@ typedef struct {
 int print_packet_table(int argc, const char **argv)
 {
     if (argc == 0) {
-        show_help(argv[0], "", "Show packet table");
+        show_help(argv[0], "[ -a ] [ -d ]", "Show packet table");
     } else {
         int num_packets = 0;
 
@@ -472,12 +473,13 @@ int print_packet_table(int argc, const char **argv)
         if (packet_lock()) {
             /* Make a static copy of the table */
             while (num_packets < ELEMENTS_OF(table)) {
-                table[num_packets].address                  = &packet_table[num_packets];
                 table[num_packets].buffer                   = packet_table[num_packets].buffer;
                 table[num_packets].ref                      = packet_table[num_packets].ref;
                 table[num_packets].queued                   = packet_table[num_packets].queued;
+                table[num_packets].direction                = packet_table[num_packets].transmitted ? "Send" : "Recv";
                 table[num_packets].radio_num                = packet_table[num_packets].radio_num;
                 table[num_packets].length                   = packet_table[num_packets].length;
+                table[num_packets].delay                    = packet_table[num_packets].delay;
                 table[num_packets].routed_callback          = packet_table[num_packets].routed_callback != NULL;
                 table[num_packets].routed_callback_data     = packet_table[num_packets].routed_callback_data;
                 table[num_packets].routeto                  = get_uint_field(&packet_table[num_packets], HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
@@ -497,7 +499,16 @@ int print_packet_table(int argc, const char **argv)
             packet_unlock();
         }
 
-        bool all = argc > 1 && strcmp(argv[1], "-a") == 0;
+        bool all = false;
+        bool detail = false;
+        for (int arg = 1; arg < argc; ++arg) {
+            if (strcmp(argv[arg], "-a") == 0) {
+                all = true;
+            }
+            if (strcmp(argv[arg], "-d") == 0) {
+                detail = true;
+            }
+        }
 
         if (num_packets != 0) {
             bool header_printed = false;
@@ -506,20 +517,21 @@ int print_packet_table(int argc, const char **argv)
                 if (all || table[index].ref != 0) {
                     if (! header_printed) {
                         #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                        printf("Packet      Buffer      Ref  Queued  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
+                        printf("Buffer      Ref  Queued  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
                         #else
-                        printf("Packet      Buffer      Ref  Queued  Radio  Length  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
+                        printf("Buffer      Ref  Queued  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
                         #endif
                         header_printed = true;
                     }
                     #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                    printf("%-10p  %-10p  %-3d  %-5d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
-                            table[index].address,
+                    printf("%-10p  %-3d  %-6d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
                             table[index].buffer,
                             table[index].ref,
                             table[index].queued,
+                            table[index].direction,
                             table[index].radio_num,
                             table[index].length,
+                            table[index].delay,
                             table[index].routeto & 0xFFFF,
                             table[index].origin & 0xFFFF,
                             table[index].dest & 0xFFFF,
@@ -527,16 +539,17 @@ int print_packet_table(int argc, const char **argv)
                             table[index].protocol,
                             table[index].routed_callback ? "YES" : "NO",
                             table[index].routed_callback_data,
-                            table[index].last_referenced_filename,
+                            table[index].last_referenced_filename ? table[index].last_referenced_filename : "<NONE>",
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-10p  %-3d  %-5d  %-5d  %-6d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
-                            table[index].address,
+                    printf("%-10p  %-3d  %-6d  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
                             table[index].buffer,
                             table[index].ref,
                             table[index].queued,
+                            table[index].direction,
                             table[index].radio_num,
                             table[index].length,
+                            table[index].delay,
                             table[index].routeto & 0xFFFF,
                             table[index].origin & 0xFFFF,
                             table[index].dest & 0xFFFF,
