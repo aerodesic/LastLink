@@ -76,8 +76,7 @@
 // #define  STREAM_FLAGS_UNUSED_E         0x0E
 // #define  STREAM_FLAGS_UNUSED_F         0x0F
 #define   STREAM_FLAGS_ACKNUM             0x10   /* ACK Sequence number is present */
-#define   STREAM_FLAGS_EOF                0x20   /* No more data to collow */
-// #define  STREAM_FLAGS_UNUSED           0xC0   /* Unused flags */
+// #define  STREAM_FLAGS_UNUSED           0xE0   /* Unused flags */
 #define STREAM_SEQUENCE                (STREAM_FLAGS + FLAGS_LEN)
 #define STREAM_ACK_SEQUENCE            (STREAM_SEQUENCE + SEQUENCE_NUMBER_LEN)
 #define STREAM_ACK_WINDOW              (STREAM_ACK_SEQUENCE + SEQUENCE_NUMBER_LEN)
@@ -165,10 +164,12 @@ typedef struct ls_socket {
            packet_window_t         *output_window;
            int                     output_retries;
            int                     output_retry_time;
+           int                     output_last_sequence;       /* Last sequence number block transmitted */
            bool                    output_disconnect_on_error;
 
            simpletimer_t           socket_flush_timer;
            packet_t                *current_write_packet;
+           bool                    end_of_data;
         };
     };
 

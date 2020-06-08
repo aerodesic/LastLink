@@ -185,7 +185,7 @@ int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequ
 
                 int slot = sequence - window->sequence;
 
-                /* if slot is already occupied, just say we did it */
+                /* Put the packet into the window slot if not already in use */
                 if (! window->queue[slot].inuse) {
                     window->queue[slot].packet = ref_packet(packet);
                     window->queue[slot].sequence = sequence;

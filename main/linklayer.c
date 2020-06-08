@@ -449,7 +449,6 @@ static bool routeannounce_packet_process(packet_t* packet)
     bool handled = false;
 
     if (packet != NULL) {
-        //linklayer_print_packet("Route Announce", packet);
         if (route_table_lock()) {
             if (linklayer_packet_is_for_this_node(packet)) {
                 handled = true;
@@ -513,8 +512,6 @@ static bool routerequest_packet_process(packet_t* packet)
     bool handled = false;
 
     if (packet != NULL) {
-        //linklayer_print_packet("Route Request", p);
-
         if (linklayer_lock()) {
 
             /* TODO: Need may brakes to avoid transmitting too many at once !! (Maybe ok for testing) */
@@ -1019,11 +1016,13 @@ void linklayer_route_packet(packet_t* packet)
     } else {
         int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
 
+#ifdef NOTUSED
 #if 11111111111
         if (dest != BROADCAST_ADDRESS && dest > 6) {
             linklayer_print_packet("BAD DEST", packet);
         }
 #endif /* 11111111111 */
+#endif
 
         /*
          * A packet with a origin and destination is ready to transmit.
@@ -1081,9 +1080,9 @@ void linklayer_route_packet(packet_t* packet)
                     /* Queue with it's pending ownership */
                     route_put_pending_packet(route, packet);
 
-                    if (debug_flag) {
-                        linklayer_print_packet("Routing", packet);
-                    }
+//                    if (debug_flag) {
+//                        linklayer_print_packet("Routing", packet);
+//                    }
 
                     packet = NULL;
 
@@ -1154,12 +1153,11 @@ void linklayer_route_packet(packet_t* packet)
 
                     /* Issue a random delay on each transmit request based on current node number and sequence number */
                     packet->delay = linklayer_node_address + get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);;
-//ESP_LOGI(TAG, "%s: setting delay to %d", __func__, linklayer_node_address);
-//linklayer_print_packet("delayed", packet);
                 }
-//else linklayer_print_packet("not delayed", packet);
 
-//linklayer_print_packet("OUT", packet);
+if (debug_flag) {
+    linklayer_print_packet("OUT", packet);
+}
                 linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
@@ -1178,6 +1176,7 @@ void linklayer_route_packet_update_metric(packet_t* packet)
             set_uint_field(packet, HEADER_METRIC, METRIC_LEN, metric);
             linklayer_route_packet(packet);
         } else {
+
 linklayer_print_packet("METRIC EXPIRED", packet);
             release_packet(packet);
         }
@@ -1206,8 +1205,6 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         }
         release_packet(packet);
     } else {
-//ESP_LOGD(TAG, "%s: sending %p on radio %d", __func__, packet, radio_num);
-//linklayer_print_packet("transmit", packet);
         packet->queued++;
         if (os_put_queue(radio->transmit_queue, packet)) {
             radio->transmit_start(radio);
@@ -1283,7 +1280,9 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
  */
 static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
 {
-    //linklayer_print_packet("on_receive", packet);
+if (debug_flag) {
+    linklayer_print_packet("IN", packet);
+}
 
     if (packet != NULL) {
         packet_received += 1;
@@ -1500,6 +1499,7 @@ void linklayer_release_packets_in_queue(os_queue_t queue) {
     }
 }
 
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 static int linklayer_print_status(int argc, const char** argv)
 {
     if (argc == 0) {
@@ -1516,6 +1516,19 @@ static int linklayer_print_status(int argc, const char** argv)
     }
     return 0;
 }
+
+static int linklayer_debug_flag(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "0 / 1", "Set debug flag");
+    } else if (argc > 1) {
+        debug_flag = strtol(argv[1], NULL, 10);
+    } else {
+        printf("linklayer debug_flag %d\n", debug_flag);
+    }
+    return 0;
+}
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 /* Creates the linklayer */
 bool linklayer_init(int address, int flags, int announce)
@@ -1592,6 +1605,7 @@ bool linklayer_init(int address, int flags, int announce)
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("ll", linklayer_print_status);
+    add_command("ldb", linklayer_debug_flag);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;
@@ -1602,6 +1616,7 @@ bool linklayer_deinit(void)
 {
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     remove_command("ll");
+    remove_command("ldb");
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     if (linklayer_lock()) {

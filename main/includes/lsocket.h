@@ -50,9 +50,10 @@ typedef enum {
     LSE_CONNECT_REJECTED = -1012,
     LSE_NOT_WRITABLE     = -1013,
     LSE_SOCKET_BUSY      = -1014,
-    LSE_DISCONNECTING    = -1015,
-    LSE_NOT_CONNECTED    = -1016,
-    LSE_NOT_BOUND        = -1017,
+    LSE_DISCONNECTING    = -1015,    /* Is disconneting */
+    LSE_DISCONNECTED     = -1016,
+    LSE_NOT_CONNECTED    = -1017,    /* No connect() issued */
+    LSE_NOT_BOUND        = -1019,    /* No bind() issued */
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;
