@@ -101,7 +101,8 @@ typedef enum {
     LS_STATE_INBOUND_CONNECT,                    /* Inbound connect on listen socket received */
     LS_STATE_OUTBOUND_CONNECT,                   /* Outbound connect sent */
     LS_STATE_CONNECTED,                          /* Connected - bidirectional streams ready */
-    LS_STATE_DISCONNECTING_FLUSH,                /* Disconnecting but flush output first */
+    LS_STATE_DISCONNECTING_FLUSH_START,          /* Disconnecting but flush output first */
+    LS_STATE_DISCONNECTING_FLUSHING,             /* Disconnecting but flush output first - in progress */
     LS_STATE_INBOUND_DISCONNECTING,              /* Tearing down connection from external request */
     LS_STATE_OUTBOUND_DISCONNECTING,             /* Tearing down connection from internal request */
     LS_STATE_DISCONNECTED,                       /* Disconnected */

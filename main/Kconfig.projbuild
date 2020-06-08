@@ -164,7 +164,7 @@ menu "LastLink Configuration"
 
         config LASTLINK_NUM_PACKETS
             int "Number of available packets"
-            default 50
+            default 100
             help
                 This defines the number of packets available.  No additional
                 memory is allocated beyond this limit, so if you run out,

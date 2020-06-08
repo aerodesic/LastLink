@@ -230,22 +230,23 @@ static const char* socket_type_of(const ls_socket_t *socket)
 static const char* socket_state_of(const ls_socket_t *socket)
 {
     switch (socket->state) {
-        case LS_STATE_IDLE:                     return "IDLE";
-        case LS_STATE_INUSE:                    return "INUSE";
-        case LS_STATE_SOCKET:                   return "SOCKET";
-        case LS_STATE_BOUND:                    return "BOUND";
-        case LS_STATE_LISTENING:                return "LISTENING";
-        case LS_STATE_INBOUND_CONNECT:          return "INBOUND_CONNECT";
-        case LS_STATE_OUTBOUND_CONNECT:         return "OUTBOUND_CONNECT";
-        case LS_STATE_CONNECTED:                return "CONNECTED";
-        case LS_STATE_DISCONNECTING_FLUSH:      return "DISCONNECTING_FLUSH";
-        case LS_STATE_INBOUND_DISCONNECTING:    return "INBOUND_DISCONNECTING";
-        case LS_STATE_OUTBOUND_DISCONNECTING:   return "OUTBOUND_DISCONNECTING";
-        case LS_STATE_DISCONNECTED:             return "DISCONNECTED";
-        case LS_STATE_LINGER:                   return "LINGER";
-        case LS_STATE_CLOSING:                  return "CLOSING";
-        case LS_STATE_CLOSED:                   return "CLOSED";
-        default:                                return "UNKNOWN";
+        case LS_STATE_IDLE:                         return "IDLE";
+        case LS_STATE_INUSE:                        return "INUSE";
+        case LS_STATE_SOCKET:                       return "SOCKET";
+        case LS_STATE_BOUND:                        return "BOUND";
+        case LS_STATE_LISTENING:                    return "LISTENING";
+        case LS_STATE_INBOUND_CONNECT:              return "INBOUND_CONNECT";
+        case LS_STATE_OUTBOUND_CONNECT:             return "OUTBOUND_CONNECT";
+        case LS_STATE_CONNECTED:                    return "CONNECTED";
+        case LS_STATE_DISCONNECTING_FLUSH_START:    return "DISCONNECTING_FLUSH_START";
+        case LS_STATE_DISCONNECTING_FLUSHING:       return "DISCONNECTING_FLUSHING";
+        case LS_STATE_INBOUND_DISCONNECTING:        return "INBOUND_DISCONNECTING";
+        case LS_STATE_OUTBOUND_DISCONNECTING:       return "OUTBOUND_DISCONNECTING";
+        case LS_STATE_DISCONNECTED:                 return "DISCONNECTED";
+        case LS_STATE_LINGER:                       return "LINGER";
+        case LS_STATE_CLOSING:                      return "CLOSING";
+        case LS_STATE_CLOSED:                       return "CLOSED";
+        default:                                    return "UNKNOWN";
     }
 }
 
@@ -829,10 +830,8 @@ static bool stream_send_connect_ack(ls_socket_t *socket)
 
 static bool stream_send_disconnect(ls_socket_t *socket)
 {
-    /* Wait until output queue is empty before sending the disconnect */
-    if (socket->output_window != NULL && socket->output_window->num_in_queue == 0) {
-        linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT, 0));
-    }
+//printf("%s: sending DISCONNECT\n", __func__);
+    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT, 0));
     return false;
 }
 
@@ -895,11 +894,13 @@ static bool stream_packet_process(packet_t *packet)
                             simpletimer_start(&socket->ack_delay_timer, results < 0 ? 0 : CONFIG_LASTLINK_STREAM_ACK_DELAY);
                         }
 
+#ifdef NOTUSED
                         /* If eof condition, shutdown the window */
                         if (results == 0 && (flags & STREAM_FLAGS_EOF) != 0) {
                             /* This will shut down the reader when it rises to the top of the packet list */
                             packet_window_shutdown_window(socket->input_window);
                         }
+#endif
 
                         reject = false;
                     }
@@ -1020,7 +1021,10 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
                                             STREAM_DISCONNECT_RETRIES);
 
                             /* This will shut down the reader when it rises to the top of the packet list */
-                            //packet_window_shutdown_window(socket->input_window);
+                            packet_window_shutdown_window(socket->input_window);
+                        } else if (socket->state == LS_STATE_OUTBOUND_DISCONNECTING) {
+//printf("%s: OUTBOUND_DISCONNECTING received DISCONNECTED: sending to socket\n", __func__);
+                            send_state_machine_results(socket, LSE_NO_ERROR);
                         } else {
                             stream_send_disconnected(socket);
                         }
@@ -1385,7 +1389,7 @@ static void state_machine_timeout(ls_socket_t *socket)
 
         /* Timed out so retry by sending connect packet again (if still present) */
         if (socket->state_machine_action != NULL && socket->state_machine_action(socket)) {
-           send_state_machine_results(socket, LSE_NO_ERROR);
+            send_state_machine_results(socket, LSE_NO_ERROR);
         } else {
             simpletimer_restart(&socket->state_machine_timer);
         }
@@ -1723,17 +1727,22 @@ static bool send_output_window_from_state_machine(ls_socket_t *socket)
 {
     bool results;
 
-    if (socket->output_retries == 0) {
+    if (socket->state == LS_STATE_DISCONNECTING_FLUSH_START) {
         /*
          * Launch the send_output_window and monitor on each callback from state machine.
          * We run with disabled disconnect so it only tries to flush packets.
          */
         results = send_output_window(socket, /* disconnect_on_error */ false);
 
+        socket->state = LS_STATE_DISCONNECTING_FLUSHING;
     } else {
 
         /* Timed out - did we complete our task? */
-        results = packet_window_packet_count(socket->output_window);
+        int packets = packet_window_packet_count(socket->output_window);
+//printf("%s: packets remaining %d\n", __func__, packets);
+
+        /* Return true when no more packets */
+        results = packets == 0;
     }
 
     return results;
@@ -1745,12 +1754,7 @@ static bool send_output_window_from_state_machine(ls_socket_t *socket)
  * If the output window has packets, send them with the last packet
  * containing the ack information to previous input packets.
  *
- * If no packets are present, send nothing unless 'force_ack' is
- * set, in which case send a naked 'NOP' packet with only the
- * ack information set.
- *
- * In any case, if force_ack is set, do not set repeating attempts
- * to send packets.
+ * Returns true if no packets remain in output.
  */
 static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 {
@@ -1845,7 +1849,7 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
         packet_window_unlock(socket->output_window);
     }
 
-    return num_packets;
+    return num_packets == 0;
 }
 
 /*
@@ -2237,6 +2241,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                     socket->state = LS_STATE_CLOSING;
 
                 } else {
+#ifdef NOTUSED
                     if (socket->current_write_packet == NULL) {
                         socket->current_write_packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DATA, 0);
                     }
@@ -2245,12 +2250,13 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                         /* Mark this packet as EOF */
                         set_bits_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN, STREAM_FLAGS_EOF);
                     }
+#endif
 
                     UNLOCK_SOCKET(socket);
-                    bool ok = socket_flush_current_packet(socket, /*wait*/ true);
+                    bool flush_needed = socket_flush_current_packet(socket, /*wait*/ true);
                     LOCK_SOCKET(socket);
 
-                    if (ok) {
+                    if (flush_needed) {
                         /*
                          * More work so flush the output window
                          * This starts a send_output_window and posts a results
@@ -2260,7 +2266,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                         socket->output_retries = 0;
 
                         start_state_machine(socket,
-                                        LS_STATE_DISCONNECTING_FLUSH,
+                                        LS_STATE_DISCONNECTING_FLUSH_START,
                                         send_output_window_from_state_machine,
                                         NULL,  /* Results back to state_machine_results */
                                         STREAM_FLUSH_TIMEOUT,
@@ -2268,21 +2274,29 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
 
                         UNLOCK_SOCKET(socket);
                         err = get_state_machine_results(socket);
+//printf("%s: Received flush response: %d\n", __func__, err);
                         LOCK_SOCKET(socket);
                     }
 
-                    start_state_machine(socket,
-                                        LS_STATE_OUTBOUND_DISCONNECTING,
-                                        stream_send_disconnect,
-                                        NULL,  /* Results back to state_machine_results */
-                                        STREAM_DISCONNECT_TIMEOUT,
-                                        STREAM_DISCONNECT_RETRIES);
+                    /* If generating the disconnect first */ 
+                    if (socket->state != LS_STATE_INBOUND_DISCONNECTING) {
+                        
+                        start_state_machine(socket,
+                                            LS_STATE_OUTBOUND_DISCONNECTING,
+                                            stream_send_disconnect,
+                                            NULL,  /* Results back to state_machine_results */
+                                            STREAM_DISCONNECT_TIMEOUT,
+                                            STREAM_DISCONNECT_RETRIES);
 
-                    UNLOCK_SOCKET(socket);
-                    err = get_state_machine_results(socket);
-                    LOCK_SOCKET(socket);
+                        UNLOCK_SOCKET(socket);
+                        err = get_state_machine_results(socket);
+//printf("Received disconnect ack: %d\n", err);
+                        LOCK_SOCKET(socket);
+                    }
 
                     packet_window_shutdown_window(socket->output_window);
+
+//printf("Starting linger\n");
 
                     /* Start a linger to leave socket intact for a short while */
                     start_state_machine(socket,
@@ -2291,8 +2305,6 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                                         socket_linger_finish,
                                         CONFIG_LASTLINK_SOCKET_LINGER_TIME,
                                         5);
-
-                    // socket->state = LS_STATE_CLOSED;
                 }
                 break;
             }

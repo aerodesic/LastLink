@@ -25,7 +25,7 @@
  * affects how often we *check* the results.
  */
 #define STREAM_FLUSH_TIMEOUT     500    /* .5 seconds */
-#define STREAM_FLUSH_RETRIES     60     /* 30 seconds worth */
+#define STREAM_FLUSH_RETRIES     120    /* 60 seconds worth */
 
 #define STREAM_DISCONNECT_TIMEOUT 5000  /* 5 seconds */
 #define STREAM_DISCONNECT_RETRIES 5
