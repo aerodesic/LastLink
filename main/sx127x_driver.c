@@ -25,6 +25,10 @@
 #include "linklayer.h"
 #include "simpletimer.h"
 
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+#include "commands.h"
+#endif
+
 #ifdef CONFIG_LASTLINK_CRC16_PACKETS
 #include "crc16.h"
 #endif
@@ -60,6 +64,10 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 #ifdef USE_FHSS
 static void fhss_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 #endif /* USE_FHSS */
+
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+void print_status(radio_t *radio);
+#endif
 
 static void tx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data);
 static void transmit_start(radio_t *radio);
@@ -98,7 +106,7 @@ typedef enum {
     HS_WAIT_TX_INT,           /* Wait for TX to finish */
 } handler_state_t;
 
-#ifdef DISPLAY_HANDLER_STATE
+#if defined(CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS) || defined(DISPLAY_HANDLER_STATE)
 inline const char *handler_state_of(handler_state_t state)
 {
     switch (state) {
@@ -208,6 +216,9 @@ bool sx127x_create(radio_t* radio)
         radio->stop             = radio_stop;
         radio->set_sleep_mode   = set_sleep_mode;
         radio->set_standby_mode = set_standby_mode;
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+        radio->print_status     = print_status;
+#endif
 #if SX127x_RECEIVE_MODE == SX127x_MODE_CAD_DETECTION
         radio->set_receive_mode = set_cad_detect_mode;
 #else
@@ -1402,6 +1413,43 @@ static void catch_interrupt(void *param)
         portYIELD_FROM_ISR();
     }
 }
+
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+void print_status(radio_t *radio)
+{
+    if (acquire_lock(radio)) {
+        sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+        printf("Transmit queue length:  %d\n", os_items_in_queue(radio->transmit_queue));
+        printf("Waiting output:         %s\n", data->current_packet ? "YES" : "NO");
+        printf("sync_word:              %02x\n", data->sync_word);
+        printf("preamble_length:        %d\n", data->preamble_length);
+        printf("coding_rate:            %d\n", data->coding_rate);
+        printf("implicit_header:        %s\n", data->implicit_header ? "YES" : "NO");
+        printf("hop_period:             %d\n", data->hop_period);
+        printf("enable_crc:             %s\n", data->enable_crc ? "YES" : "NO");
+        printf("channel:                %d\n", data->channel);
+        printf("datarate:               %d\n", data->datarate);
+        printf("bandwidth:              %d\n", data->bandwidth);
+        printf("spreading_factor:       %d\n", data->spreading_factor);
+        printf("tx_power:               %d\n", data->tx_power);
+        printf("rx_interrupts:          %d\n", data->rx_interrupts);
+        printf("tx_interrupts:          %d\n", data->tx_interrupts);
+#ifdef USE_FHSS
+        printf("fhss_interrupts:        %d\n", data->fhss_interrupts);
+#endif /* USE_FHSS */
+        printf("packet_memory_failed:   %d\n", data->packet_memory_failed);
+        printf("packet_crc_errors:      %d\n", data->packet_crc_errors);
+#if SX127x_RECEIVE_MODE == SX127x_MODE_CAD_DETECTION
+        printf("receive_busy:           %s\n", data->receive_busy ? "YES" : "NO");
+#endif
+        printf("irq_flags:              %02x\n", data->irq_flags);
+        printf("handler_state:          %s\n", handler_state_of(data->handler_state));
+
+        release_lock(radio);
+    }
+}
+#endif
 
 #endif
 

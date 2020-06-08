@@ -51,13 +51,15 @@ typedef enum {
     LSE_NOT_WRITABLE     = -1013,
     LSE_SOCKET_BUSY      = -1014,
     LSE_DISCONNECTING    = -1015,
-    LSE_NOT_BOUND        = -1016,
+    LSE_NOT_CONNECTED    = -1016,
+    LSE_NOT_BOUND        = -1017,
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;
 
 typedef enum {
-    LS_UNKNOWN = 0,   /* Unknown */
+    LS_UNUSED = 0,    /* Not currently in use */
+    LS_INUSE,         /* In use but not assigned a type yet */
     LS_DATAGRAM,      /* Receiving/transmitting datagrams */
     LS_STREAM,        /* Receiving/transmitting streams */
 } ls_socket_type_t;

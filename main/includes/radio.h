@@ -126,6 +126,9 @@ typedef struct radio {
     //bool (*transmit_packet)(radio_t* radio, packet_t* packet);
     void (*transmit_start)(radio_t* radio);
 
+#if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+    void (*print_status)(radio_t* radio);
+#endif
 } radio_t;
 
 #endif /* __radio_h_include */

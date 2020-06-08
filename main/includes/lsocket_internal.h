@@ -68,7 +68,7 @@
  */
 #define   STREAM_FLAGS_CMD_REJECT         0x07   /* Reject - something's wrong */
 // #define  STREAM_FLAGS_UNUSED_8         0x08
-// #define  STREAM_FLAGS_UNUSED_9         0x09
+// #define  STREAM_FLAGS_UNUSED_8         0x09
 // #define  STREAM_FLAGS_UNUSED_A         0x0A
 // #define  STREAM_FLAGS_UNUSED_B         0x0B
 // #define  STREAM_FLAGS_UNUSED_C         0x0C
@@ -76,7 +76,8 @@
 // #define  STREAM_FLAGS_UNUSED_E         0x0E
 // #define  STREAM_FLAGS_UNUSED_F         0x0F
 #define   STREAM_FLAGS_ACKNUM             0x10   /* ACK Sequence number is present */
-// #define  STREAM_FLAGS_UNUSED           0xE0   /* Unused flags */
+#define   STREAM_FLAGS_EOF                0x20   /* No more data to collow */
+// #define  STREAM_FLAGS_UNUSED           0xC0   /* Unused flags */
 #define STREAM_SEQUENCE                (STREAM_FLAGS + FLAGS_LEN)
 #define STREAM_ACK_SEQUENCE            (STREAM_SEQUENCE + SEQUENCE_NUMBER_LEN)
 #define STREAM_ACK_WINDOW              (STREAM_ACK_SEQUENCE + SEQUENCE_NUMBER_LEN)

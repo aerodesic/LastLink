@@ -42,7 +42,7 @@ typedef struct service_cache {
     service_cache_t   *next;
     service_cache_t   *prev;
 
-    /* This is the socket type of the service.  If LS_UNKNOWN, then this is a pending service lookup entry */
+    /* This is the socket type of the service.  If LS_UNUSED, then this is a pending service lookup entry */
     ls_socket_type_t  socket_type;
 
     /* Node address with service */
@@ -142,7 +142,7 @@ static service_cache_t *create_service_by_name(const char* name)
 
         if (service != NULL) {
             service->address = NULL_ADDRESS;
-            service->socket_type = LS_UNKNOWN;
+            service->socket_type = LS_UNUSED;
             service->port = 0;
 
             add_service(service);
@@ -254,6 +254,8 @@ ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t
                             int port;
 
                             ret = ls_read_with_address(socket, (void*) &answer, sizeof(answer), &address, &port, SERVICE_NAMES_REPLY_TIMEOUT);
+//printf("%s: service read returned %d\n", __func__, ret);
+
 //ESP_LOGI(TAG, "%s: ls_read_with_address returned %d", __func__, ret);
                             if (ret == sizeof(answer)) {
                                 ret = LSE_NO_ERROR;
@@ -269,9 +271,9 @@ ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t
                                 } else {
                                     ret = LSE_NO_MEM;
                                 }
-                            } else {
-                                ret = LSE_CONNECT_FAILED;
                             }
+                        // } else {
+                            //printf("service 'write' returned %d\n", ret);
                         }
                     } while (ret != LSE_NO_ERROR && --tries != 0);
                 }

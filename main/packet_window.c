@@ -26,39 +26,6 @@
 #define TAG "packet_window"
 
 #ifdef PACKET_WINDOW_LOCKING_DEBUG
-#if 1
-bool packet_window_lock_debug(packet_window_t *window, const char *file, int line)
-{
-    /* Try without waiting */
-    bool ok = os_acquire_recursive_mutex_with_timeout(window->lock, 0);
-    if (!ok) {
-        /* Didn't get it, so go ahead and wait and show message */
-        printf("%s: **********************************************************************\n", __func__);
-        printf("%s: waiting for window lock [%s:%d] count %d; last locked at %s:%d\n", __func__,
-               file, line, window->lock_count, window->last_lock_file ? window->last_lock_file : "<NULL>", window->last_lock_line);
-        printf("%s: **********************************************************************\n", __func__);
-        ok = os_acquire_recursive_mutex(window->lock);
-        window->lock_count++;
-        printf("%s: **********************************************************************\n", __func__);
-        printf("%s: got window lock\n", __func__);
-        printf("%s: **********************************************************************\n", __func__);
-    }
-
-    if (ok) {
-        window->last_lock_file = file;
-        window->last_lock_line = line;
-    }
-
-    return ok;
-}
-bool packet_window_unlock_debug(packet_window_t *window, const char *file, int line)
-{
-    (void) file;
-    (void) line;
-    return os_release_recursive_mutex(window->lock);
-    window->lock_count--;
-}
-#else
 bool packet_window_lock_debug(packet_window_t *window, const char *file, int line)
 {
     /* Try without waiting */
@@ -90,7 +57,6 @@ bool packet_window_unlock_debug(packet_window_t *window, const char *file, int l
     return os_release_recursive_mutex(window->lock);
 }
 #endif
-#endif
 
 /* Return number of slots discarded */
 static int packet_window_discard_top_packet(packet_window_t *window)
@@ -100,18 +66,12 @@ static int packet_window_discard_top_packet(packet_window_t *window)
     if (window != NULL) {
 
         assert(window->queue[0].inuse);
-
-ESP_LOGI(TAG, "%s: removing packet %d", __func__, window->queue[0].sequence);
-printf("%s: removing packet %d\n", __func__, window->queue[0].sequence);
-
         /*
          * Move up list of packets to overright the top item.
          * Continue the process for all NULL but 'inuse' placeholders until we run into a
          * active packet or the end of list list.
          */
         do {
-printf("%s: removing sequence %d %s\n", __func__, window->queue[0].sequence, window->queue[0].packet ? "packet" : "hole");
-
             memcpy(window->queue, window->queue + 1, sizeof(window->queue[0]) * (window->length - 1));
             window->queue[window->length -  1].packet = NULL;
             window->queue[window->length -  1].inuse = false;
@@ -122,10 +82,6 @@ printf("%s: removing sequence %d %s\n", __func__, window->queue[0].sequence, win
 
             /* Adjust to the first sequence number in the list */
             window->sequence++;
-
-if (window->queue[0].inuse) {
-    printf("%s: top element is sequence %d; window sequence is %d\n", __func__, window->queue[0].sequence, window->sequence);
-}
 
         } while (window->queue[0].inuse && window->queue[0].packet == NULL);
 
@@ -221,22 +177,17 @@ int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequ
 
     if (window != NULL) {
 
-ESP_LOGI(TAG, "%s: called with sequence %d of %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-printf("%s: called with sequence %d of %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
         packet_window_lock(window);
 
         while (results < 0 && !fail) {
 
             if (sequence >= window->sequence && sequence < window->sequence + window->length) {
 
-ESP_LOGI(TAG, "%s: adding %d window %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-printf("%s: adding %d window %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-
                 int slot = sequence - window->sequence;
 
                 /* if slot is already occupied, just say we did it */
                 if (! window->queue[slot].inuse) {
-                    window->queue[slot].packet = packet;
+                    window->queue[slot].packet = ref_packet(packet);
                     window->queue[slot].sequence = sequence;
                     window->queue[slot].inuse = true;
                     window->num_in_queue++;
@@ -252,8 +203,6 @@ printf("%s: adding %d window %d to %d\n", __func__, sequence, window->sequence, 
 
             /* If a timeout was specified, wait that amount and then try again but don't wait second time if not -1 */
             } else if (timeout != 0) {
-ESP_LOGI(TAG, "%s: no room for %d in %d to %d; waiting", __func__, sequence, window->sequence, window->sequence + window->length - 1);
-printf("%s: no room for %d in %d to %d; waiting...\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
 
                 /* No place for packet, so wait until room */
                 packet_window_unlock(window);
@@ -415,7 +364,8 @@ bool packet_window_get_processed_packets(packet_window_t *window, int *sequence,
     return ok;
 }
 
-/* packet_window_release_processed_packets
+/*
+ * packet_window_release_processed_packets
  *
  *  Release and trim queue for all packets processed.
  *
@@ -551,6 +501,7 @@ void packet_window_receiver(void *param)
             for (int n = 0; n < num; ++n) {
                 if (packets[n] != NULL) {
                     ESP_LOGI(TAG, "%s: packet %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                    release_packet(packets[n]);
                 } else {
                     ESP_LOGI(TAG, "%s: slot %d is empty", __func__, n);
                 }
@@ -585,6 +536,7 @@ void packet_window_transmitter(void *param)
         for (int n = 0; n < num; ++n) {
             if (packets[n] != NULL) {
                 ESP_LOGI(TAG, "%s: packet %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                release_packet(packets[n]);
             } else {
                 ESP_LOGI(TAG, "%s: packet %d is NULL", __func__, n);
             }
@@ -617,6 +569,7 @@ void packet_window_transmitter(void *param)
             for (int n = 0; n < num; ++n) {
                 if (packets[n] != NULL) {
                     ESP_LOGI(TAG, "%s: slot %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                    release_packet(packets[n]);
                 } else {
                     ESP_LOGI(TAG, "%s: slot %d is empty", __func__, n);
                 }
@@ -664,12 +617,6 @@ int run_packet_window_test(int argc, const char **argv)
                 set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, STREAM_PROTOCOL);
                 set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
                 packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", sequence);
-
-                if (sequential) {
-                    ESP_LOGE(TAG, "%s: inserting packet %d", __func__, sequence);
-                } else {
-                    ESP_LOGI(TAG, "%s: inserting packet %d", __func__, sequence);
-                }
 
                 if (!packet_window_add_packet(window, packet, sequence, /* timeout */ -1)) {
                     ESP_LOGI(TAG, "%s: failed to insert %d", __func__, sequence);

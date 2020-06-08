@@ -1013,7 +1013,7 @@ void linklayer_route_packet(packet_t* packet)
     if (packet == NULL) {
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
     } else if (packet->queued != 0) {
-        printf("packet is still queued\n");
+        //printf("packet is still queued\n");
     } else if (listen_only) {
         /* In listen-only mode, just discard sending packets */
     } else {
@@ -1324,7 +1324,7 @@ static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
                         /* Ignored */
                     } else if (is_duplicate_packet(&duplicate_packets, packet)) {
                         /* Duplicate */
-linklayer_print_packet("duplicate", packet);
+//linklayer_print_packet("duplicate", packet);
                     } else {
 
                         bool handled = false;
@@ -1500,12 +1500,19 @@ void linklayer_release_packets_in_queue(os_queue_t queue) {
     }
 }
 
-static int linklayer_print_lock_status(int argc, const char** argv)
+static int linklayer_print_status(int argc, const char** argv)
 {
     if (argc == 0) {
-        show_help(argv[0], "", "Print linklayer lock status");
+        show_help(argv[0], "", "Print linklayer status");
     } else {
         printf("linklayer_lock: %s\n", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
+        /* Print radio status */
+        for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+            if (radio_table[radio_num] != NULL) {
+                radio_t *radio = radio_table[radio_num];
+                radio->print_status(radio);
+            }
+        }
     }
     return 0;
 }
@@ -1584,7 +1591,7 @@ bool linklayer_init(int address, int flags, int announce)
 
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("ll", linklayer_print_lock_status);
+    add_command("ll", linklayer_print_status);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;

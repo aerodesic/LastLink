@@ -445,6 +445,100 @@ static int ps_command(int argc, const char **argv)
     return 0;
 }
 
+typedef struct spawn_param {
+    int (*command)(int argc, const char** argv);
+    const char **argv;
+    int argc;
+} spawn_param_t;
+
+/*
+ * Helper thread for spawn command
+ */
+void spawn_thread(void *param)
+{
+    spawn_param_t *spawn_params = (spawn_param_t*) param;
+
+    // printf("spawn_thread started\n");
+    // for (int arg = 0; arg < spawn_params->argc + 1; ++arg) {
+    //     printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
+    // }
+
+    int results = spawn_params->command(spawn_params->argc, spawn_params->argv);
+    
+    printf("%s: exit with %d\n", spawn_params->argv[0], results);
+
+    /* All parameters are added to end of spawn_params, so they get free'd as well */
+    free((void*) spawn_params);
+
+    os_exit_thread();
+}
+
+/*
+ * Spawn another command to run in the background
+ */
+int spawn_command(int argc, const char **argv)
+{
+    int results = 0;
+
+    if (argc == 0) {
+        show_help(argv[0], "<command> <params>...", "spawn command as background thread");
+    } else if (argc < 2) {
+        printf("Insufficient args\n");
+    } else {
+        command_entry_t *command = find_command(argv[1]);
+        if (command == NULL) {
+            printf("command '%s' not found\n", argv[1]);
+        } else {
+            /* Compute length of param table */
+
+            /* Room needed for argv array */
+            int argv_length = argc * sizeof(const char*); /* Room for all args + 1 for NULL */
+            int args_length = 0;
+            int arg;
+
+            for (arg = 1; arg < argc; ++arg)  {
+                args_length += strlen(argv[arg]) + 1;
+            }
+
+            // printf("Allocating spawn_params + %d bytes for table and %d bytes for strings\n", argv_length, args_length);
+
+            spawn_param_t *spawn_params = (spawn_param_t*) malloc(sizeof(spawn_param_t) + argv_length + args_length);
+
+            /* Point to command */
+            spawn_params->command = command->function;
+
+            /* Point to table at end of spawn_params */
+            spawn_params->argv = (const char **) (spawn_params + 1);
+
+            /* Number of args - 1 from spawn  command */
+            spawn_params->argc = argc - 1;
+
+            /* Where the parameter strings go */
+            char *params = (char*) (spawn_params->argv + argc - 1);
+
+            for (arg = 1; arg < argc; ++arg) {
+                /* Copy strings of params */
+                int len = strlen(argv[arg]);
+                strcpy(params, argv[arg]);
+                spawn_params->argv[arg - 1] = (const char*) params;
+                params += len;
+                *params++ = '\0';
+            }
+
+            spawn_params->argv[arg - 1] = NULL;  /* Last argv is a NULL */
+
+            // for (arg = 0; arg < spawn_params->argc + 1; ++arg) {
+            //     printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
+            // }
+
+            /* Spawn with name of command */
+            os_create_thread(spawn_thread, argv[1], 8192, 0, (void*) spawn_params);
+        }
+    }
+
+    return results;
+}
+
 void CommandProcessor(void* params)
 {
     if (params != NULL) {
@@ -568,6 +662,7 @@ void init_commands(void)
     add_command("ps",         ps_command);
     add_command("kill",       kill_command);
     add_command("time",       time_command);
+    add_command("spawn",      spawn_command);
 
     os_release_recursive_mutex(command_lock);
 }
