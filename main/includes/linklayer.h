@@ -14,37 +14,38 @@
 #include "esp_vfs.h"
 
 #ifdef CONFIG_LWIP_MAX_SOCKETS
-#define LAST_LASTLINK_FD               ((MAX_FDS)-(CONFIG_LWIP_MAX_SOCKETS)-1)
+#define LAST_LASTLINK_FD                   ((MAX_FDS)-(CONFIG_LWIP_MAX_SOCKETS)-1)
 #else
-#define LAST_LASTLINK_FD               ((MAX_FDS)-1)
+#define LAST_LASTLINK_FD                   ((MAX_FDS)-1)
 #endif
 
-#define FIRST_LASTLINK_FD              (LAST_LASTLINK_FD - CONFIG_LASTLINK_NUMBER_OF_SOCKETS)
+#define FIRST_LASTLINK_FD                  (LAST_LASTLINK_FD - CONFIG_LASTLINK_NUMBER_OF_SOCKETS)
 
 /* Default values for some entries */
-#define ROUTE_LIFETIME                 CONFIG_LASTLINK_ROUTE_LIFETIME
-#define MAX_ROUTES                     CONFIG_LASTLINK_MAX_ROUTES
-#define NUM_PACKETS                    CONFIG_LASTLINK_NUM_PACKETS
-#define ANNOUNCE_INTERVAL_DEFAULT      CONFIG_LASTLINK_ANNOUNCE_INTERVAL
-#define ROUTEREQUEST_TIMEOUT           CONFIG_LASTLINK_ROUTEREQUEST_TIMEOUT
-#define ROUTEREQUEST_RETRIES           CONFIG_LASTLINK_ROUTEREQUEST_RETRIES
+#define ROUTE_LIFETIME                     CONFIG_LASTLINK_ROUTE_LIFETIME
+#define MAX_ROUTES                         CONFIG_LASTLINK_MAX_ROUTES
+#define NUM_PACKETS                        CONFIG_LASTLINK_NUM_PACKETS
+#define ANNOUNCE_INTERVAL_DEFAULT          CONFIG_LASTLINK_ANNOUNCE_INTERVAL
+#define ROUTEREQUEST_TIMEOUT               CONFIG_LASTLINK_ROUTEREQUEST_TIMEOUT
+#define ROUTEREQUEST_RETRIES               CONFIG_LASTLINK_ROUTEREQUEST_RETRIES
 
-#define UNDEFINED_SEQUENCE_NUMBER      0
-#define NO_HOST_FLAGS                  0
+#define UNDEFINED_SEQUENCE_NUMBER          0
+#define NO_HOST_FLAGS                      0
 
-#define PROTOCOL_LEN                   CONFIG_LASTLINK_PROTOCOL_LENGTH
-#define FLAGS_LEN                      CONFIG_LASTLINK_FLAGS_LENGTH
-#define ADDRESS_LEN                    CONFIG_LASTLINK_ADDRESS_LENGTH
-#define BROADCAST_ADDRESS              CONFIG_LASTLINK_BROADCAST_ADDRESS
-#define NULL_ADDRESS                   CONFIG_LASTLINK_NULL_ADDRESS
-#define SEQUENCE_NUMBER_LEN            CONFIG_LASTLINK_SEQUENCE_NUMBER_LENGTH
-#define INTERVAL_LEN                   CONFIG_LASTLINK_INTERVAL_LENGTH
-#define MAX_METRIC                     CONFIG_LASTLINK_MAX_METRIC
-#define METRIC_LEN                     CONFIG_LASTLINK_METRIC_LENGTH
-#define BEACON_NAME_LEN                CONFIG_LASTLINK_BEACON_NAME_LENGTH
-#define REASON_LEN                     CONFIG_LASTLINK_REASON_LENGTH
-#define SOCKET_TYPE_LEN                1
-#define PORT_NUMBER_LEN                2
+#define PROTOCOL_LEN                       CONFIG_LASTLINK_PROTOCOL_LENGTH
+#define FLAGS_LEN                          CONFIG_LASTLINK_FLAGS_LENGTH
+#define ADDRESS_LEN                        CONFIG_LASTLINK_ADDRESS_LENGTH
+#define BROADCAST_ADDRESS                  CONFIG_LASTLINK_BROADCAST_ADDRESS
+#define NULL_ADDRESS                       CONFIG_LASTLINK_NULL_ADDRESS
+#define SEQUENCE_NUMBER_LEN                CONFIG_LASTLINK_SEQUENCE_NUMBER_LENGTH
+#define SEQUENCE_NUMBER_DUPLICATE_RANGE    CONFIG_LASTLINK_SEQUENCE_NUMBER_DUPLICATE_RANGE
+#define INTERVAL_LEN                       CONFIG_LASTLINK_INTERVAL_LENGTH
+#define MAX_METRIC                         CONFIG_LASTLINK_MAX_METRIC
+#define METRIC_LEN                         CONFIG_LASTLINK_METRIC_LENGTH
+#define BEACON_NAME_LEN                    CONFIG_LASTLINK_BEACON_NAME_LENGTH
+#define REASON_LEN                         CONFIG_LASTLINK_REASON_LENGTH
+#define SOCKET_TYPE_LEN                    1
+#define PORT_NUMBER_LEN                    2
 
 /*******************************************************************************************
  *                                                                                         *
@@ -53,7 +54,7 @@
  *******************************************************************************************/
 #define HEADER_ROUTETO_ADDRESS         0                                              // Node to receive packet
 #define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)         // Flags from origin.
-#define  HEADER_FLAGS_RANDOMIZE_REPLY  0x80                                           // Causes returns to be randomized in time
+#define  HEADER_FLAGS_RESET_SEQUENCE   0x80                                           // Causes local sequence number pool to be discarded
 #define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)                     // Original sender
 #define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)          // Final destination
 #define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)            // Last sender

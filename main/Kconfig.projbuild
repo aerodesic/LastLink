@@ -141,16 +141,11 @@ menu "LastLink Configuration"
             help
                 Select one of the channel table files
 
-        # config LASTLINK_ENABLE_OPPORTUNISTIC_ROUTES
-        #    bool "Create opportunistic routes"
-        #    default true
-        #    help
-        #        When a packet is received, capture a provisional route
-        #        to the SOURCE via the SENDER, marking with invalid
-        #        SEQUENCE and impossibly high METRIC.
+    endmenu
 
+    menu "Additional Applications"
         source "main/Kconfig.service_names"
-
+        source "main/Kconfig.ftp"
     endmenu
 
     menu "Packet Configuration"
@@ -228,6 +223,16 @@ menu "LastLink Configuration"
             range 1 4
             help
                 The number of bytes in a SEQUENCE_NUMBER field.
+
+        config LASTLINK_SEQUENCE_NUMBER_DUPLICATE_RANGE
+            int "Sequence number duplicate range"
+            default 32
+            range 16 32768
+            help
+                Sequence numbers closer than this to last sequence
+                number are considered duplicate and discarded.  This
+                number needs be large than the window size and should
+                be several times larger.
 
         config LASTLINK_INTERVAL_LENGTH
             int "Length of a interval number"
@@ -381,25 +386,16 @@ menu "LastLink Configuration"
              every <N> seconds determined by KEEP ALIVE timer.
 
 
-        config LASTLINK_STREAM_KEEP_ALIVE
+        config LASTLINK_STREAM_KEEP_ALIVE_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
         depends on LASTLINK_STREAM_KEEP_ALIVE_ENABLE
         int "Seconds between keep-alive packets"
         default 10
-        range 10 600
+        range 10 3600
 
-
-#        config LASTLINK_STREAM_UPDATE_TIME_ENABLE
-#        depends on LASTLINK_ENABLE_SOCKET_LAYER
-#        bool "Enable sending ack for outstanding socket read"
-#        default false
-#        help
-#            This is a period for resending ACKS when a read on a socket
-#            is outstanding. 
 
         config LASTLINK_STREAM_UPDATE_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
-#        depends on LASTLINK_STREAM_UPDATE_TIME_ENABLE
         int "milliseconds to ACK input on outstanding read"
         default 1000
         range 50 30000

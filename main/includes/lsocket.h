@@ -13,23 +13,6 @@
 #include "os_specific.h"
 #include "packets.h"
 
-#define MAX_PACKET_ASSEMBLY     CONFIG_LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY
-#define MAX_SOCKET_CONNECTIONS  CONFIG_LASTLINK_STREAM_MAX_SIMULTANEOUS_CONNECTIONS
-
-#define STREAM_CONNECT_TIMEOUT   5000   /* 5 seconds */
-#define STREAM_CONNECT_RETRIES   10
-
-/*
- * How often we check the send_output_window results when closing.
- * The send_output_window is running on its own timer so this only
- * affects how often we *check* the results.
- */
-#define STREAM_FLUSH_TIMEOUT     500    /* .5 seconds */
-#define STREAM_FLUSH_RETRIES     120    /* 60 seconds worth */
-
-#define STREAM_DISCONNECT_TIMEOUT 5000  /* 5 seconds */
-#define STREAM_DISCONNECT_RETRIES 5
-
 typedef int ls_port_t;
 typedef int ls_address_t;
 typedef int ls_error_t;

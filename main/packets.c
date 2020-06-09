@@ -423,20 +423,22 @@ bool packet_tell_routed_callback(packet_t *packet, bool success)
 
     if (packet->routed_callback != NULL) {
         /* Tell supplier a route exists or if failed */
-        ok = packet->routed_callback(success ? ref_packet(packet) : NULL, packet->routed_callback_data);
+        ok = packet->routed_callback(success, ref_packet(packet), packet->routed_callback_data);
         packet->routed_callback = NULL;
     }
 
     return ok;
 }
 
-void packet_set_routed_callback(packet_t *packet, bool (*callback)(packet_t *packet, void* data), void* data)
+packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callback, void *data)
 {
     if (packet->routed_callback != NULL) {
         ESP_LOGE(TAG, "%s: Already has a routed callback; overriding", __func__);
     }
     packet->routed_callback = callback;
     packet->routed_callback_data = data;
+
+    return packet;
 }
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
@@ -500,13 +502,9 @@ int print_packet_table(int argc, const char **argv)
         }
 
         bool all = false;
-        bool detail = false;
         for (int arg = 1; arg < argc; ++arg) {
             if (strcmp(argv[arg], "-a") == 0) {
                 all = true;
-            }
-            if (strcmp(argv[arg], "-d") == 0) {
-                detail = true;
             }
         }
 

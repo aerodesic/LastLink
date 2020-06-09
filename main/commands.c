@@ -458,10 +458,10 @@ void spawn_thread(void *param)
 {
     spawn_param_t *spawn_params = (spawn_param_t*) param;
 
-    // printf("spawn_thread started\n");
-    // for (int arg = 0; arg < spawn_params->argc + 1; ++arg) {
-    //     printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
-    // }
+    printf("spawn_thread started\n");
+    for (int arg = 0; arg < spawn_params->argc + 1; ++arg) {
+        printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
+    }
 
     int results = spawn_params->command(spawn_params->argc, spawn_params->argv);
     

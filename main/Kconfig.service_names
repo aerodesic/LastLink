@@ -1,58 +1,60 @@
-config LASTLINK_SERVICE_NAMES_ENABLE
-    bool "Enable service names"
-    default true
-    help
-        Enable service names.  These are names published by
-        a node that refer to a published service on a specific
-        port type and port number.
-
-config LASTLINK_SERVICE_NAMES_MAX_LEN
-    int "Maximum length of sevice name"
-    default 16
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        The maximum characters in a service name.
-
-config LASTLINK_SERVICE_NAMES_REPLY_TIMEOUT
-    int "Timeout in mS waiting for service reply"
-    default 1000
-    range 50 20000
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        This is the timeout while waiting for a service name lookup.
-
-config LASTLINK_SERVICE_NAMES_REPLY_RETRIES
-    int "Number of retries to lookup service name"
-    default 5
-    range 1 20
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        "Number of tries to lookup service name
-
-config LASTLINK_SERVICE_NAMES_WAIT_TIMEOUT
-    int "Timeout in mS waiting for service request in scanner"
-    default 100
-    range 50 10000
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        This is the timeout while waiting for a service name request.
-        It is the basic loop time for the service request scanner
-        and controls the interval over which old services are removed.
-
-
-config LASTLINK_SERVICE_NAMES_LIFETIME
-    int "Cache timeout in seconds of a service entry after publishing"
-    default 300
-    range 1 3600
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        This is the timeout after which a local service name
-        entry will be deleted after received.
-
-config LASTLINK_SERVICE_NAMES_PORT
-    int "Well known port for service lookup"
-    default 1
-    range 1 5000
-    depends on LASTLINK_SERVICE_NAMES_ENABLE
-    help
-        This is the well known port over which a service lookup is performed.
+menu "Service Name Manager"
+    config LASTLINK_SERVICE_NAMES_ENABLE
+        bool "Enable service names"
+        default true
+        help
+            Enable service names.  These are names published by
+            a node that refer to a published service on a specific
+            port type and port number.
+    
+    config LASTLINK_SERVICE_NAMES_MAX_LEN
+        int "Maximum length of sevice name"
+        default 16
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            The maximum characters in a service name.
+    
+    config LASTLINK_SERVICE_NAMES_REPLY_TIMEOUT
+        int "Timeout in mS waiting for service reply"
+        default 1000
+        range 50 20000
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            This is the timeout while waiting for a service name lookup.
+    
+    config LASTLINK_SERVICE_NAMES_REPLY_RETRIES
+        int "Number of retries to lookup service name"
+        default 5
+        range 1 20
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            "Number of tries to lookup service name
+    
+    config LASTLINK_SERVICE_NAMES_WAIT_TIMEOUT
+        int "Timeout in mS waiting for service request in scanner"
+        default 100
+        range 50 10000
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            This is the timeout while waiting for a service name request.
+            It is the basic loop time for the service request scanner
+            and controls the interval over which old services are removed.
+    
+    
+    config LASTLINK_SERVICE_NAMES_LIFETIME
+        int "Cache timeout in seconds of a service entry after publishing"
+        default 300
+        range 1 3600
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            This is the timeout after which a local service name
+            entry will be deleted after received.
+    
+    config LASTLINK_SERVICE_NAMES_PORT
+        int "Well known port for service lookup"
+        default 1
+        range 1 5000
+        depends on LASTLINK_SERVICE_NAMES_ENABLE
+        help
+            This is the well known port over which a service lookup is performed.
+endmenu

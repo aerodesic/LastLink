@@ -30,7 +30,7 @@
 #include "radio.h"
 #include "linklayer.h"
 #include "linklayer_io.h"
-#include "duplicate_packets.h"
+#include "duplicate_sequence.h"
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
@@ -107,7 +107,7 @@ typedef struct protocol_entry {
 static protocol_entry_t           protocol_table[CONFIG_LASTLINK_MAX_PROTOCOL_NUMBER + 1];
 
 /* Duplicate packet detector table */
-duplicate_packet_list_t           duplicate_packets;
+duplicate_sequence_list_t         duplicate_sequence_numbers;
 
 /*
  * Configuration
@@ -1148,11 +1148,17 @@ void linklayer_route_packet(packet_t* packet)
                     }
                 }
 
-                if (get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS ||
-                    get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+                int dest = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+                int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
 
+                if (dest == BROADCAST_ADDRESS || routeto == BROADCAST_ADDRESS) {
                     /* Issue a random delay on each transmit request based on current node number and sequence number */
                     packet->delay = linklayer_node_address + get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);;
+                }
+
+                /* If a RESET_SEQUENCE flag is present, reset this destination's sequence numbers */
+                if ((get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_RESET_SEQUENCE) != 0) {
+                    reset_duplicate(&duplicate_sequence_numbers, dest);
                 }
 
 if (debug_flag) {
@@ -1307,10 +1313,11 @@ if (debug_flag) {
                     }
                 }
 
-                int origin  = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
-                int dest    = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
-                int sender  = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
-                int routeto = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+                int origin   = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+                int dest     = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
+                int sender   = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
+                int routeto  = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
+                int sequence = get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
 
                 /* we will process packets that are local (from us and to us but not broadcast)
                  * or not from us and not duplicate.
@@ -1319,9 +1326,14 @@ if (debug_flag) {
                     ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS)
                               && origin != linklayer_node_address)) {
 
+                    if ((get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_RESET_SEQUENCE) != 0) {    
+                        /* Any sequence number will do for next sequence */
+                        reset_duplicate(&duplicate_sequence_numbers, origin);
+                    }
+
                     if (!is_valid_address(sender)) {
                         /* Ignored */
-                    } else if (is_duplicate_packet(&duplicate_packets, packet)) {
+                    } else if (is_duplicate(&duplicate_sequence_numbers, origin, sequence)) {
                         /* Duplicate */
 //linklayer_print_packet("duplicate", packet);
                     } else {
