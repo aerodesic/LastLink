@@ -448,6 +448,7 @@ static int ps_command(int argc, const char **argv)
 typedef struct spawn_param {
     int (*command)(int argc, const char** argv);
     const char **argv;
+    const char *args;
     int argc;
 } spawn_param_t;
 
@@ -458,16 +459,18 @@ void spawn_thread(void *param)
 {
     spawn_param_t *spawn_params = (spawn_param_t*) param;
 
-    printf("spawn_thread started\n");
-    for (int arg = 0; arg < spawn_params->argc + 1; ++arg) {
-        printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
-    }
+    //printf("spawn_thread started\n");
+    //for (int arg = 0; arg < spawn_params->argc + 1; ++arg) {
+    //    printf("arg %d is \"%s\"\n", arg, spawn_params->argv[arg] ? spawn_params->argv[arg] : "<NULL>");
+    //}
 
     int results = spawn_params->command(spawn_params->argc, spawn_params->argv);
     
     printf("%s: exit with %d\n", spawn_params->argv[0], results);
 
     /* All parameters are added to end of spawn_params, so they get free'd as well */
+    free((void*) spawn_params->argv);
+    free((void*) spawn_params->args);
     free((void*) spawn_params);
 
     os_exit_thread();
@@ -491,36 +494,36 @@ int spawn_command(int argc, const char **argv)
         } else {
             /* Compute length of param table */
 
-            /* Room needed for argv array */
-            int argv_length = argc * sizeof(const char*); /* Room for all args + 1 for NULL */
-            int args_length = 0;
             int arg;
+            int args_length = 0;
 
+            /* Calculate amount of string space needed */
             for (arg = 1; arg < argc; ++arg)  {
                 args_length += strlen(argv[arg]) + 1;
             }
 
-            // printf("Allocating spawn_params + %d bytes for table and %d bytes for strings\n", argv_length, args_length);
+            spawn_param_t *spawn_params = (spawn_param_t*) malloc(sizeof(spawn_param_t));
 
-            spawn_param_t *spawn_params = (spawn_param_t*) malloc(sizeof(spawn_param_t) + argv_length + args_length);
+            /* Argv array */
+            spawn_params->argv = (const char **) malloc(argc * sizeof(const char*)); /* Room for all args + 1 for NULL */
 
             /* Point to command */
             spawn_params->command = command->function;
-
-            /* Point to table at end of spawn_params */
-            spawn_params->argv = (const char **) (spawn_params + 1);
 
             /* Number of args - 1 from spawn  command */
             spawn_params->argc = argc - 1;
 
             /* Where the parameter strings go */
-            char *params = (char*) (spawn_params->argv + argc - 1);
+            char *params = (char*) malloc(args_length);
+
+            /* So we can free it when we are done */
+            spawn_params->args = params;
 
             for (arg = 1; arg < argc; ++arg) {
                 /* Copy strings of params */
+                spawn_params->argv[arg - 1] = (const char*) params;
                 int len = strlen(argv[arg]);
                 strcpy(params, argv[arg]);
-                spawn_params->argv[arg - 1] = (const char*) params;
                 params += len;
                 *params++ = '\0';
             }

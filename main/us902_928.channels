@@ -52,12 +52,12 @@ end
 # 16 wide band channels
 
 channels wide 64 79  903000000 1600000
-  datarate 0 spread-factor 12 bandwidth 500000 txpower 14 payload 41
-  datarate 1 spread-factor 11 bandwidth 500000 txpower 12 payload 17
-  datarate 2 spread-factor 10 bandwidth 500000 txpower 10 payload 230
-  datarate 3 spread-factor  9 bandwidth 500000 txpower  8 payload 230
-  datarate 4 spread-factor  8 bandwidth 500000 txpower  6 payload 230
-  datarate 5 spread-factor  7 bandwidth 500000 txpower  4 payload 255
+  datarate 0 spread-factor 12 bandwidth 500000 txpower 24 payload 41
+  datarate 1 spread-factor 11 bandwidth 500000 txpower 22 payload 17
+  datarate 2 spread-factor 10 bandwidth 500000 txpower 20 payload 230
+  datarate 3 spread-factor  9 bandwidth 500000 txpower 18 payload 230
+  datarate 4 spread-factor  8 bandwidth 500000 txpower 16 payload 230
+  datarate 5 spread-factor  7 bandwidth 500000 txpower 14 payload 255
 
   # Just a test - remove before flight...
   # datarate 7 spread-factor  3 bandwidth 500000 txpower  4 payload 255 coding-rate 8

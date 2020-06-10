@@ -432,11 +432,38 @@ bool packet_tell_routed_callback(packet_t *packet, bool success)
 
 packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callback, void *data)
 {
+#if 0
     if (packet->routed_callback != NULL) {
         ESP_LOGE(TAG, "%s: Already has a routed callback; overriding", __func__);
     }
+#endif
     packet->routed_callback = callback;
     packet->routed_callback_data = data;
+
+    return packet;
+}
+
+/*
+ * Called to report when packet has been transmitted.
+ */
+void packet_tell_transmitted_callback(packet_t *packet)
+{
+    if (packet->transmitted_callback != NULL) {
+        /* Tell supplier a route exists or if failed */
+        packet->transmitted_callback(ref_packet(packet), packet->transmitted_callback_data);
+        packet->transmitted_callback = NULL;
+    }
+}
+
+packet_t *packet_set_transmitted_callback(packet_t *packet, transmitted_callback_t callback, void *data)
+{
+#if 0
+    if (packet->transmitted_callback != NULL) {
+        ESP_LOGE(TAG, "%s: Already has a transmitted callback; overriding", __func__);
+    }
+#endif
+    packet->transmitted_callback = callback;
+    packet->transmitted_callback_data = data;
 
     return packet;
 }

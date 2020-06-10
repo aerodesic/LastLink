@@ -863,6 +863,22 @@ static bool stream_packet_route_complete(bool success, packet_t *packet, void *d
     return success;
 }
 
+static void stream_packet_transmit_complete(packet_t *packet, void *data)
+{
+    ls_socket_t *socket = (ls_socket_t*) data;
+
+    /* Packet has been launched - set retry time */
+
+    /* Come back in exponential time */
+    simpletimer_start(&socket->output_window_timer, socket->output_retry_time);
+
+    /* Next time wait twice as long (up to a limit) */
+    socket->output_retry_time <<= 1;
+    if (socket->output_retry_time > CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME) {
+        socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME;
+    }
+}
+
 static void stream_send_add_callback(ls_socket_t *socket, packet_t *packet)
 {
     packet_set_routed_callback(packet, stream_packet_route_complete, (void*) socket);
@@ -1757,8 +1773,10 @@ static bool socket_flush_current_packet(ls_socket_t *socket, bool wait)
 static void ack_output_window(ls_socket_t *socket, int ack_sequence, uint32_t ack_mask)
 {
     /* Release these packets in window */
-    (void) packet_window_release_processed_packets(socket->output_window, ack_sequence, ack_mask);
+    packet_window_release_processed_packets(socket->output_window, ack_sequence, ack_mask);
 
+    /* Start again to send next block (if any) */
+    socket->output_retries = 0;
     simpletimer_set_expired(&socket->output_window_timer);
 }
 
@@ -1848,7 +1866,7 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 {
     int num_packets = 0;
 
-    if (socket->output_window) {
+    if (socket->output_window != NULL) {
         packet_window_lock(socket->output_window);
 
         packet_t *packets[socket->output_window->length];
@@ -1877,7 +1895,9 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                     socket->output_disconnect_on_error = disconnect_on_error;
 
                     /* Look up the route to the destination (returns default of MAX_METRIC) */
-                    socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME * num_packets * route_metric(socket->dest_addr) * 2;
+                    int metric = route_metric(socket->dest_addr);
+                    socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_TIME * num_packets * metric * 2;
+printf("output_retry_time for %d packets metric %d is %d\n", num_packets, metric, socket->output_retry_time);
 
                 } else {
                     socket->output_retries -= 1;
@@ -1891,12 +1911,17 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                     /* Packets in queue - send all that are here */
                     for (int slot = 0; slot < to_send; ++slot) {
                         /* Send packet (ref'd) with input window ack fields appended */
-                        packet_set_routed_callback(packets[slot], stream_packet_route_complete, (void*) socket);
-                        linklayer_route_packet(ref_packet(add_data_ack(socket->input_window, packets[slot])));
+                        packet_t *packet  = packet_set_routed_callback(packets[slot], stream_packet_route_complete, (void*) socket);
+                        /* Only do on the last one in list */
+                        if (slot == to_send - 1) {
+                            packet_set_transmitted_callback(packet, stream_packet_transmit_complete, (void*) socket);
+                        }
+                        linklayer_route_packet(ref_packet(add_data_ack(socket->input_window, packet)));
                     }
 
                     packet_window_lock(socket->output_window);
 
+#if 0
                     /* Come back in exponential time */
                     simpletimer_start(&socket->output_window_timer, socket->output_retry_time);
 
@@ -1905,6 +1930,7 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                     if (socket->output_retry_time > CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME) {
                         socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME;
                     }
+#endif
                 } else if (socket->output_disconnect_on_error) {
                     /* Timed out */
                     /* Terminate input */
@@ -3061,7 +3087,8 @@ static int stproducer_command(int argc, const char **argv)
                             }
                         }
 
-                        close(connection);
+                        int ret = close(connection);
+                        printf("connection closed %d\n", ret);
 
                     } else if (connection != LSE_TIMEOUT) {
                         printf("ls_listen returned %d\n", connection);

@@ -70,7 +70,8 @@ bool io_init(radio_t* radio, const radio_config_t* config)
     bool ret;
 
     /* Copy fields to be accessable by radio */
-    radio->transmit_delay = config->transmit_delay;
+    radio->transmit_after_receive_delay = config->transmit_after_receive_delay;
+    radio->transmit_after_transmit_delay = config->transmit_after_transmit_delay;
 
     /* Do specific I/O initialization */
     if (strcmp(config->type, "spi") == 0) {

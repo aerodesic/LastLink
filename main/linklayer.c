@@ -128,55 +128,58 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
 
 #define RADIO_CONFIG_SPI(radio, module) \
     { \
-    .type                = "spi",                                                             \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
-    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
-    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),      \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),      \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),      \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET),     \
-    .spi_sck             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),       \
-    .spi_mosi            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),      \
-    .spi_miso            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),      \
-    .spi_cs              = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),        \
-    .spi_host            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),       \
-    .spi_clock           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ),   \
-    .spi_pre_xfer_callback = NULL,                                                            \
-    .dma_chan            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),       \
+    .type                            = "spi",                                                                            \
+    .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
+    .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
+    .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
+    .transmit_after_receive_delay    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_RECEIVE_DELAY),  \
+    .transmit_after_transmit_delay   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_TRANSMIT_DELAY), \
+    .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),                     \
+    .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),                     \
+    .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),                     \
+    .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET),                    \
+    .spi_sck                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),                      \
+    .spi_mosi                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),                     \
+    .spi_miso                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MISO),                     \
+    .spi_cs                          = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SS),                       \
+    .spi_host                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_HOST),                      \
+    .spi_clock                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SPI_CLOCK_HZ),                  \
+    .spi_pre_xfer_callback           = NULL,                                                                             \
+    .dma_chan                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),                      \
    },
 
 #define RADIO_CONFIG_I2C(radio, module) \
     { \
-    .type                = "i2c",                                                             \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
-    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
-    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),      \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),       \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),       \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),       \
-    .i2c_blah1           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),      \
-    .i2c_blah2           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),      \
+    .type                            = "i2c",                                                                            \
+    .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
+    .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
+    .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
+    .transmit_after_receive_delay    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_RECEIVE_DELAY),  \
+    .transmit_after_transmit_delay   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_TRANSMIT_DELAY), \
+    .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),                     \
+    .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),                      \
+    .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),                      \
+    .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),                      \
+    .i2c_blah1                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),                     \
+    .i2c_blah2                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),                     \
    },
 
 #define RADIO_CONFIG_SERIAL(radio, module) \
     { \
-    .type                = "serial",                                                          \
-    .radio_type          = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                     \
-    .crystal             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),        \
-    .channel             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),        \
-    .datarate            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),       \
-    .transmit_delay      = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_DELAY), \
-    .dios[0]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),       \
-    .dios[1]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),       \
-    .dios[2]             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),       \
-    .reset               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),      \
-    .dev                 = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),        \
+    .type                            = "serial",                                                                         \
+    .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
+    .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
+    .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
+    .transmit_after_receive_delay    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_RECEIVE_DELAY),  \
+    .transmit_after_transmit_delay   = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_AFTER_TRANSMIT_DELAY), \
+    .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),                      \
+    .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),                      \
+    .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),                      \
+    .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),                     \
+    .dev                             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),                       \
    },
 
 static const radio_config_t radio_config[] = {
@@ -1522,6 +1525,7 @@ static int linklayer_print_status(int argc, const char** argv)
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
             if (radio_table[radio_num] != NULL) {
                 radio_t *radio = radio_table[radio_num];
+                printf("\n");
                 radio->print_status(radio);
             }
         }

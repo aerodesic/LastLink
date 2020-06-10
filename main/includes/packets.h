@@ -26,9 +26,13 @@ typedef struct packet {
     int              last_referenced_lineno;
 #endif
 
-    /* Call when packet has been routed.  Can then resend.  If entry is NULL, resend is automatic */
+    /* Callback when packet has been routed.  Can then resend.  If entry is NULL, resend is automatic */
     bool             (*routed_callback)(bool success, packet_t* packet, void* data);
     void             *routed_callback_data;
+
+    /* Callback when packet has been transmitted.  Nulled automatically when complete */
+    void             (*transmitted_callback)(packet_t *packet, void *data);
+    void             *transmitted_callback_data;
 
     uint8_t          queued;                     /* Counts up one for each time transmit queue */
     bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
@@ -148,9 +152,13 @@ static inline packet_t *packet_dup(packet_t *p)
 
 bool packet_lock(void);
 void packet_unlock(void);
-bool packet_tell_routed_callback(packet_t *packet, bool success);
-typedef bool (*routed_callback_t)(bool success, packet_t *packet, void *data);
 
+typedef bool (*routed_callback_t)(bool success, packet_t *packet, void *data);
+bool packet_tell_routed_callback(packet_t *packet, bool success);
 packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callback, void *data);
+
+typedef void (*transmitted_callback_t)(packet_t *packet, void *data);
+void packet_tell_transmitted_callback(packet_t *packet);
+packet_t *packet_set_transmitted_callback(packet_t *packet, transmitted_callback_t callback, void *data);
 
 #endif /* __packets_h_included */

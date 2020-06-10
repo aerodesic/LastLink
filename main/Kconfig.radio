@@ -127,12 +127,23 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Initial datarate.  Note: not all datarates are valied.
 
-    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_DELAY
-        int "Transmit delay for RADIO $(RADIO_NUM)"
+    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_AFTER_RECEIVE_DELAY
+        int "Transmit delay for RADIO $(RADIO_NUM) after a receive"
         default 50
         range 0 1000
         help
-            Delays are in multiples of this interval.
+            Milliseconds to wait to start transmit after a receive
+            completes.  Normally this should be longer than the
+            transmit-after-transmit delay in order to give priority
+            to transmits.
+
+    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_AFTER_TRANSMIT_DELAY
+        int "Transmit delay for RADIO $(RADIO_NUM) after a transmit"
+        default 50
+        range 0 1000
+        help
+            Milliseconds to wait to start a transmit after a
+            transmit completes.
 
 endmenu
 

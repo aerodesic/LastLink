@@ -150,7 +150,8 @@ typedef struct radio_config {
     uint8_t datarate;
     uint8_t dios[MAX_DIOS];
     uint8_t reset;
-    int transmit_delay;
+    int transmit_after_receive_delay;
+    int transmit_after_transmit_delay;
     union {
        struct {
          uint8_t spi_host;
