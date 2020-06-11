@@ -206,14 +206,14 @@ bool os_delete_queue(os_queue_t queue)
 
 bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeout)
 {
-    return xQueueSend(queue, &item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
+    return xQueueSend(queue, item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
 }
 
-bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item, bool *awakened)
+bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool *awakened)
 {
     BaseType_t task_awakened = pdFALSE;
 
-    bool results =  xQueueSendFromISR(queue, item, &task_awakened) == pdTRUE;
+    bool results =  xQueueReceiveFromISR(queue, item, &task_awakened) == pdTRUE;
 
     if (awakened != NULL) {
         *awakened = task_awakened == pdTRUE;
@@ -231,7 +231,7 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakene
 {
     BaseType_t task_awakened = pdFALSE;
 
-    bool results = xQueueSendFromISR(queue, &item, &task_awakened) == pdTRUE;
+    bool results = xQueueSendFromISR(queue, item, &task_awakened) == pdTRUE;
     if (awakened != NULL) {
         *awakened = task_awakened == pdTRUE;
     }
@@ -239,12 +239,12 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakene
     return results;
 }
 
-bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout)
+bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeout)
 {
     return (xQueueReceive(queue, item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE);
 }
 
-bool os_get_queue(os_queue_t queue, os_queue_item_t* item)
+bool os_get_queue(os_queue_t queue, os_queue_item_t item)
 {
     return os_get_queue_with_timeout(queue, item, -1);
 }
@@ -259,12 +259,12 @@ int os_items_in_queue_from_isr(os_queue_t queue)
     return uxQueueMessagesWaitingFromISR(queue);
 }
 
-bool os_peek_queue(os_queue_t queue, os_queue_item_t* item)
+bool os_peek_queue(os_queue_t queue, os_queue_item_t item)
 {
     return xQueuePeek(queue, (void**) item, 0) == pdTRUE;
 }
 
-bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t* item)
+bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t item)
 {
     return xQueuePeekFromISR(queue, (void**) item) == pdTRUE;
 }

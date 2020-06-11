@@ -158,7 +158,7 @@ void app_main(void)
 
         packet_t *packet;
         while (true) {
-            if (os_get_queue(queue, (os_queue_item_t*) &packet)) {
+            if (os_get_queue(queue, (os_queue_item_t) &packet)) {
 
                 if (packet == NULL) {
                     ESP_LOGE(TAG, "%s: null packet", __func__);

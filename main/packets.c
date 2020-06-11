@@ -63,13 +63,9 @@ packet_t *allocate_packet_plain(void)
     /* Make sure free packet queue is present */
     if (free_packets_queue != NULL) {
 
-        void* p;
-
-        if  (os_get_queue_with_timeout(free_packets_queue, &p, 0)) {
+        if  (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0)) {
 
             // ESP_LOGD(TAG, "allocate_packet packet from queue is %p", p);
-
-            packet = (packet_t*) p;
 
             /* Check for the impossible... */
             if (packet != NULL) {
@@ -151,7 +147,7 @@ bool release_packet_plain(packet_t *packet)
             if (--(packet->ref) == 0) {
                 packet->routed_callback = NULL;
                 packet->routed_callback_data = NULL;
-                ok = os_put_queue_with_timeout(free_packets_queue, packet, 0);
+                ok = os_put_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0);
                 packets_in_use--;
 ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
             } else {
@@ -437,6 +433,7 @@ packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callbac
         ESP_LOGE(TAG, "%s: Already has a routed callback; overriding", __func__);
     }
 #endif
+
     packet->routed_callback = callback;
     packet->routed_callback_data = data;
 
@@ -700,7 +697,7 @@ int deinit_packets(void)
             } else {
                 /* Release free packets */
                 packet_t *packet;
-                while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t*) &packet, 0)) {
+                while (os_get_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0)) {
                     packet->buffer = NULL;
                 }
 

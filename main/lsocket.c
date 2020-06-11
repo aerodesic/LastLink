@@ -379,7 +379,8 @@ static bool pingreply_packet_process(packet_t *packet)
                 os_delete_thread(ping_table[slot].thread);
                 ping_table[slot].waiting = false;
                 ping_table[slot].thread = NULL;
-                if (!os_put_queue(ping_table[slot].queue, ref_packet(packet))) {
+                ref_packet(packet);
+                if (!os_put_queue(ping_table[slot].queue, (os_queue_item_t) &packet)) {
                     ESP_LOGE(TAG, "%s: No room for ping reply", __func__);
                     release_packet(packet);
                 }
@@ -437,7 +438,7 @@ static packet_t *wait_for_ping_reply(int slot)
     packet_t *packet = NULL;
 
     if (slot >= 0 && slot < ELEMENTS_OF(ping_table)) {
-        os_get_queue(ping_table[slot].queue, (os_queue_item_t*) &packet);
+        os_get_queue(ping_table[slot].queue, (os_queue_item_t) &packet);
         /* Allow the thread to die */
         ping_table[slot].waiting = false;
     }
@@ -505,7 +506,8 @@ void ping_retry_thread(void* param)
             /* If we timed out - return error */
             if (ping_table[slot].waiting) {
                 ping_table[slot].error = LSE_TIMEOUT;
-                os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
+                void *null = NULL;
+                os_put_queue(ping_table[slot].queue, (os_queue_item_t) &null);
                 ping_table[slot].waiting = false;
             }
         }
@@ -541,7 +543,8 @@ static bool ping_has_been_routed(bool success, packet_t* packet, void* data)
 
     } else if (ping_table[slot].queue != NULL) {
         /* No route */
-        os_put_queue(ping_table[slot].queue, (os_queue_t) NULL);
+        void *null = NULL;
+        os_put_queue(ping_table[slot].queue, (os_queue_item_t) &null);
         ping_table[slot].error = LSE_NO_ROUTE;
     }
 
@@ -772,7 +775,8 @@ static bool datagram_packet_process(packet_t *packet)
             if (socket != NULL) {
 
                 /* Send the packet to the datagram input queue */
-                if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) ref_packet(packet))) {
+                ref_packet(packet);
+                if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) &packet)) {
                     release_packet(packet);
                 }
             }
@@ -827,6 +831,7 @@ static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uin
         set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->local_port);
         set_uint_field(packet, STREAM_FLAGS, FLAGS_LEN, flags);
         set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
+printf("%s: packet %p\n", __func__, packet);
     }
 
     return packet;
@@ -881,6 +886,8 @@ static void stream_packet_transmit_complete(packet_t *packet, void *data)
 
 static void stream_send_add_callback(ls_socket_t *socket, packet_t *packet)
 {
+    assert(packet != NULL);
+
     packet_set_routed_callback(packet, stream_packet_route_complete, (void*) socket);
 
     linklayer_route_packet(packet);
@@ -1058,7 +1065,7 @@ static bool stream_packet_process(packet_t *packet)
                             /* Send the socket number to the waiting listener */
                             if (socket->parent != NULL) {
                                 /* Put in the connection queue but if overflowed, reject the connection */
-                                if(os_put_queue_with_timeout(socket->parent->connections, socket, 0)) {
+                                if(os_put_queue_with_timeout(socket->parent->connections, (os_queue_item_t) &socket, 0)) {
                                     reject = false;
                                     /* Let ls_listen finish it's work */
                                     send_state_machine_results(socket, LSE_NO_ERROR);
@@ -1271,7 +1278,7 @@ static ssize_t release_socket(ls_socket_t* socket)
 
                 /* Close listener queue */
                 ls_socket_t *c;
-                while (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &c, 0)) {
+                while (os_get_queue_with_timeout(socket->connections, (os_queue_item_t) &c, 0)) {
                     ls_close_ptr(c);
                 }
 
@@ -1439,7 +1446,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
 
                     /* Wait for something to arrive at connection queue */
                     ls_socket_t *connection;
-                    if (os_get_queue_with_timeout(socket->connections, (os_queue_item_t*) &connection, timeout)) {
+                    if (os_get_queue_with_timeout(socket->connections, (os_queue_item_t) &connection, timeout)) {
                         if (connection == NULL) {
                             err = LSE_CLOSED;
                         } else {
@@ -1569,7 +1576,7 @@ void send_state_machine_results(ls_socket_t *socket, ls_error_t response)
 
     if (socket->state_machine_results == NULL) {
         assert(socket->state_machine_results_queue != NULL);
-        os_put_queue(socket->state_machine_results_queue, (os_queue_item_t) response);
+        os_put_queue(socket->state_machine_results_queue, (os_queue_item_t) &response);
     } else {
         socket->state_machine_results(socket, response);
     }
@@ -1588,7 +1595,7 @@ ls_error_t get_state_machine_results(ls_socket_t *socket)
     assert(socket->state_machine_results_queue != NULL);
 
     if (socket->state_machine_results_queue != NULL) {
-        if (! os_get_queue(socket->state_machine_results_queue, (os_queue_item_t*) &response)) {
+        if (! os_get_queue(socket->state_machine_results_queue, (os_queue_item_t) &response)) {
             response = LSE_SYSTEM_ERROR;
         }
 
@@ -1877,6 +1884,9 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 
             /* Stop the ack_delay_timer since this subsumes the effort */
             simpletimer_stop(&socket->ack_delay_timer);
+
+            /* Don't need this because it's included in output_window data */
+            simpletimer_stop(&socket->input_window_timer);
 
             /* Make sure last packet has been sent */
             if (packets[num_packets-1]->queued != 0) {
@@ -2191,7 +2201,7 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
 
                 UNLOCK_SOCKET(socket);
 
-                bool success = os_get_queue_with_timeout(socket->datagram_packets, (os_queue_item_t*) &packet, timeout);
+                bool success = os_get_queue_with_timeout(socket->datagram_packets, (os_queue_item_t) &packet, timeout);
 
                 LOCK_SOCKET(socket);
 
@@ -2338,6 +2348,7 @@ ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout)
 static ls_error_t ls_close_ptr(ls_socket_t *socket)
 {
     ls_error_t err = LSE_NO_ERROR;
+    static void* null = NULL;
 
     if (socket != NULL) {
         bool already_busy = socket->busy != 0;
@@ -2353,7 +2364,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
             case LS_DATAGRAM: {
                 if (already_busy) {
                     /* Just let reader know it is being shut down */
-                    os_put_queue_with_timeout(socket->datagram_packets, (os_queue_item_t) NULL, 0);
+                    os_put_queue_with_timeout(socket->datagram_packets, (os_queue_item_t) &null, 0);
                 } else {
                     err = release_socket(socket);
                 }
@@ -2364,7 +2375,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
                 if (socket->state == LS_STATE_LISTENING) {
                     /* In case it's another thread doing the listening, give it a shutdown notice */
                     if (already_busy) {
-                        os_put_queue_with_timeout(socket->connections, (os_queue_item_t) NULL, 0);
+                        os_put_queue_with_timeout(socket->connections, (os_queue_item_t) &null, 0);
                     } else {
                         err = release_socket(socket);
                     }
@@ -2719,6 +2730,24 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                            packet_window_packet_count(socket->input_window),
                            socket->output_window ? socket->output_window->sequence : -1,
                            packet_window_packet_count(socket->output_window));
+                           for (int slot = 0; slot < socket->input_window->length; ++slot) {
+                               if (socket->input_window->queue[slot].inuse) {
+                                   if (socket->input_window->queue[slot].packet != NULL) {
+                                       printf("In %d: %d\n", slot, get_uint_field(socket->input_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                   } else {
+                                       printf("In %d: NULL\n", slot);
+                                   }
+                               }
+                           }
+                           for (int slot = 0; slot < socket->input_window->length; ++slot) {
+                               if (socket->output_window->queue[slot].inuse) {
+                                   if (socket->output_window->queue[slot].packet != NULL) {
+                                       printf("Out %d: %d\n", slot, get_uint_field(socket->output_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                   } else {
+                                       printf("Out %d: NULL\n", slot);
+                                   }
+                               }
+                           }
                 }
                 break;
             }
@@ -2772,6 +2801,7 @@ static void socket_scanner_thread(void* param)
                 /* This one runs on demand to flush the output_window as needed - runs until successful or timesout closing connection */
                 if (simpletimer_is_expired_or_remaining(&socket->output_window_timer, &next_time)) {
                     simpletimer_stop(&socket->output_window_timer);
+printf("send_output_window fired by output_window_timer\n");
                     send_output_window(socket, /* disconnect_on_error */ true);
                 }
 
@@ -2781,14 +2811,19 @@ static void socket_scanner_thread(void* param)
                     /* Finished with timer */
                     simpletimer_stop(&socket->ack_delay_timer);
 
+printf("ack_input_window fired by ack_delay_timer\n");
                     ///* Delay input window ack until next time */
                     ack_input_window(socket);
                 }
 
+#if 1
                 /* This one runs continually and only works when the socket is input-busy */
                 if (simpletimer_is_expired_or_remaining(&socket->input_window_timer, &next_time)) {
+printf("ack_input_window fired by input_window_timer\n");
+                    simpletimer_stop(&socket->input_window_timer);
                     ack_input_window(socket);
                 }
+#endif
 
 #if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE
                 if (simpletimer_is_expired_or_remaining(&socket->keepalive_timer, &next_time)) {

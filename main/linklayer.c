@@ -1147,7 +1147,7 @@ void linklayer_route_packet(packet_t* packet)
                     packet_t *p_packet = duplicate_packet(packet);
                     if (p_packet != NULL) {
                         p_packet->transmitted = true;
-                        os_put_queue(promiscuous_queue, p_packet);
+                        os_put_queue(promiscuous_queue, (os_queue_item_t) &p_packet);
                     }
                 }
 
@@ -1215,7 +1215,7 @@ static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
         release_packet(packet);
     } else {
         packet->queued++;
-        if (os_put_queue(radio->transmit_queue, packet)) {
+        if (os_put_queue(radio->transmit_queue, (os_queue_item_t) &packet)) {
             radio->transmit_start(radio);
         }
     }
@@ -1253,7 +1253,7 @@ bool linklayer_unregister_protocol(int protocol)
 
 bool linklayer_put_received_packet(packet_t* packet)
 {
-    return os_put_queue(receive_queue, packet);
+    return os_put_queue(receive_queue, (os_queue_item_t) &packet);
 }
 
 
@@ -1303,7 +1303,7 @@ if (debug_flag) {
                 if (promiscuous_queue != NULL) {
                     packet_t *dup = duplicate_packet(packet);
                     if (dup != NULL) {
-                        os_put_queue(promiscuous_queue, dup);
+                        os_put_queue(promiscuous_queue, (os_queue_item_t) &dup);
                     }
                 }
             /* Ignore redundant packets from the same origin and sequence number */
@@ -1312,7 +1312,7 @@ if (debug_flag) {
                 if (promiscuous_queue != NULL) {
                     packet_t *dup = duplicate_packet(packet);
                     if (dup != NULL) {
-                        os_put_queue(promiscuous_queue, dup);
+                        os_put_queue(promiscuous_queue, (os_queue_item_t) &dup);
                     }
                 }
 
@@ -1452,7 +1452,8 @@ void linklayer_print_packet(const char* reason, packet_t* packet)
         free((void*) buffer);
 
     } else {
-        ESP_LOGD(TAG, "%s: NULL packet", __func__);
+        // ESP_LOGD(TAG, "%s: NULL packet", reason);
+printf("%s: NULL_packet\n", reason);
     }
 }
 
@@ -1508,7 +1509,7 @@ static const char* linklayer_packet_format(const packet_t* packet, int protocol)
 void linklayer_release_packets_in_queue(os_queue_t queue) {
     if (queue != NULL) {
         packet_t* packet;
-        while (os_get_queue_with_timeout(queue, (os_queue_item_t*) &packet, 0)) {
+        while (os_get_queue_with_timeout(queue, (os_queue_item_t) &packet, 0)) {
             release_packet(packet);
         }
     }

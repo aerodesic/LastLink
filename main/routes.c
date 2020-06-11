@@ -170,7 +170,7 @@ bool route_delete(route_t* r)
         if (r->pending_packets != NULL) {
             /* Discard the packets waiting */
 	        packet_t* p;
-	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t) &p, 0)) {
                 linklayer_print_packet("PENDING PACKETS", p);
 
                 /* Tell supplier if it needs to know when route is complete */
@@ -241,7 +241,7 @@ bool route_put_pending_packet(route_t* r, packet_t* p)
             if (r->pending_packets == NULL) {
                 ESP_LOGE(TAG, "%s: Unable to create pending packet queue", __func__);
             } else {
-	            ok = os_put_queue(r->pending_packets, p);
+	            ok = os_put_queue(r->pending_packets, (os_queue_item_t) &p);
             }
 	        route_table_unlock();
         }
@@ -277,7 +277,7 @@ void route_release_packets(route_t* r)
         if (r->pending_packets != NULL) {
 	        /* Move all packets to the send queue */
 	        packet_t* p;
-	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t*) &p, 0)) {
+	        while (os_get_queue_with_timeout(r->pending_packets, (os_queue_item_t) &p, 0)) {
                 if (r->radio_num == UNKNOWN_RADIO) {
                     ESP_LOGE(TAG, "send on route without a radio: dest %d routeto %d origin %d sequence %d", r->dest, r->routeto, r->origin, r->sequence);
                 }

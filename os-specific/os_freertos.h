@@ -59,14 +59,17 @@ bool os_delete_semaphore(os_semaphore_t sem);
 /* Queues */
 os_queue_t os_create_queue(int depth, size_t size);
 bool os_delete_queue(os_queue_t queue);
+
 bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeout);
 bool os_put_queue(os_queue_t queue, os_queue_item_t item);
 bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakened);
-bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout);
-bool os_get_queue(os_queue_t queue, os_queue_item_t* item);
-bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item, bool* awakened);
-bool os_peek_queue(os_queue_t queue, os_queue_item_t* item);
-bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t* item);
+
+bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeout);
+bool os_get_queue(os_queue_t queue, os_queue_item_t item);
+bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakened);
+
+bool os_peek_queue(os_queue_t queue, os_queue_item_t item);
+bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t item);
 int os_items_in_queue_from_isr(os_queue_t queue);
 int os_items_in_queue(os_queue_t queue);
 
