@@ -31,29 +31,38 @@ void reset_duplicate(duplicate_sequence_list_t *duplist, int address)
     }
 }
 
+/*
+ * Sequence numbers must be treated within as signed numbers.
+ */
 bool is_duplicate(duplicate_sequence_list_t* duplist, int address, int sequence)
 {
-    bool duplicate = false;
-
     list_head_t *list_head = &duplist->address_map[address % NUM_ORIGIN_MAP];
 
     bool found = false;
 
+    bool duplicate = false;
+
     duplicate_sequence_t *dupinfo = (duplicate_sequence_t *) FIRST_LIST_ITEM(list_head);
+
 
     while (!found && dupinfo != NULL) {
         if (dupinfo->address == address) {
-            /* If new sequence is larger or below the cached sequence number by more then SEQUENCE_NUMBER_DUPLICATE_RANGE */
-            duplicate = (sequence < dupinfo->sequence) && ((sequence - dupinfo->sequence) <= SEQUENCE_NUMBER_DUPLICATE_RANGE);
 
+            duplicate = (dupinfo->address != 0) &&
+                        (((sequence <= dupinfo->sequence) && ((dupinfo->sequence - sequence) < (1 << (SEQUENCE_NUMBER_LEN*8-1)))) ||
+                         ((sequence >  dupinfo->sequence) && ((sequence - dupinfo->sequence) > (1 << (SEQUENCE_NUMBER_LEN*8-1)))));
 
             if (!duplicate) {
                 /* Remember the new one now */
                 dupinfo->sequence = sequence;
+            } else {
+                printf("%s: %d duplicate of %d\n", __func__, sequence, dupinfo->sequence);
             }
+
             /* End the search when we find an address match */
             found = true;
         }
+
         dupinfo = NEXT_LIST_ITEM(dupinfo, list_head);
     }
 

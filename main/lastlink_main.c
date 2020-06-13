@@ -151,6 +151,8 @@ void app_main(void)
     wifi_init_softap();
 #endif
 
+    printf("Node address %d\n", linklayer_node_address);
+
     if (listen_only) {
         linklayer_set_listen_only(true);
 

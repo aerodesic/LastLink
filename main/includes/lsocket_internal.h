@@ -17,8 +17,8 @@
 #define MAX_PACKET_ASSEMBLY     CONFIG_LASTLINK_STREAM_MAX_PACKETS_IN_ASSEMBLY
 #define MAX_SOCKET_CONNECTIONS  CONFIG_LASTLINK_STREAM_MAX_SIMULTANEOUS_CONNECTIONS
 
-#define STREAM_CONNECT_TIMEOUT   5000   /* 5 seconds */
-#define STREAM_CONNECT_RETRIES   10
+#define STREAM_CONNECT_MAX_TIME   10000   /* 10 seconds */
+#define STREAM_CONNECT_RETRIES    10
 
 /*
  * How often we check the send_output_window results when closing.
@@ -28,8 +28,8 @@
 #define STREAM_FLUSH_TIMEOUT     500    /* .5 seconds */
 #define STREAM_FLUSH_RETRIES     120    /* 60 seconds worth */
 
-#define STREAM_DISCONNECT_TIMEOUT 5000  /* 5 seconds */
-#define STREAM_DISCONNECT_RETRIES 5
+#define STREAM_DISCONNECT_MAX_TIME 10000  /* 10 seconds */
+#define STREAM_DISCONNECT_RETRIES  5
 
 /*
  * Pings are always directed to a target node, but routed as all data packets.
@@ -92,6 +92,7 @@
 // #define  STREAM_FLAGS_UNUSED_D         0x0D
 // #define  STREAM_FLAGS_UNUSED_E         0x0E
 // #define  STREAM_FLAGS_UNUSED_F         0x0F
+#define   STREAM_FLAGS_BITS               0xF0
 #define   STREAM_FLAGS_ACKNUM             0x10   /* ACK Sequence number is present */
 // #define  STREAM_FLAGS_UNUSED           0xE0   /* Unused flags */
 #define STREAM_SEQUENCE                (STREAM_FLAGS + FLAGS_LEN)
@@ -106,7 +107,7 @@
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
 /* Set to add debugging logic to socket and global socket locking */
-#undef SOCKET_LOCKING_DEBUG
+#define SOCKET_LOCKING_DEBUG
 
 typedef enum {
     LS_STATE_IDLE = 0,                           /* Idle - not connected */
@@ -165,9 +166,16 @@ typedef struct ls_socket {
            /* state machine retry stuff */
            simpletimer_t           state_machine_timer;
            int                     state_machine_retries;
-           bool                    (*state_machine_action)(ls_socket_t *socket);
-           void                    (*state_machine_results)(ls_socket_t *socket, ls_error_t error);
+           int                     (*state_machine_action_callback)(ls_socket_t *socket);
+#define STATE_MACHINE_ACTION_NONE      (-1)          /* No action required on return */
+#define STATE_MACHINE_ACTION_PAUSE     (-2)          /* Pause state machine for delayed action */
+#define STATE_MACHINE_ACTION_SUCCESS   (-3)          /* Finished with success */
+#define STATE_MACHINE_ACTION_RETRY     (-4)          /* Retry with another timeout */
+/* Negative numbers out of this range are return error codes */
+           void                    (*state_machine_results_callback)(ls_socket_t *socket, ls_error_t error);
+#define STATE_MACHINE_RESULTS_TO_QUEUE  NULL
            os_queue_t              state_machine_results_queue;
+           bool                    state_machine_running;  /* Mostly for debug */
 
            /* Deals with residue of left over data on packets between read calls */
            packet_t*               current_read_packet;

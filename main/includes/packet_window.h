@@ -6,9 +6,7 @@
  *
  */
 #ifndef __packet_window_h_included
-#define __packet_window_h_included
-
-#undef PACKET_WINDOW_LOCKING_DEBUG
+#define __packet_window_h_included #undef PACKET_WINDOW_LOCKING_DEBUG
 
 #include "packets.h"
 #include "os_specific.h"
@@ -28,11 +26,13 @@ typedef struct packet_window {
 #endif /* PACKET_WINDOW_LOCKING_DEBUG */
     os_semaphore_t      available;         /* Number of sequentially available packets from queue[0] */
     os_semaphore_t      room;              /* 'released' when a slot may have become available */
-    bool                shutdown;          /* Shuts down input stream when queue is empty */
+    bool                shutdown;          /* Shuts down window when queue is empty */
     int                 sequence;          /* Sequence number of first packet in queue */
-    int                 length;            /* Number of slots in queue */
+    int                 length;            /* Number of slots to use in queue */
+    int                 size;              /* Number physical slots available in queue */
     int                 num_in_queue;      /* Slots in use */
-    bool                reader_busy;       /* True when reader is blocked on waiting for packet */
+    int                 next_in_queue;     /* Next contiguous slot in queue */
+    bool                user_blocked;      /* True when user is blocked on waiting for window */
     packet_slot_t       queue[1];          /* Queue of packets with sequence numbers */
 } packet_window_t;
 
@@ -61,11 +61,14 @@ packet_window_t *packet_window_create(int slots);
 /* Free all subordinate information and free a packet window */
 void packet_window_release(packet_window_t *window);
 
-/* Put a packet into the window at the sequence number position. */
-int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout);
+/* Add a packet into the window at it's sequence number position. */
+int packet_window_add_random_packet(packet_window_t *window, packet_t *packet);
 
 /* Remove the next packet from the front of the window. */
-bool packet_window_remove_packet(packet_window_t *window, packet_t **packet,  int timeout);
+bool packet_window_remove_sequential_packet(packet_window_t *window, packet_t **packet,  int timeout);
+
+/* Add a sequential packet to the queue, giving it a sequence number in the process */
+bool packet_window_add_sequential_packet(packet_window_t *window, packet_t *packet, int timeout);
 
 /* Get a list of all packets in the window.  Caller needs to release when done */
 int packet_window_get_all_packets(packet_window_t *window, packet_t *packets[], int num_packets);
@@ -78,13 +81,14 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
 
 void packet_window_shutdown_window(packet_window_t *window);
 
-bool packet_window_is_window_shutdown(packet_window_t *window);
+bool packet_window_is_shutdown(packet_window_t *window);
 
 int packet_window_packet_count(packet_window_t *window);
 
-int packet_window_next_sequence(packet_window_t *window);
+bool packet_window_user_is_blocked(packet_window_t *window);
 
-bool packet_window_is_reader_busy(packet_window_t *window);
+void packet_window_trigger_available(packet_window_t *window);
 
+void packet_window_trigger_room(packet_window_t *window);
 
 #endif /* __packet_window_h_include */

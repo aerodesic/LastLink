@@ -8,6 +8,8 @@
  */
 #ifdef CONFIG_LASTLINK_RADIO_SX127x_ENABLED
 
+#define LORA_HEADER_OVERHEAD   22
+
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,23 +69,28 @@ static void global_interrupt_handler(void* param);
 static bool radio_stop(radio_t* radio);
 static bool release_lock(radio_t* radio);
 static bool radio_start(radio_t* radio);
-static int  get_packet_snr(radio_t* radio);
+static int get_packet_snr(radio_t* radio);
 static bool set_transmit_mode(radio_t* radio);
 static int get_packet_rssi(radio_t* radio);
 static bool acquire_lock(radio_t* radio);
 static bool release_lock(radio_t* radio);
 static bool set_bandwidth(radio_t* radio, int bw);
 static bool set_spreading_factor(radio_t*, int spreading_factor);
-static int  get_spreading_factor(radio_t* radio);
-static int  get_message_time(radio_t* radio, int length);
+static int get_message_time(radio_t* radio, int length);
 static int set_coding_rate(radio_t* radio, int rate);
 static int set_preamble_length(radio_t* radio, int length);
+#ifdef NOTUSED
+static int get_preamble_length(radio_t* radio);
+static int get_coding_rate(radio_t* radio);
+static int get_spreading_factor(radio_t* radio);
+#endif
 static int set_enable_crc(radio_t* radio, bool enable);
 static bool set_hop_period(radio_t* radio, int hop_period);
 static bool set_implicit_header(radio_t* radio, bool implicit_header);
 static bool set_sync_word(radio_t* radio, uint8_t sync);
 static bool enable_irq(radio_t* radio, uint8_t mask);
 static bool disable_irq(radio_t* radio, uint8_t mask);
+static void update_data_rate(radio_t* radio);
 
 /* Define the selected frequency domain */
 #include "sx127x_table.h"
@@ -128,6 +135,7 @@ typedef struct sx127x_private_data {
     int               datarate;
     int               bandwidth;
     uint8_t           spreading_factor;
+    int               data_rate_bps;
     uint8_t           tx_power;
     int               rx_interrupts;
 #define RX_TIMEOUT_TIME  1000
@@ -189,14 +197,20 @@ typedef struct handler_queue_item {
         HQI_WAKEUP,
         HQI_TIMER,
     } type; 
+    handler_state_t state;  
 } handler_queue_item_t;
 
 /* Called when radio's wakeup timer fires - generates 'interrupt' to handler */
 static void wakeup_timer(os_timer_t timer_id)
 {
+    radio_t *radio = (radio_t*) os_get_timer_data(timer_id);
+
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+    
     handler_queue_item_t item = {
-        .radio = (radio_t*) os_get_timer_data(timer_id),
         .type = HQI_TIMER,
+        .radio = radio,
+        .state = data->handler_state,
     };
 
     os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
@@ -237,6 +251,7 @@ bool sx127x_create(radio_t* radio)
         radio->set_datarate     = set_datarate;
         radio->get_datarate     = get_datarate;
         radio->transmit_start   = transmit_start;
+        radio->get_message_time = get_message_time;
 
         /* Allocate a data block for local data */
         radio->driver_private_data = malloc(sizeof(sx127x_private_data_t));
@@ -285,6 +300,7 @@ bool sx127x_create(radio_t* radio)
             handler_queue_item_t item = {
                 .radio = radio,
                 .type = HQI_WAKEUP,
+                .state = data->handler_state,
             };
 
             os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
@@ -359,7 +375,7 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
                     if (crcok) {
                        length = length - 2;
                     }
-  #if 1
+  #if 0
                     else {
                         /* Calculate crc on the base and display calculated and wanted values for debugging */
                         unsigned crc_wanted = calc_crc16(CRC16_SEED, packet->buffer, length - 2);
@@ -437,15 +453,6 @@ static bool write_packet(radio_t* radio, packet_t* packet)
 {
     bool ok = false;
 
-#if 0
-    int current = radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH);
-    if (current != 0) {
-        ESP_LOGE(TAG, "%s: PAYLOAD_LENGTH is not 0: %d", __func__, current);
-        /* Reset payload length */
-        radio->write_register(radio, SX127x_REG_PAYLOAD_LENGTH, 0);
-    }
-#endif
-
 #ifdef CONFIG_LASTLINK_CRC16_PACKETS
     /* Compute crc to add to message.  Can't modify packet as it may be sent more
      * than one place.  Need to compute and send crc separately.
@@ -482,9 +489,9 @@ static void tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
 
     /* Discard current queue entry */
     if (data->current_packet != NULL) {
-        data->current_packet->queued--;
+        data->current_packet->transmitting--;
         /* Tell any interested listener that it has been transmitted */
-        packet_tell_transmitted_callback(data->current_packet);
+        packet_tell_transmitted_callback(data->current_packet, radio);
         release_packet(data->current_packet);
         data->current_packet = NULL;
     }
@@ -526,12 +533,15 @@ static void tx_start_packet(radio_t *radio, sx127x_private_data_t *data)
 /* Force start transmit interrupt handler */
 static void transmit_start(radio_t *radio)
 {
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
     if (acquire_lock(radio)) {
 
         /* Transmitter is idle - issue a wakeup call */
         handler_queue_item_t item = {
             .radio = radio,
             .type = HQI_WAKEUP,
+            .state = data->handler_state,
         };
 
         os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
@@ -568,6 +578,9 @@ static void global_interrupt_handler(void* param)
 
                 if (item.type == HQI_TIMER) {
                     simpletimer_stop(&data->wakeup_timer_status);
+if (item.state != data->handler_state) {
+  printf("handler timer state %s in %s\n", handler_state_of(item.state), handler_state_of(data->handler_state));
+}
                 }
 
                 data->handler_cycles++;
@@ -1250,15 +1263,19 @@ ESP_LOGI(TAG, "%s: %d", __func__, bw);
         release_lock(radio);
     }
 
+    update_data_rate(radio);
+
     return ok;
 }
 
+#ifdef NOTUSED
 static int get_bandwidth(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     return data->bandwidth;
 }
+#endif
 
 static bool set_spreading_factor(radio_t* radio, int spreading_factor)
 {
@@ -1304,15 +1321,19 @@ ESP_LOGI(TAG, "%s: sf %d", __func__, spreading_factor);
         }
     }
 
+    update_data_rate(radio);
+
     return ok;
 }
 
+#ifdef NOTUSED
 static int get_spreading_factor(radio_t* radio)
 {
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     return data->spreading_factor;
 }
+#endif
 
 
 static int set_coding_rate(radio_t* radio, int rate)
@@ -1324,6 +1345,9 @@ static int set_coding_rate(radio_t* radio, int rate)
 ESP_LOGI(TAG, "%s: %d", __func__, rate);
 
         if (acquire_lock(radio)) {
+            sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+            data->coding_rate = rate;
+
             int config1 = radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1);
             if (config1 >= 0) {
                 ok = radio->write_register(radio, SX127x_REG_MODEM_CONFIG_1, (config1 & 0xF1) | ((rate - 4) << 1));
@@ -1333,8 +1357,20 @@ ESP_LOGI(TAG, "%s: %d", __func__, rate);
         }
     }
 
+    update_data_rate(radio);
+
     return ok;
 }
+
+#ifdef NOTUSED
+static int get_coding_rate(radio_t* radio)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    return data->coding_rate;
+}
+#endif
+
 
 
 static int set_preamble_length(radio_t* radio, int length)
@@ -1344,14 +1380,29 @@ ESP_LOGI(TAG, "%s: length %d", __func__, length);
 
     if (acquire_lock(radio)) {
 
+        sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+        data->preamble_length = length;
+
         ok = radio->write_register(radio, SX127x_REG_PREAMBLE_MSB, (length >> 8)) &&
              radio->write_register(radio, SX127x_REG_PREAMBLE_LSB, length);
 
         release_lock(radio);
     }
 
+    update_data_rate(radio);
+
     return ok;
 }
+
+#ifdef NOTUSED
+static int get_preamble_lengt(radio_t *radio)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    return data->preamble_length;
+}
+#endif
+
 
 static int set_enable_crc(radio_t* radio, bool enable)
 {
@@ -1438,11 +1489,24 @@ ESP_LOGI(TAG, "%s: enable %s", __func__, implicit_header ? "TRUE" : "FALSE");
 }
 
 /*
- * Return message time in milliseconds for a packet of given length.
+ * Calculates BPS for selected data rate
+ */
+static void update_data_rate(radio_t *radio)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth) / (data->coding_rate * (1 << data->spreading_factor));
+}
+
+/*
+ * Return message time in milliseconds for a packet of given length in bytes (plus preamble overhead.)
  */
 static int get_message_time(radio_t* radio, int length)
 {
-    int time = (length * (1 << get_spreading_factor(radio)) * 1000) / get_bandwidth(radio);
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    int time = ((length + data->preamble_length + LORA_HEADER_OVERHEAD) * 8 * 1000) / data->data_rate_bps;
+
 //ESP_LOGI(TAG, "%s: sf %d bw %d length %d is %d", __func__, get_spreading_factor(radio), get_bandwidth(radio), length, time);
     return time;
 }
@@ -1452,12 +1516,16 @@ static int get_message_time(radio_t* radio, int length)
  * All interrupts come here and are queued for later processing by a global handling thread.
  */
 static void catch_interrupt(void *param)
-{
+{            
+    radio_t *radio = (radio_t*) param;
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
     bool awakened;
 
     handler_queue_item_t item = {
-        .radio = (radio_t*) param,
+        .radio = radio,
         .type = HQI_INTERRUPT,
+        .state = data->handler_state,
     };
 
     os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) &item, &awakened);

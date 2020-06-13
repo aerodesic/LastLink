@@ -174,7 +174,7 @@ bool route_delete(route_t* r)
                 linklayer_print_packet("PENDING PACKETS", p);
 
                 /* Tell supplier if it needs to know when route is complete */
-                packet_tell_routed_callback(p, false);
+                packet_tell_routed_callback(p, false, linklayer_get_radio_from_number(r->radio_num));
 
                 release_packet(p);
             }
@@ -287,7 +287,7 @@ void route_release_packets(route_t* r)
 
                 /* Direct it to specific radio */
                 p->radio_num = r->radio_num;
-                if (packet_tell_routed_callback(p, true)) {
+                if (packet_tell_routed_callback(p, true, linklayer_get_radio_from_number(r->radio_num))) {
 	                linklayer_route_packet(p);
                 } else {
                     /* Cancel the packet */

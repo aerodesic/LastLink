@@ -20,11 +20,12 @@ typedef int ls_error_t;
 typedef enum {
     LSE_NO_ERROR         = 0,
     LSE_CLOSED           = -1000,
-    LSE_NOT_OPENED       = -1002,
-    LSE_CANNOT_REGISTER  = -1003,
-    LSE_INVALID_SOCKET   = -1004,
-    LSE_NO_MEM           = -1005,
-    LSE_TIMEOUT          = -1006,
+    LSE_NOT_OPENED       = -1001,
+    LSE_CANNOT_REGISTER  = -1002,
+    LSE_INVALID_SOCKET   = -1003,
+    LSE_NO_MEM           = -1004,
+    LSE_TIMEOUT          = -1005,
+    LSE_FAILED           = -1006,
     LSE_NO_ROUTE         = -1007,
     LSE_BAD_TYPE         = -1008,
     LSE_SYSTEM_ERROR     = -1009,
@@ -36,7 +37,7 @@ typedef enum {
     LSE_DISCONNECTING    = -1015,    /* Is disconneting */
     LSE_DISCONNECTED     = -1016,
     LSE_NOT_CONNECTED    = -1017,    /* No connect() issued */
-    LSE_NOT_BOUND        = -1019,    /* No bind() issued */
+    LSE_NOT_BOUND        = -1018,    /* No bind() issued */
 
     LSE_NOT_IMPLEMENTED  = -1999,
 } ls_errors_t;

@@ -342,21 +342,31 @@ menu "LastLink Configuration"
         help
             The number of times to retry sending the output queue before giving up.
 
-        config LASTLINK_STREAM_TRANSMIT_RETRY_TIME
+        config LASTLINK_STREAM_TRANSMIT_OVERHEAD_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER
-        int "Packet retransmit delay"
-        default 100
-        range 50 10000
+        int "Base packet overhead time"
+        default 300
+        range 0 5000
         help
-            This is retransmission delay time for sending a window of
-            packets to the destination.  It represents how long to wait
-            for a reply to the transmission.  It is expressed in milliseconds,
-            but is adjusted by the metric delay to the target (based on the
-            current route table entry.)  The value will be multiplied by
-            "2 * metric" (allowing for receive and transmit at each routed
-            node.)  This value is multiplied by 2 for each failed reply until
-            it reaches a maximum of "MAXIMUM RETRY TIME".
-            
+            This is a base time (in milliseconds) added to every calculation
+            of packet transmission time estimates.
+
+        config LASTLINK_STREAM_TRANSMIT_RETRY_FACTOR
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        int "Packet retransmit factor"
+        default 100
+        range 50 1000
+        help
+            This factor (represented as a percentage) represents the
+            amount of time to expect completion of a message transmitted
+            to a target node and a reply returned to the send (considering
+            the number of hops involved).  The calculation is:
+
+                FACTOR * (<message time> * (<hops to target> * 4 - 2)) / 100
+
+            Each message must take path that is an inbound and outbound
+            delay to each node except the first and last. and the response
+            must travel back the same path.
 
         config LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME
         depends on LASTLINK_ENABLE_SOCKET_LAYER

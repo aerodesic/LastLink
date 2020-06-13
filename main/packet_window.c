@@ -58,11 +58,11 @@ bool packet_window_unlock_debug(packet_window_t *window, const char *file, int l
 }
 #endif
 
-/* Return number of slots discarded */
-static int packet_window_discard_top_packet(packet_window_t *window)
+/*
+ * Discard the top slot in the queue.
+ */
+static void packet_window_discard_top_packet(packet_window_t *window)
 {
-    int slot;
-
     if (window != NULL) {
 
         assert(window->queue[0].inuse);
@@ -72,24 +72,31 @@ static int packet_window_discard_top_packet(packet_window_t *window)
          * active packet or the end of list list.
          */
         do {
+            /* Release the top packet if not NULL */
+            if (window->queue[0].packet != NULL) {
+                release_packet(window->queue[0].packet);
+                /* One fewer element in queue */
+                assert(window->num_in_queue != 0);
+                window->num_in_queue--;
+            }
+
             memcpy(window->queue, window->queue + 1, sizeof(window->queue[0]) * (window->length - 1));
             window->queue[window->length -  1].packet = NULL;
             window->queue[window->length -  1].inuse = false;
             window->queue[window->length -  1].sequence = 0;
 
-            /* Release the slot for reuse */
-            os_release_counting_semaphore(window->room);
-
             /* Adjust to the first sequence number in the list */
             window->sequence++;
 
+            /* Next entry position is moved up */
+            assert(window->next_in_queue != 0);
+            window->next_in_queue--;
+
+            /* Release the slot for reuse */
+            os_release_counting_semaphore(window->room);
+
         } while (window->queue[0].inuse && window->queue[0].packet == NULL);
-
-    } else {
-        slot = 0;
     }
-
-    return slot;
 }
 
 packet_window_t *packet_window_create(int slots)
@@ -98,12 +105,39 @@ packet_window_t *packet_window_create(int slots)
 
     packet_window_t *window = (packet_window_t *) malloc(size);
     if (window != NULL) {
+
         memset(window, 0, size);
 
+        window->size = slots;
         window->length = slots;
         window->lock = os_create_recursive_mutex();
+
+        /*
+         * These semaphores are primarily used for the sequential packet process involved
+         * with the user-level reading (available) and writing (room) of packets.
+         */
+
+        /*
+         * The 'available' semaphore tracks the number of sequentially available packets in queue
+         * relative to the first slot.  If, for example, the packets arrived in the order:
+         *     3, 2, 1, 0
+         * the 'available' semaphore would not be triggered until packet 0, as the slots were not
+         * contiquous, and at that time it would be triggered four times, thus making all four
+         * packets available for sequential removal.
+         *
+         * 'available' is 'released' by the add_random_packet insertion process and 'acquired'
+         * by the remove_sequential_packet method for user-level reading.
+         */
         window->available = os_create_counting_semaphore(slots, 0);
-        window->room = os_create_counting_semaphore(slots, 0);
+
+        /*
+         * The 'room' semaphore tracks the number of sequentially available slots beyond the
+         * last sequentially written slot in the queue.
+         *
+         * It is 'released' when the queue is rolled up upon packet removal and 'acquired'
+         * when the user-level add_sequential_packet is storing a new packet.
+         */
+        window->room = os_create_counting_semaphore(slots, slots);
 
         if (window->lock == NULL || window->available == NULL || window->room == NULL) {
             packet_window_release(window);
@@ -152,11 +186,79 @@ void packet_window_release(packet_window_t *window)
     }
 }
 
+void packet_window_trigger_available(packet_window_t *window)
+{
+    os_release_counting_semaphore(window->available);
+}
+
+void packet_window_trigger_room(packet_window_t *window)
+{
+    os_release_counting_semaphore(window->room);
+}
+
 
 /*
- * packet_window_add_packet
+ * packet_window_add_sequential_packet
  *
- * Insert a packet into the window.  It's sequence number must be between
+ * Add the packet to the next sequential slot in the queue.
+ *
+ * The sequence number of the packet will be assigned as it's placed in the queue.
+ *
+ * Only called from user level code at the moment.
+ *
+ * Entry:
+ *    window        packet window receiving the packet
+ *    packet        the packet to be added
+ *    timeout       timeout value (<0 for indefinite) to wait until success.
+ *
+ * returns true if success or false if failure
+ */
+bool packet_window_add_sequential_packet(packet_window_t *window, packet_t *packet, int timeout)
+{
+    bool success = false;
+
+    if (window != NULL) {
+
+        /* Wait for room */
+        os_acquire_semaphore(window->room);
+
+        packet_window_lock(window);
+
+        /* Ensure the queue isn't full */
+        assert(window->next_in_queue != window->length);
+
+        /* And the slot is not in use */
+        assert(!window->queue[window->next_in_queue].inuse);
+        
+        /* Allocate a sequence number for this packet */
+        int sequence = window->sequence + window->next_in_queue;
+
+        /* Assign the correct sequence number to the packet */
+        set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
+
+        /* Add the packet to the queue */
+        window->queue[window->next_in_queue].packet = ref_packet(packet);
+        window->queue[window->next_in_queue].sequence = sequence;
+        window->queue[window->next_in_queue].inuse = true;
+
+        /* Update to the next available sequential slot */
+        window->next_in_queue++;
+
+        /* Keep track of how many packets are in queue */
+        window->num_in_queue++;
+ 
+        packet_window_unlock(window);
+
+        success = true;
+    }
+
+    return success;
+}
+
+/*
+ * packet_window_add_random_packet
+ *
+ * Randomly insert a packet into the window.  It's sequence number must be between
  * <sequence> and <sequence> + <length>.  If not, it returns false.
  *
  * If it's sequence number is one beyond the length and 'timeout' is < 0,
@@ -165,60 +267,48 @@ void packet_window_release(packet_window_t *window)
  * Entry:
  *    window           The packet window object.
  *    packet           The packet to store
- *    sequence         The packet's sequence number.
- *    timeout          -1 to wait forever, otherwise ms to wait for data; 0 is test and return immediately.
  *
  * Returns 0 if success; <0 if full and >0 if duplicate packet
  */
-int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequence, int timeout)
+int packet_window_add_random_packet(packet_window_t *window, packet_t *packet)
 {
     int results = -1;
-    bool fail = false;
 
     if (window != NULL) {
 
+        int sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
+
         packet_window_lock(window);
 
-        while (results < 0 && !fail) {
+        /* Highest sequence number permitted in this queue at the moment */
+        int highest_sequence = window->sequence + window->length - 1;
 
-            if (sequence >= window->sequence && sequence < window->sequence + window->length) {
+        if (sequence >= window->sequence && sequence <= highest_sequence) {
 
-                int slot = sequence - window->sequence;
+            int slot = sequence - window->sequence;
 
-                /* Put the packet into the window slot if not already in use */
-                if (! window->queue[slot].inuse) {
-                    window->queue[slot].packet = ref_packet(packet);
-                    window->queue[slot].sequence = sequence;
-                    window->queue[slot].inuse = true;
-                    window->num_in_queue++;
+            /* Put the packet into the window slot if not already in use */
+            if (! window->queue[slot].inuse) {
+                window->queue[slot].packet = ref_packet(packet);
+                window->queue[slot].sequence = sequence;
+                window->queue[slot].inuse = true;
+
+                /*
+                 * Release this packet plus consecutive packets beyond it to available state.
+                 */
+                while (window->next_in_queue < window->length && window->queue[window->next_in_queue].inuse) {
                     os_release_counting_semaphore(window->available);
-
-                    results = 0;
-                } else {
-                    /* Packet already there - it must have the same sequence as expected */
-                    assert(sequence == window->queue[slot].sequence);
-                    /* Not using, so discard */
-                    results = 1;
+                    window->next_in_queue++;
                 }
 
-            /* If a timeout was specified, wait that amount and then try again but don't wait second time if not -1 */
-            } else if (timeout != 0) {
+                window->num_in_queue++;
 
-                /* No place for packet, so wait until room */
-                packet_window_unlock(window);
-
-                /* Wait for something to release some room */
-                os_acquire_counting_semaphore_with_timeout(window->room, timeout);
-
-                /* Acquire the window and scan again */
-                packet_window_lock(window);
-
-                /* Don't wait second time through if not a forever wait */
-                if (timeout > 0) {
-                    timeout = 0;
-                }
+                results = 0;
             } else {
-                fail = true;
+                /* Packet already there - it must have the same sequence as expected */
+                assert(sequence == window->queue[slot].sequence);
+                /* Not using, so discard */
+                results = 1;
             }
         }
 
@@ -229,7 +319,7 @@ int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequ
 }
 
 /*
- * packet_window_remove_packet
+ * packet_window_remove_sequential_packet
  *
  * Always removes packets from window from front of queue.
  *
@@ -240,37 +330,41 @@ int packet_window_add_packet(packet_window_t *window, packet_t *packet, int sequ
  *
  * Returns true if a packet removed with the packet in the 'packet' variable.
  */
-bool packet_window_remove_packet(packet_window_t *window, packet_t **packet, int timeout)
+bool packet_window_remove_sequential_packet(packet_window_t *window, packet_t **packet, int timeout)
 {
     bool ok = false;
 
     if (window != NULL) {
         do {
+            packet_window_lock(window);
+
             /* If shutdown is set when the queue is empty, return a NULL packet */
-            if (packet_window_is_window_shutdown(window) && window->num_in_queue == 0) {
+            if (packet_window_is_shutdown(window) && window->num_in_queue == 0) {
                 *packet = NULL;
                 ok = true;
+
             } else {
-                if (window->queue[0].packet == NULL) {
-                    /* Wait for a release */
-                    window->reader_busy = true;
-                    os_acquire_counting_semaphore_with_timeout(window->available, timeout);
-                    window->reader_busy = false;
-                }
+
+                /* Wait for data to appear in window */
+                window->user_blocked = true;
+                packet_window_unlock(window);
+
+                os_acquire_counting_semaphore_with_timeout(window->available, timeout);
 
                 packet_window_lock(window);
+                window->user_blocked = false;
 
                 if (window->queue[0].inuse && window->queue[0].packet != NULL) {
-                    *packet = window->queue[0].packet;
-                    window->num_in_queue--;
+                    *packet = ref_packet(window->queue[0].packet);
                     packet_window_discard_top_packet(window);
                     ok = true;
                 } else {
                     ok = false;
                 }
 
-                packet_window_unlock(window);
             }
+
+            packet_window_unlock(window);
 
         } while (!ok && timeout < 0);
     }
@@ -336,13 +430,14 @@ bool packet_window_get_processed_packets(packet_window_t *window, int *sequence,
 
         int window_sequence = window->sequence;
 
-        /* Find first packet out of sequence and ack to include that */
+        /* Find the first packet that hasn't been received */
         for (slot = 0; !done && slot < window->length; ++slot) {
-            if (window->queue[slot].inuse) {
+            if (window->queue[slot].inuse && window->queue[slot].packet != NULL) {
                 /* The sequence number of the packet must be the window sequence number + slot number */
                 assert(window->queue[slot].sequence == window_sequence);
                 window_sequence++;
             } else {
+                /* Found a hole */
                 done = true;
             }
         }
@@ -350,11 +445,15 @@ bool packet_window_get_processed_packets(packet_window_t *window, int *sequence,
         *sequence = window_sequence;   /* Next *expected* sequence number */
         *packet_mask = 0;
 
+        unsigned int bit = 1;
+
+        /* Now set a bit for all packets that HAVE been received past this point */
         while (slot < window->length) {
-            if (window->queue[slot].inuse && window->queue[slot].packet == NULL) {
-                /* Bitmask of extra packets that have been removed */
-                *packet_mask |= (1 << (slot - 1));
+            if (window->queue[slot].inuse) {
+                /* Bitmask of extra packets that have been received */
+                *packet_mask |= bit;
             }
+            bit <<= 1;
             ++slot;
         }
     
@@ -383,12 +482,6 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
     
         /* Remove all directly acknowledged packets */
         while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
-            window->num_in_queue--;
-            if (window->queue[0].packet != NULL) {
-                release_packet(window->queue[0].packet);
-                /* Keep available count correct */
-                assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
-            }
             packet_window_discard_top_packet(window);
         }
     
@@ -396,29 +489,27 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
         for (int slot = 1; packet_mask != 0 && slot < window->length; ++slot) {
             if ((packet_mask & 1) != 0) {
                 if (window->queue[slot].inuse) {
+printf("%s: removing from slot %d: %d\n", __func__, slot, window->queue[slot].sequence);
                     /* Release the packet to the pool */
-                    window->num_in_queue--;
                     if (window->queue[slot].packet != NULL) {
                         release_packet(window->queue[slot].packet);
     
-                        /* Count the packet as processed */
+                        /* Count the packet as processed (but leave slot 'in use') */
                         window->queue[slot].packet = NULL;
-    
-                        /* Remove from available count */
-                        assert(os_acquire_counting_semaphore_with_timeout(window->available, 0));
+
+                        /* Fix number of actual packets left in queue */
+                        assert(window->num_in_queue != 0);
+                        window->num_in_queue--;
+                    } else {
+                        ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
+                                 __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
                     }
                 } else {
-                    ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
-                             __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
+                    ESP_LOGE(TAG, "%s: releasing not-in-use packet slot %d in window %d to %d",
+                             __func__, slot, window->sequence, window->sequence + window->length - 1);
                 }
             }
             packet_mask >>= 1;
-        }
-    
-        /* Now roll up all empty slots and adjust window counts */
-        /* Remove all directly acknowledged packets */
-        while (window->queue[0].inuse && window->queue[0].packet == NULL) {
-            packet_window_discard_top_packet(window);
         }
     
         packet_window_unlock(window);
@@ -437,7 +528,7 @@ void packet_window_shutdown_window(packet_window_t *window)
     }
 }
 
-bool packet_window_is_window_shutdown(packet_window_t *window)
+bool packet_window_is_shutdown(packet_window_t *window)
 {
     return window ? window->shutdown : true;
 }
@@ -447,32 +538,27 @@ int packet_window_packet_count(packet_window_t *window)
     return window ? window->num_in_queue : 0;
 }
 
-/* The next available sequence number for outbound packets */
-int packet_window_next_sequence(packet_window_t *window)
+bool packet_window_user_is_blocked(packet_window_t *window)
 {
-    return window ? (window->sequence + packet_window_packet_count(window)) : 0;
-}
-
-bool packet_window_is_reader_busy(packet_window_t *window)
-{
-    return window ? window->reader_busy : false;
+    return window ? window->user_blocked : false;
 }
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
 
+/* The last # has to be the largest */
 static int sequence_number_order[] = {
-    3,2,1,0,6,7,5,4,8,9,10
+    3,2,1,0,6,7,5,4,8,9,10,12,13,14,15,16,17,18,11,19
 };
 
-#define TEST_WINDOW_SIZE 5
+#define TEST_WINDOW_SIZE 8
 
 os_thread_t consumer_thread;
 
 /*
  * This thread accepts packets out of order and receives them in sequence number order.
  */
-void packet_window_receiver(void *param)
+void packet_window_receive_sequential(void *param)
 {
     packet_window_t *window = (packet_window_t*) param;
 
@@ -483,35 +569,37 @@ void packet_window_receiver(void *param)
     do {
         packet_t *packet;
 
-        if (packet_window_remove_packet(window, &packet, /* timeout */ -1)) {
-            ESP_LOGI(TAG, "%s: got a packet %p", __func__, packet);
+        if (packet_window_remove_sequential_packet(window, &packet, /* timeout */ -1)) {
+            printf("%s: got a packet %p\n", __func__, packet);
             sequence = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
             const char* data = get_str_field(packet, STREAM_PAYLOAD, packet->length - STREAM_PAYLOAD);
-            ESP_LOGE(TAG, "%s: packet %d: \"%s\"", __func__, sequence, data);
+            printf("%s: packet %d: \"%s\"\n", __func__, sequence, data);
             free((void*) data);
             release_packet(packet);
 
+#if 0
             int sequence;
             uint32_t packet_mask;
             packet_window_get_processed_packets(window, &sequence, &packet_mask);
-            ESP_LOGI(TAG, "%s: accepted sequence numbers: %d %04x", __func__, sequence, packet_mask);
+            printf("%s: accepted sequence numbers: %d %04x\n", __func__, sequence, packet_mask);
 
             packet_t *packets[TEST_WINDOW_SIZE];
             int num = packet_window_get_all_packets(window, packets, ELEMENTS_OF(packets));
             for (int n = 0; n < num; ++n) {
                 if (packets[n] != NULL) {
-                    ESP_LOGI(TAG, "%s: packet %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                    printf("%s: packet %d is %d\n", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                     release_packet(packets[n]);
                 } else {
-                    ESP_LOGI(TAG, "%s: slot %d is empty", __func__, n);
+                    printf("%s: slot %d is empty\n", __func__, n);
                 }
             }
+#endif
         } else {
-            ESP_LOGI(TAG, "%s: no data", __func__);
+            printf("%s: no data\n", __func__);
         }
     } while (sequence != sequence_number_order[ELEMENTS_OF(sequence_number_order)-1]);
 
-    ESP_LOGI(TAG, "%s: exiting", __func__);
+    printf("%s: exiting\n", __func__);
 
     consumer_thread = NULL;
 
@@ -521,33 +609,36 @@ void packet_window_receiver(void *param)
 /*
  * This thread accepts sequentially generated packets and 'sends' and acknowledges out of order.
  */
-void packet_window_transmitter(void *param)
+void packet_window_receive_random(void *param)
 {
     packet_window_t *window = (packet_window_t*) param;
 
-    ESP_LOGI(TAG, "%s: running", __func__);
+    printf("%s: running\n", __func__);
 
-    int sequence = -1;
+    int num_packets;
 
     do {
         os_delay(1000);
+
         packet_t *packets[TEST_WINDOW_SIZE];
-        int num = packet_window_get_all_packets(window, packets, ELEMENTS_OF(packets));
+        num_packets = packet_window_get_all_packets(window, packets, ELEMENTS_OF(packets));
+
+#if 0
         for (int n = 0; n < num; ++n) {
             if (packets[n] != NULL) {
-                ESP_LOGI(TAG, "%s: packet %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                printf("%s: packet %d is %d\n", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                 release_packet(packets[n]);
             } else {
-                ESP_LOGI(TAG, "%s: packet %d is NULL", __func__, n);
+                printf("%s: packet %d is NULL\n", __func__, n);
             }
         }
-
-        if (num != 0) {
+#endif
+        if (num_packets != 0) {
             /* Pick a random one to remove and 'process' */
-            int packet_num = esp_random() % num;
+            int packet_num = esp_random() % num_packets;
             int sequence = get_uint_field(packets[packet_num], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
 
-            ESP_LOGI(TAG, "%s: processing packet %d window is %d to %d", __func__, sequence, window->sequence, window->sequence + window->length - 1);
+            printf("%s: processing packet %d window is %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);
 
             uint32_t packet_mask;
             if (sequence > window->sequence) {
@@ -556,31 +647,33 @@ void packet_window_transmitter(void *param)
             } else {
                 /* First in window, so just pull the top element */
                 sequence = sequence + 1;
+                packet_mask = 0;
             }
 
-            ESP_LOGI(TAG, "%s: releasing sequence %d mask %04x", __func__, sequence, packet_mask);
+            //printf("%s: releasing sequence %d mask %04x\n", __func__, sequence, packet_mask);
             packet_window_release_processed_packets(window, sequence, packet_mask);
 
+#if 0
             packet_window_get_processed_packets(window, &sequence, &packet_mask);
-            ESP_LOGI(TAG, "%s: window sequence is %d mask %04x", __func__, sequence, packet_mask);
+            printf("%s: window sequence is %d mask %04x\n", __func__, sequence, packet_mask);
 
             packet_t *packets[TEST_WINDOW_SIZE];
             int num = packet_window_get_all_packets(window, packets, ELEMENTS_OF(packets));
             for (int n = 0; n < num; ++n) {
                 if (packets[n] != NULL) {
-                    ESP_LOGI(TAG, "%s: slot %d is %d", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                    printf("%s: slot %d is %d\n", __func__, n, get_uint_field(packets[n], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                     release_packet(packets[n]);
                 } else {
-                    ESP_LOGI(TAG, "%s: slot %d is empty", __func__, n);
+                    printf("%s: slot %d is empty\n", __func__, n);
                 }
             }
-
+#endif
         } else {
-            ESP_LOGI(TAG, "%s: no data; window sequence is %d", __func__, window->sequence);
+            printf("%s: no data; window sequence is %d\n", __func__, window->sequence);
         }
-    } while (sequence != sequence_number_order[ELEMENTS_OF(sequence_number_order)-1]);
+    } while (num_packets != 0 && !packet_window_is_shutdown(window));
 
-    ESP_LOGI(TAG, "%s: exiting", __func__);
+    printf("%s: exiting\n", __func__);
 
     consumer_thread = NULL;
 
@@ -595,44 +688,80 @@ int run_packet_window_test(int argc, const char **argv)
     } else if (argc > 1) {
         /* Create input window */
         packet_window_t *window = packet_window_create(TEST_WINDOW_SIZE);
-        bool sequential;
 
         if (argv[1][0] == 'r') {
             /* Create consumer */
-            sequential = false;
-            consumer_thread = os_create_thread(packet_window_receiver, "consumer", 8192, 0, (void *) window);
-        } else {
-            sequential = true;
-            consumer_thread = os_create_thread(packet_window_transmitter, "transmitter", 8192, 0, (void *) window);
-        }
+            consumer_thread = os_create_thread(packet_window_receive_sequential, "rcv_sequential", 8192, 0, (void *) window);
 
-        /* Produce packets out of order and see they are consumed properly */
-        for (int count = 0; count < ELEMENTS_OF(sequence_number_order); ++count) {
-            packet_t *packet = allocate_packet();
-            if (packet != NULL) {
-                packet->length = STREAM_PAYLOAD;
+            /* Produce packets out of order and see they are consumed properly */
+            for (int count = 0; count < ELEMENTS_OF(sequence_number_order); ++count) {
+                packet_t *packet = allocate_packet();
+                if (packet != NULL) {
+                    packet->length = STREAM_PAYLOAD;
 
-                int sequence = sequential ? count : sequence_number_order[count];
+                    int sequence = sequence_number_order[count];
 
-                set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, STREAM_PROTOCOL);
-                set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
-                packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", sequence);
+                    set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, STREAM_PROTOCOL);
+                    set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
+                    packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", sequence);
 
-                if (!packet_window_add_packet(window, packet, sequence, /* timeout */ -1)) {
-                    ESP_LOGI(TAG, "%s: failed to insert %d", __func__, sequence);
+                    
+                    int pwa_results = packet_window_add_random_packet(window, packet);
+
+                    if (pwa_results < 0) {
+                        /* Failed so loop a few times to retry */
+                        int tries = 10;
+                        do {
+                             printf("%s: failed insert - retrying %d\n", __func__, sequence);
+                             os_delay(500);
+                             --tries;
+                        } while (tries != 0 && !packet_window_add_random_packet(window, packet));
+
+                        if (tries == 0) {
+                            printf("%s: failed to insert random %d: %d\n", __func__, count, sequence);
+                        }
+                    } else if (pwa_results > 0) {
+                        printf("%s: packet %d is duplicate\n", __func__, sequence);
+                    } else {
+                        /* All good */
+                    }
+
+                } else {
+                    printf("%s: no packets left\n", __func__);
+                    count = ELEMENTS_OF(sequence_number_order);
                 }
+            }
+        } else {
+            consumer_thread = os_create_thread(packet_window_receive_random, "rcv_random", 8192, 0, (void *) window);
 
-            } else {
-                ESP_LOGI(TAG, "%s: no packets left", __func__);
-                count = ELEMENTS_OF(sequence_number_order);
+            /* Produce packets in sequential order and see they are consumed properly */
+            for (int count = 0; count < ELEMENTS_OF(sequence_number_order); ++count) {
+                packet_t *packet = allocate_packet();
+                if (packet != NULL) {
+                    packet->length = STREAM_PAYLOAD;
+
+                    set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, STREAM_PROTOCOL);
+                    packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", count);
+
+                    
+                    if (!packet_window_add_sequential_packet(window, packet, -1)) {
+                        printf("%s: failed to insert sequential  %d\n", __func__, count);
+                    } else {
+                        printf("%s: inserted sequential %d\n", __func__, count);
+                    }
+
+                } else {
+                    printf("%s: no packets left\n", __func__);
+                    count = ELEMENTS_OF(sequence_number_order);
+                }
             }
         }
-        ESP_LOGI(TAG, "%s: exiting...", __func__);
-        if (consumer_thread != NULL) {
+
+        packet_window_shutdown_window(window);
+
+        printf("%s: exiting...\n", __func__);
+        while (consumer_thread != NULL) {
             os_delay(5000);
-        }
-        if (consumer_thread != NULL) {
-            os_delete_thread(consumer_thread);
         }
         packet_window_release(window);
     }

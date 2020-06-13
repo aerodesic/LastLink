@@ -66,7 +66,7 @@ static const char* default_packet_format(const packet_t* packet);
 
 static bool linklayer_init_radio(radio_t* radio);
 static bool linklayer_deinit_radio(radio_t*);
-static void linklayer_transmit_packet(radio_t* radio, packet_t* packet);
+static int linklayer_transmit_packet(radio_t* radio, packet_t* packet);
 
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
@@ -359,8 +359,6 @@ packet_t* linklayer_create_generic_packet(int dest, int protocol, int length)
          set_uint_field(p, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN, linklayer_node_address);
          set_uint_field(p, HEADER_DEST_ADDRESS, ADDRESS_LEN, dest);
          set_uint_field(p, HEADER_SENDER_ADDRESS, ADDRESS_LEN, linklayer_node_address);
-         // Sequence numbers are created whenever a packet is sent from this node.
-         // set_uint_field(p, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN, linklayer_allocate_sequence());
          set_uint_field(p, HEADER_PROTOCOL, PROTOCOL_LEN, protocol);
          set_uint_field(p, HEADER_METRIC, METRIC_LEN, 0);
     }
@@ -517,8 +515,6 @@ static bool routerequest_packet_process(packet_t* packet)
     if (packet != NULL) {
         if (linklayer_lock()) {
 
-            /* TODO: Need may brakes to avoid transmitting too many at once !! (Maybe ok for testing) */
-
             /* If packet is dest for our node, announce route back to origin with same seqeuence and new metric. */
             if (linklayer_packet_is_for_this_node(packet)) {
                 packet_t* ra = routeannounce_packet_create(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN));
@@ -526,7 +522,7 @@ static bool routerequest_packet_process(packet_t* packet)
                 if (ra != NULL) {
                     /* Label it as going to specific radio of origin */
                     ra->radio_num = packet->radio_num;
-                    linklayer_route_packet(ra);
+                    (void) linklayer_route_packet(ra);
 
                     handled = true;
                 }
@@ -1007,13 +1003,22 @@ int linklayer_allocate_sequence(void)
 
 /*
  * Send a packet
+ *
+ * Returns the time (int milliseconds) to transfer the message.
+ * Usually a 0 return means the message is being processed and
+ * does not require retransmitting or else it is being routed
+ * and the time is not-yet known (caller should issue a 'route complete'
+ * callback to the packet so it is informed when routing has been
+ * completed.
  */
-void linklayer_route_packet(packet_t* packet)
+int linklayer_route_packet(packet_t* packet)
 {
+    int message_time = 0;
+
     if (packet == NULL) {
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
-    } else if (packet->queued != 0) {
-        //printf("packet is still queued\n");
+    } else if (packet->transmitting != 0) {
+        printf("********************** packet is still transmitting\n");
     } else if (listen_only) {
         /* In listen-only mode, just discard sending packets */
     } else {
@@ -1044,7 +1049,7 @@ void linklayer_route_packet(packet_t* packet)
         if (dest == linklayer_node_address) {
              set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, linklayer_node_address);
              /* Tell caller the packet has been routed */
-             packet_tell_routed_callback(packet, true);
+             packet_tell_routed_callback(packet, true, NULL);
              linklayer_receive_packet(radio_table[0], ref_packet(packet));
 
         } else {
@@ -1124,20 +1129,10 @@ void linklayer_route_packet(packet_t* packet)
                         packet = NULL;
                     }
 
-                    packet_tell_routed_callback(packet, true);
+                    packet_tell_routed_callback(packet, true, radio);
                 }
                 route_table_unlock();
             }
-
-            /*
-             * TODO: we may need another method to restart transmit queue other than looking
-             * and transmit queue length.  A 'transmitting' flag (protected by meshlock) that
-             * is True if transmitting of packet is in progress.  Cleared on onTransmit when
-             * queue has become empty.
-             *
-             * This may need to be implemented to allow stalling transmission for windows of
-             * reception.  A timer will then restart the queue if items remain within it.
-             */
 
             /* If radio is NULL, packet will be sent through all radios */
             if (packet != NULL) {
@@ -1167,7 +1162,7 @@ void linklayer_route_packet(packet_t* packet)
 if (debug_flag) {
     linklayer_print_packet("OUT", packet);
 }
-                linklayer_transmit_packet(radio, ref_packet(packet));
+                message_time = linklayer_transmit_packet(radio, ref_packet(packet));
             }
         }
     }
@@ -1175,15 +1170,19 @@ if (debug_flag) {
     if (packet != NULL) {
         release_packet(packet);
     }
+
+    return message_time;
 }
 
-void linklayer_route_packet_update_metric(packet_t* packet)
+int linklayer_route_packet_update_metric(packet_t* packet)
 {
+    int message_time = 0;
+
     if (packet != NULL) {
         int metric = get_uint_field(packet, HEADER_METRIC, METRIC_LEN);
         if (++metric < MAX_METRIC) {
             set_uint_field(packet, HEADER_METRIC, METRIC_LEN, metric);
-            linklayer_route_packet(packet);
+            message_time = linklayer_route_packet(packet);
         } else {
 
 linklayer_print_packet("METRIC EXPIRED", packet);
@@ -1192,6 +1191,8 @@ linklayer_print_packet("METRIC EXPIRED", packet);
     } else {
 ESP_LOGE(TAG, "%s: null packet", __func__);
     }
+
+    return message_time;
 }
 
 /*
@@ -1205,20 +1206,33 @@ ESP_LOGE(TAG, "%s: null packet", __func__);
  *      packet          The packet to transmit
  *
  * Past this point, the 'radio_num' in the packet is meaningless.
+ *
+ * Returns the maximum (of any radio) message transfer time in milliseconds.
+ * Does not include delay to reach transmitter handler.
  */
-static void linklayer_transmit_packet(radio_t* radio, packet_t* packet)
+static int linklayer_transmit_packet(radio_t* radio, packet_t* packet)
 {
+    int message_time = 0;
+
     if (radio == NULL) {
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
-            linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
+            int one_message_time = linklayer_transmit_packet(radio_table[radio_num], ref_packet(packet));
+            if (one_message_time > message_time) {
+                message_time = one_message_time;
+            }
         }
         release_packet(packet);
     } else {
-        packet->queued++;
+        /* Count the number of transmitting queues on which this packets is active */
+        packet->transmitting++;
+        message_time = radio->get_message_time(radio, packet->length);
+
         if (os_put_queue(radio->transmit_queue, (os_queue_item_t) &packet)) {
             radio->transmit_start(radio);
         }
     }
+
+    return message_time;
 }
 
 bool linklayer_register_protocol(int protocol, bool (*protocol_processor)(packet_t*), const char* (*protocol_format)(const packet_t*))
@@ -1289,9 +1303,9 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
  */
 static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
 {
-if (debug_flag) {
-    linklayer_print_packet("IN", packet);
-}
+//if (debug_flag) {
+//    linklayer_print_packet("IN", packet);
+//}
 
     if (packet != NULL) {
         packet_received += 1;
@@ -1320,7 +1334,9 @@ if (debug_flag) {
                 int dest     = get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN);
                 int sender   = get_uint_field(packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN);
                 int routeto  = get_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN);
-                int sequence = get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
+
+                /* For duplicate sequence number checking, the header sequence must be treated as a signed number */
+                int sequence = get_int_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN);
 
                 /* we will process packets that are local (from us and to us but not broadcast)
                  * or not from us and not duplicate.
@@ -1338,9 +1354,12 @@ if (debug_flag) {
                         /* Ignored */
                     } else if (is_duplicate(&duplicate_sequence_numbers, origin, sequence)) {
                         /* Duplicate */
-//linklayer_print_packet("duplicate", packet);
+linklayer_print_packet("duplicate", packet);
                     } else {
 
+if (debug_flag) {
+    linklayer_print_packet("IN", packet);
+}
                         bool handled = false;
     
                         /* Update route table */
@@ -1384,7 +1403,7 @@ if (debug_flag) {
                                     set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                                 }
     
-                                linklayer_route_packet_update_metric(ref_packet(packet));
+                                (void) linklayer_route_packet_update_metric(ref_packet(packet));
                             }
                         }
                     }

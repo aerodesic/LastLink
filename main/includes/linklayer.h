@@ -198,8 +198,8 @@ os_queue_t linklayer_set_promiscuous_mode(bool mode);
 bool linklayer_set_debug(bool enable);
 bool linklayer_set_listen_only(bool enabled);
 
-void linklayer_route_packet(packet_t* packet);
-void linklayer_route_packet_update_metric(packet_t* packet);
+int linklayer_route_packet(packet_t* packet);
+int linklayer_route_packet_update_metric(packet_t* packet);
 
 int linklayer_get_node_address(void);
 void linklayer_print_packet(const char* reason, packet_t* packet);

@@ -18,33 +18,51 @@
 
 #define UNKNOWN_RADIO        -1
 
+/* Forward ref */
+typedef struct radio radio_t;
+
 typedef struct packet packet_t;  // Forward red
+
+ /*
+  * Routed callback is called with:
+  *     success   true if successfully routed; false otherwise.
+  *     packet    The packet itself.
+  *     data      Data object suppled when callback is set.
+  *     radio     The radio through which the packet was routed.
+  */
+typedef bool (*routed_callback_t)(bool success, packet_t *packet, void *data, radio_t *radio);
+
+ /*
+  * Transmitted callback is called with:
+  *     packet    The packet itselt.
+  *     data      Data object suppled when callback is set.
+  *     radio     The radio through which the packet was transmitted.
+  */
+typedef void (*transmitted_callback_t)(packet_t *packet, void *data, radio_t *radio);
 
 typedef struct packet {
 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-    const char       *last_referenced_filename;
-    int              last_referenced_lineno;
+    const char             *last_referenced_filename;
+    int                    last_referenced_lineno;
 #endif
 
-    /* Callback when packet has been routed.  Can then resend.  If entry is NULL, resend is automatic */
-    bool             (*routed_callback)(bool success, packet_t* packet, void* data);
-    void             *routed_callback_data;
+    routed_callback_t       routed_callback;            /* Called when packet is routed */
+    void                    *routed_callback_data;      /*   ... with this data */
 
-    /* Callback when packet has been transmitted.  Nulled automatically when complete */
-    void             (*transmitted_callback)(packet_t *packet, void *data);
-    void             *transmitted_callback_data;
+    transmitted_callback_t  transmitted_callback;       /* Called when transmission is complete ... */
+    void                    *transmitted_callback_data; /*   .. with this data */
 
-    uint8_t          queued;                     /* Counts up one for each time transmit queue */
-    bool             transmitted;                /* true if packet was transmitted (promiscuous mode status) */
-    int              delay;                      /* A delay factor before transmitting packet */
-    uint8_t          radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
-    int8_t           rssi;                       /* Received signal strength */
-    int8_t           snr;                        /* In .1 db */
-    bool             crc_ok;                     /* True if good crc check */
+    uint8_t                 transmitting;               /* Counts up one for each time transmit queue */
+    bool                    transmitted;                /* true if packet was transmitted (promiscuous mode status) */
+    int                     delay;                      /* A delay factor before transmitting packet */
+    uint8_t                 radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
+    int8_t                  rssi;                       /* Received signal strength */
+    int8_t                  snr;                        /* In .1 db */
+    bool                    crc_ok;                     /* True if good crc check */
 
-    int              ref;                        /* Ref counter - when released is decremented; when 0 item is freed */
-    int              length;                     /* Number of bytes used buffer */
-    uint8_t          *buffer;                    /* Buffer pointer */
+    int                     ref;                        /* Ref counter - when released is decremented; when 0 item is freed */
+    int                     length;                     /* Number of bytes used buffer */
+    uint8_t                 *buffer;                    /* Buffer pointer */
 } packet_t;
 
 /*
@@ -153,12 +171,10 @@ static inline packet_t *packet_dup(packet_t *p)
 bool packet_lock(void);
 void packet_unlock(void);
 
-typedef bool (*routed_callback_t)(bool success, packet_t *packet, void *data);
-bool packet_tell_routed_callback(packet_t *packet, bool success);
+bool packet_tell_routed_callback(packet_t *packet, bool success, radio_t *radio);
 packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callback, void *data);
 
-typedef void (*transmitted_callback_t)(packet_t *packet, void *data);
-void packet_tell_transmitted_callback(packet_t *packet);
+void packet_tell_transmitted_callback(packet_t *packet, radio_t *radio);
 packet_t *packet_set_transmitted_callback(packet_t *packet, transmitted_callback_t callback, void *data);
 
 #endif /* __packets_h_included */

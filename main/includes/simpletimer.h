@@ -24,6 +24,7 @@ typedef struct simpletimer {
  * Forward declarations.
  */
 static inline void simpletimer_set_interval(simpletimer_t *timer, uint32_t interval);
+static inline int simpletimer_interval(simpletimer_t *timer);
 static inline bool simpletimer_is_stopped(simpletimer_t *timer);
 static inline bool simpletimer_is_running(simpletimer_t *timer);
 static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval);
@@ -41,6 +42,11 @@ static inline void simpletimer_wait_for(simpletimer_t *timer);
 static inline void simpletimer_set_interval(simpletimer_t *timer, uint32_t interval)
 {
     timer->interval = interval;
+}
+
+static inline int simpletimer_interval(simpletimer_t *timer)
+{
+    return timer->interval;
 }
 
 static inline bool simpletimer_is_stopped(simpletimer_t *timer)
