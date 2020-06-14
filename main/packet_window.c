@@ -220,36 +220,39 @@ bool packet_window_add_sequential_packet(packet_window_t *window, packet_t *pack
     if (window != NULL) {
 
         /* Wait for room */
-        os_acquire_semaphore(window->room);
+        if (os_acquire_counting_semaphore_with_timeout(window->room, timeout)) {
 
-        packet_window_lock(window);
+            packet_window_lock(window);
 
-        /* Ensure the queue isn't full */
-        assert(window->next_in_queue != window->length);
+            /* Ensure the queue isn't full */
+            assert(window->next_in_queue != window->length);
 
-        /* And the slot is not in use */
-        assert(!window->queue[window->next_in_queue].inuse);
+            /* And the slot is not in use */
+            assert(!window->queue[window->next_in_queue].inuse);
         
-        /* Allocate a sequence number for this packet */
-        int sequence = window->sequence + window->next_in_queue;
+            /* Allocate a sequence number for this packet */
+            int sequence = window->sequence + window->next_in_queue;
 
-        /* Assign the correct sequence number to the packet */
-        set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
+            /* Assign the correct sequence number to the packet */
+            set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
 
-        /* Add the packet to the queue */
-        window->queue[window->next_in_queue].packet = ref_packet(packet);
-        window->queue[window->next_in_queue].sequence = sequence;
-        window->queue[window->next_in_queue].inuse = true;
+//printf("%s: adding packet %d to slot %d of %d to %d\n", __func__, sequence, window->next_in_queue, window->sequence, window->sequence + window->length - 1);
 
-        /* Update to the next available sequential slot */
-        window->next_in_queue++;
+            /* Add the packet to the queue */
+            window->queue[window->next_in_queue].packet = ref_packet(packet);
+            window->queue[window->next_in_queue].sequence = sequence;
+            window->queue[window->next_in_queue].inuse = true;
 
-        /* Keep track of how many packets are in queue */
-        window->num_in_queue++;
+            /* Update to the next available sequential slot */
+            window->next_in_queue++;
+
+            /* Keep track of how many packets are in queue */
+            window->num_in_queue++;
  
-        packet_window_unlock(window);
+            packet_window_unlock(window);
 
-        success = true;
+            success = true;
+        }
     }
 
     return success;
@@ -286,6 +289,8 @@ int packet_window_add_random_packet(packet_window_t *window, packet_t *packet)
         if (sequence >= window->sequence && sequence <= highest_sequence) {
 
             int slot = sequence - window->sequence;
+
+//printf("%s: adding packet %d to slot %d of %d to %d\n", __func__, sequence, slot, window->sequence, window->sequence + window->length - 1);
 
             /* Put the packet into the window slot if not already in use */
             if (! window->queue[slot].inuse) {
@@ -354,8 +359,10 @@ bool packet_window_remove_sequential_packet(packet_window_t *window, packet_t **
                 packet_window_lock(window);
                 window->user_blocked = false;
 
-                if (window->queue[0].inuse && window->queue[0].packet != NULL) {
+                if (window->queue[0].inuse) {
+                    assert(window->queue[0].packet != NULL);
                     *packet = ref_packet(window->queue[0].packet);
+//printf("%s: removed from slot 0: %d\n", __func__, window->queue[0].sequence);
                     packet_window_discard_top_packet(window);
                     ok = true;
                 } else {
@@ -482,35 +489,52 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
     
         /* Remove all directly acknowledged packets */
         while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
+//printf("%s: removed from slot 0: %d\n", __func__, window->queue[0].sequence);
             packet_window_discard_top_packet(window);
         }
-    
-        /* Release packets for all bits in the packet_mask */
-        for (int slot = 1; packet_mask != 0 && slot < window->length; ++slot) {
+   
+        /* Go through the remaining inuse items and acknowledge them according to the packet mask */
+        int ack_sequence = sequence;
+        while (packet_mask != 0) {
+            ++ack_sequence;  /* Sequence number corresponding to LSB of mask */
             if ((packet_mask & 1) != 0) {
-                if (window->queue[slot].inuse) {
-printf("%s: removing from slot %d: %d\n", __func__, slot, window->queue[slot].sequence);
-                    /* Release the packet to the pool */
-                    if (window->queue[slot].packet != NULL) {
-                        release_packet(window->queue[slot].packet);
-    
-                        /* Count the packet as processed (but leave slot 'in use') */
-                        window->queue[slot].packet = NULL;
+                bool found = false;
 
-                        /* Fix number of actual packets left in queue */
-                        assert(window->num_in_queue != 0);
-                        window->num_in_queue--;
-                    } else {
-                        ESP_LOGE(TAG, "%s: releasing already released packet %d in window %d to %d",
-                                 __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
+                /* TODO: It might be smarter to go through this sequentially rather than starting from the top each time... */
+                for (int slot = 1; !found && slot < window->length; ++slot) {        
+
+                    if (window->queue[slot].inuse && window->queue[slot].sequence == ack_sequence) {
+                        found = true;
+
+                        /* Release the packet to the pool */
+                        if (window->queue[slot].packet != NULL) {
+//printf("%s: removed from slot %d: %d\n", __func__, slot, window->queue[slot].sequence);
+                            release_packet(window->queue[slot].packet);
+    
+                            /* Count the packet as processed (but leave slot 'in use') */
+                            window->queue[slot].packet = NULL;
+
+                            /* Fix number of actual packets left in queue */
+                            assert(window->num_in_queue != 0);
+                            window->num_in_queue--;
+
+#if 0
+                        } else {
+                            printf("%s: releasing already released packet %d in window %d to %d\n",
+                                   __func__, window->queue[slot].sequence, window->sequence, window->sequence + window->length - 1);
+#endif
+                        }
                     }
-                } else {
-                    ESP_LOGE(TAG, "%s: releasing not-in-use packet slot %d in window %d to %d",
-                             __func__, slot, window->sequence, window->sequence + window->length - 1);
+                }
+
+                if (!found) {
+                    printf("%s: releasing non-existant packet %d in window %d to %d\n", __func__, ack_sequence, window->sequence, window->sequence + window->length - 1);
                 }
             }
             packet_mask >>= 1;
         }
+
+        assert(packet_mask == 0);
     
         packet_window_unlock(window);
     }

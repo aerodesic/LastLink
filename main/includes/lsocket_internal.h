@@ -136,6 +136,7 @@ typedef struct ls_socket {
 #ifdef SOCKET_LOCKING_DEBUG
     const char              *last_lock_file;
     int                     last_lock_line;
+    int                     lock_count;
 #endif /* SOCKET_LOCKING_DEBUG */
     int                     busy;                /* Busy when non-zero */
     ls_socket_type_t        socket_type;         /* Socket type (DATAGRAM or STREAM) */
@@ -176,6 +177,7 @@ typedef struct ls_socket {
 #define STATE_MACHINE_RESULTS_TO_QUEUE  NULL
            os_queue_t              state_machine_results_queue;
            bool                    state_machine_running;  /* Mostly for debug */
+           const char              *state_machine_ident;
 
            /* Deals with residue of left over data on packets between read calls */
            packet_t*               current_read_packet;

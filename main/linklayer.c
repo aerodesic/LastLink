@@ -72,7 +72,7 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
-static void linklayer_receive_packet(radio_t* radio, packet_t* packet);
+static void linklayer_receive_packet(packet_t* packet);
 static void linklayer_activity_indicator(radio_t* radio, bool active);
 
 static void reset_device(radio_t* radio);
@@ -81,6 +81,9 @@ int                               linklayer_node_address;
 static os_mutex_t                 linklayer_mutex;
 static int                        node_flags;
 static os_queue_t                 receive_queue;
+#define RECEIVE_THREAD_STACK_SIZE    8192
+#define RECEIVE_THREAD_PRIORITY      20
+static os_thread_t                receive_thread;
 static os_queue_t                 promiscuous_queue;
 static uint16_t                   sequence_number;
 static bool                       debug_flag;
@@ -1050,7 +1053,8 @@ int linklayer_route_packet(packet_t* packet)
              set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, linklayer_node_address);
              /* Tell caller the packet has been routed */
              packet_tell_routed_callback(packet, true, NULL);
-             linklayer_receive_packet(radio_table[0], ref_packet(packet));
+             packet->radio_num = 0;
+             linklayer_receive_packet(ref_packet(packet));
 
         } else {
 
@@ -1265,12 +1269,6 @@ bool linklayer_unregister_protocol(int protocol)
     return ok;
 }
 
-bool linklayer_put_received_packet(packet_t* packet)
-{
-    return os_put_queue(receive_queue, (os_queue_item_t) &packet);
-}
-
-
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p))
 {
     bool ok = false;
@@ -1294,21 +1292,24 @@ static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE ed
  * A packet arrives here.  It will have been wrapped apporpriately
  * and will contain the RSSI, the crc_ok flag and the radio number
  * that received it.  The packet will have a single ref so releasing
- * it will free it.  The radio forwarding the packet will be also
- * be provided.
+ * it will free it.  The radio forwarding the packet should be assigned
+ * to the radio_num member of the packet.
  *
  * Entry:
- *      radio               Pointer to radio delivering the packet
  *      packet              The data packet
  */
-static void linklayer_receive_packet(radio_t* radio, packet_t* packet)
+static void linklayer_receive_packet(packet_t* packet)
 {
-//if (debug_flag) {
-//    linklayer_print_packet("IN", packet);
-//}
+    packet_received += 1;
+    os_put_queue(receive_queue, (os_queue_item_t) &packet);
+}
 
-    if (packet != NULL) {
-        packet_received += 1;
+    
+static void linklayer_process_received_packets(void *param)
+{
+    packet_t *packet;
+
+    while(os_get_queue(receive_queue, (os_queue_item_t) &packet) && (packet != NULL)) {
 
         if (packet->crc_ok) {
 
@@ -1599,6 +1600,8 @@ bool linklayer_init(int address, int flags, int announce)
         /* Receive queue goes to packet data layer */
         receive_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
 
+        receive_thread = os_create_thread(linklayer_process_received_packets, "receive_packets", RECEIVE_THREAD_STACK_SIZE, RECEIVE_THREAD_PRIORITY, NULL);
+
         promiscuous_queue = NULL;
         sequence_number = UNDEFINED_SEQUENCE_NUMBER;
         debug_flag = false;
@@ -1664,6 +1667,11 @@ bool linklayer_deinit(void)
         if (announce_thread != NULL) {
             os_delete_thread(announce_thread);
             announce_thread = NULL;
+        }
+
+        if (receive_thread != NULL) {
+            os_delete_thread(receive_thread);
+            receive_thread = NULL;
         }
 
         if (receive_queue != NULL) {

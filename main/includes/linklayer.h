@@ -205,7 +205,6 @@ int linklayer_get_node_address(void);
 void linklayer_print_packet(const char* reason, packet_t* packet);
 char* linklayer_format_packet(packet_t* packet);
 
-bool linklayer_put_received_packet(packet_t* packet);
 bool linklayer_packet_is_for_this_node(const packet_t* p);
 
 void linklayer_release_packets_in_queue(os_queue_t queue);

@@ -95,7 +95,7 @@ static ls_socket_t * validate_socket(int s);
 static void stream_shutdown_windows(ls_socket_t *socket);
 
 /* Statemachine and methods */
-static void       state_machine_start(ls_socket_t *socket, ls_socket_state_t state, int (*action)(ls_socket_t *socket), void (*results)(ls_socket_t* socket, ls_error_t error),  int timeout, int retries);
+static void       state_machine_start(const char* ident, ls_socket_t *socket, ls_socket_state_t state, int (*action)(ls_socket_t *socket), void (*results)(ls_socket_t* socket, ls_error_t error),  int timeout, int retries);
 static void       state_machine_cancel(ls_socket_t *socket);
 static void       state_machine_timeout(ls_socket_t *socket);
 static void       state_machine_send_results(ls_socket_t *socket, ls_error_t response);
@@ -207,6 +207,7 @@ static inline bool lock_socket_debug(ls_socket_t* socket, bool try, const char *
     }
 
     if (ok) {
+        socket->lock_count++;
         socket->last_lock_file = file;
         socket->last_lock_line = line;
     }
@@ -219,6 +220,11 @@ static inline bool lock_socket_debug(ls_socket_t* socket, bool try, const char *
 
 static inline void unlock_socket_debug(ls_socket_t *socket, const char *file, int line)
 {
+    if (socket->lock_count == 0) {
+       printf("%s: socket not locked; last lock %s:%d\n", __func__, socket->last_lock_file, socket->last_lock_line);
+    } else {
+       socket->lock_count--;
+    }
     os_release_recursive_mutex(socket->lock);
 }
 #define UNLOCK_SOCKET(socket)    unlock_socket_debug(socket, __FILE__, __LINE__)
@@ -677,10 +683,15 @@ static ls_socket_t *find_free_socket(void)
         }
     }
 
-    GLOBAL_SOCKET_UNLOCK();
 
     if (socket != NULL) {
         socket_table[socket_index].socket_type = LS_INUSE;
+    }
+
+    GLOBAL_SOCKET_UNLOCK();
+
+    if (socket != NULL) {
+        LOCK_SOCKET(socket);
     }
 
     /* Return the locked socket if we found one */
@@ -998,14 +1009,15 @@ static bool stream_packet_process(packet_t *packet)
                                 new_connection->output_window = packet_window_create(CONFIG_LASTLINK_STREAM_WINDOW_SIZE);
 
                                 /* Send a CONNECT ACK and go to INBOUND CONNECT state waiting for full acks */
-                                state_machine_start(new_connection,
+                                state_machine_start("new connection",
+                                                    new_connection,
                                                     LS_STATE_INBOUND_CONNECT,               /* Pending inbound connect */
                                                     state_machine_action_send_connect_ack,  /* Send connect ack */
                                                     STATE_MACHINE_RESULTS_TO_QUEUE,         /* When we receive connectack, send to new_connection */
                                                     -1,                                     /* Use action result to set timeout */
                                                     STREAM_CONNECT_RETRIES);
 
-                                os_release_recursive_mutex(new_connection->lock);
+                                UNLOCK_SOCKET(new_connection);
 
                                 reject = false;
                             }
@@ -1073,7 +1085,8 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
                         if (socket->state == LS_STATE_CONNECTED) {
 
                             /* Start sending disconnect until we get a disconnected back */
-                            state_machine_start(socket,
+                            state_machine_start("inbound disconnect",
+                                                socket,
                                                 LS_STATE_INBOUND_DISCONNECTING,          /* respond to inbound disconnect request */
                                                 state_machine_action_send_disconnected,  /* Persist until complete or timeout */
                                                 state_machine_results_shutdown_socket,   /* Action is to shutdown socket */
@@ -1153,7 +1166,8 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
                             default: {
                                 /* An error so tear down the connection */
                                 stream_shutdown_windows(socket);
-                                state_machine_start(socket,
+                                state_machine_start("closing",
+                                                    socket,
                                                     LS_STATE_CLOSING,                       /* Final closing state */
                                                     state_machine_action_send_disconnect,   /* Send disconnect until done */
                                                     state_machine_results_shutdown_socket,  /* Finally shutdown socket */
@@ -1180,9 +1194,9 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
                     int sequence      = get_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN);
                     uint32_t ack_mask = get_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN);
 
-if (ack_mask != 0) {
-   printf("%s: socket %d ack sequence %d mask %04x\n", __func__, socket - socket_table, sequence, ack_mask);
-}
+//if (ack_mask != 0) {
+//   printf("%s: socket %d ack sequence %d mask %04x\n", __func__, socket - socket_table, sequence, ack_mask);
+//}
                     ack_output_window(socket, sequence, ack_mask);
                 }
             }
@@ -1473,6 +1487,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
  * Used for connecting, disconnecting and outbound data transmission.
  *
  * Entry:
+ *      ident        Identifier string for debug
  *      socket       Socket to run state machine
  *      state        State to assign socket
  *      action       Action to take
@@ -1480,7 +1495,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
  *      timeout      Timeout between retry cycles. (if <0, uses results of action to set timeout)
  *      retries      Number of times to retry packet until state changes.
  */
-static void state_machine_start(ls_socket_t *socket, ls_socket_state_t state, int (*action)(ls_socket_t* socket), void (*results)(ls_socket_t* socket, ls_error_t error), int timeout, int retries)
+static void state_machine_start(const char *ident, ls_socket_t *socket, ls_socket_state_t state, int (*action)(ls_socket_t* socket), void (*results)(ls_socket_t* socket, ls_error_t error), int timeout, int retries)
 {
     assert(action != NULL);
 
@@ -1488,6 +1503,8 @@ static void state_machine_start(ls_socket_t *socket, ls_socket_state_t state, in
 
     /* Cancel any running state machine */
     state_machine_cancel(socket);
+
+    socket->state_machine_ident = ident;
 
     if (state >= 0) {
         socket->state = state;
@@ -1523,11 +1540,10 @@ static void state_machine_start(ls_socket_t *socket, ls_socket_state_t state, in
 
 static void state_machine_cancel(ls_socket_t *socket)
 {
-    socket->state_machine_retries = 0;
-    socket->state_machine_action_callback = NULL;
-
     simpletimer_stop(&socket->state_machine_timer);
 
+    socket->state_machine_retries = 0;
+    socket->state_machine_action_callback = NULL;
     socket->state_machine_running = false;
 
     /* Leave response queue in place so receiver gets the message */
@@ -1610,6 +1626,7 @@ void state_machine_send_results(ls_socket_t *socket, ls_error_t response)
     if (socket->state_machine_results_callback == NULL) {
 if (socket->state_machine_results_queue == NULL) {
     ls_dump_socket_ptr("queue is null", socket);
+    printf("state_machine_running %s  state_machine_ident \"%s\"  socket state %s\n", socket->state_machine_running ? "YES" : "NO", socket->state_machine_ident, socket_state_of(socket));
 }
         assert(socket->state_machine_results_queue != NULL);
         os_put_queue(socket->state_machine_results_queue, (os_queue_item_t) &response);
@@ -1669,7 +1686,8 @@ static bool state_machine_packet_route_complete(bool success, packet_t *packet, 
         stream_shutdown_windows(socket);
 
         /* Start shutdown process */
-        state_machine_start(socket,
+        state_machine_start("outbound disconnect 1",
+                            socket,
                             LS_STATE_OUTBOUND_DISCONNECTING,           /* Route failed so start disconnect */
                             state_machine_action_send_disconnect,      /* Send disconnect until complete */
                             state_machine_results_shutdown_socket,     /* Finally shut down socket */
@@ -1900,7 +1918,8 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
 
             } else if (socket->socket_type == LS_STREAM) {
                 /* Start sending connect packet and wait for complete */
-                state_machine_start(socket,
+                state_machine_start("outbound connect",
+                                    socket,
                                     LS_STATE_OUTBOUND_CONNECT,              /* Pending outbound connect */
                                     state_machine_action_send_connect,      /* Send connect until reply */
                                     STATE_MACHINE_RESULTS_TO_QUEUE,         /* Response comes back to response queue */
@@ -1963,39 +1982,26 @@ static bool socket_flush_current_packet(ls_socket_t *socket, bool wait)
         packet_window_lock(socket->output_window);
 
         /* Try a non-blocking insertion. */
-        int results = packet_window_add_sequential_packet(socket->output_window, packet, 0);
+        bool inserted = packet_window_add_sequential_packet(socket->output_window, packet, 0);
 
         packet_window_unlock(socket->output_window);
 
-        /* Fail if a duplicate !! - cannot  happen */
-
-if (results > 0) {
-    printf("%s: failed to insert %d in socket %d\n", __func__, get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN), socket - socket_table);
-    ls_dump_socket_ptr("duplicate", socket);
-}
-        assert(results <= 0);
-
-        if (results < 0) {
-            /* Failed, so see if we are requesting a blocking wait... */
-            if (wait) {
-
-                if (socket->output_retries == 0) {
-                    /* Start bubble machine to transmit while we are waiting */
-                    simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
-                }
-
-                /* Do a blocking move of packet to output window.  */
-//printf("%s: waiting for packet to add to window\n", __func__);
-                if (packet_window_add_sequential_packet(socket->output_window, packet, -1) == 0) {
-                    release_packet(socket->current_write_packet);
-                    socket->current_write_packet = NULL;
-                }
-//printf("%s: packet added\n", __func__);
-            }
-        } else {
+        if (inserted) {
             /* Success, so empty our output buffer */
             release_packet(socket->current_write_packet);
             socket->current_write_packet = NULL;
+        } else if (wait) {
+
+            if (socket->output_retries == 0) {
+                /* Start bubble machine to transmit while we are waiting */
+                simpletimer_start(&socket->output_window_timer, CONFIG_LASTLINK_STREAM_TRANSMIT_DELAY);
+            }
+
+            /* Do a blocking move of packet to output window.  */
+            if (packet_window_add_sequential_packet(socket->output_window, packet, -1)) {
+                release_packet(socket->current_write_packet);
+                socket->current_write_packet = NULL;
+            }
         }
     }
 
@@ -2040,7 +2046,7 @@ static packet_t *add_data_ack(packet_window_t *window, packet_t *packet)
 
     if (packet_window_get_processed_packets(window, &sequence, &ack_mask)) {
 
-printf("%s: sequence %d mask %04x\n", __func__, sequence, ack_mask);
+//printf("%s: sequence %d mask %04x\n", __func__, sequence, ack_mask);
 
         set_uint_field(packet, STREAM_ACK_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
         set_uint_field(packet, STREAM_ACK_WINDOW, ACK_WINDOW_LEN, ack_mask);
@@ -2103,7 +2109,10 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 //printf("%s: socket %d output_window %p\n", __func__, socket - socket_table, socket->output_window);
 
     if (socket->output_window != NULL) {
+//printf("%s: locking packet window\n", __func__);
         packet_window_lock(socket->output_window);
+
+//printf("%s: checking packets to go\n", __func__);
 
         packet_t *packets[socket->output_window->length];
         num_packets = packet_window_get_all_packets(socket->output_window, packets, ELEMENTS_OF(packets));
@@ -2150,6 +2159,8 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 
                     int total_message_time = 0;
 
+//printf("%s: putting %d packets to queue\n", __func__, to_send);
+
                     /* Packets in queue - send all that are here */
                     for (int slot = 0; slot < to_send; ++slot) {
                         /* Send packet (ref'd) with input window ack fields appended */
@@ -2159,11 +2170,13 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                         if (slot == to_send - 1) {
                             packet_set_transmitted_callback(packet, stream_packet_transmit_complete, (void*) socket);
                         }
+//printf("%s: sending %d to linklayer_route_packet\n", __func__, slot);
                         total_message_time += linklayer_route_packet(ref_packet(add_data_ack(socket->input_window, packet)));
                     }
 
                     /* Look up the route to the destination (returns default of MAX_METRIC) */
                     socket->output_retry_time = calculate_retry_time(socket, total_message_time);
+
 //printf("%s: %d packets %d mS total is %d mS\n", __func__, to_send, total_message_time, socket->output_retry_time);
 
                     packet_window_lock(socket->output_window);
@@ -2175,7 +2188,8 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                     stream_shutdown_windows(socket);
 
                     /* Start shutdown process */
-                    state_machine_start(socket,
+                    state_machine_start("outbound disconnect 3",
+                                        socket,
                                         LS_STATE_OUTBOUND_DISCONNECTING,        /* Start a disconnect */
                                         state_machine_action_send_disconnect,   /* Persist until complete */
                                         state_machine_results_shutdown_socket,  /* Finally shut down socket */
@@ -2617,7 +2631,8 @@ printf("%s: ********************************************************************
                         simpletimer_stop(&socket->output_window_timer);
                         socket->output_retries = 0;
 
-                        state_machine_start(socket,
+                        state_machine_start("disconnect flush",
+                                            socket,
                                             LS_STATE_DISCONNECTING_FLUSH_START,
                                             state_machine_action_send_output_window,
                                             STATE_MACHINE_RESULTS_TO_QUEUE,             /* Results back to state_machine_results */
@@ -2633,7 +2648,8 @@ printf("%s: ********************************************************************
                     /* If generating the disconnect first */
                     if (socket->state != LS_STATE_INBOUND_DISCONNECTING) {
 
-                        state_machine_start(socket,
+                        state_machine_start("outbound disconnect 2",
+                                            socket,
                                             LS_STATE_OUTBOUND_DISCONNECTING,
                                             state_machine_action_send_disconnect,
                                             STATE_MACHINE_RESULTS_TO_QUEUE,         /* Results back to state_machine_results */
@@ -2652,7 +2668,8 @@ printf("%s: ********************************************************************
 //printf("Starting linger\n");
 
                     /* Start a linger to leave socket intact for a short while */
-                    state_machine_start(socket,
+                    state_machine_start("linger",
+                                        socket,
                                         LS_STATE_LINGER,
                                         state_machine_action_linger_check,
                                         state_machine_results_linger_finish,
@@ -2693,12 +2710,14 @@ static ls_socket_t *validate_socket(int s)
 
         if (s >= 0 && s < ELEMENTS_OF(socket_table)) {
 
-            os_acquire_recursive_mutex(socket_table[s].lock);
+            ls_socket_t *socket = &socket_table[s];
 
-            if (socket_table[s].socket_type == LS_DATAGRAM || socket_table[s].socket_type == LS_STREAM) {
-                ret = &socket_table[s];
+            LOCK_SOCKET(socket);
+
+            if (socket->socket_type == LS_DATAGRAM || socket->socket_type == LS_STREAM) {
+                ret = socket;
             } else {
-                os_release_recursive_mutex(socket_table[s].lock);
+                UNLOCK_SOCKET(socket);
             }
         }
     }
@@ -2953,9 +2972,9 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                                for (int slot = 0; slot < socket->input_window->length; ++slot) {
                                    if (socket->input_window->queue[slot].inuse) {
                                        if (socket->input_window->queue[slot].packet != NULL) {
-                                           printf("In %d: %d\n", slot, get_uint_field(socket->input_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                           printf("   In %d: %d\n", slot, get_uint_field(socket->input_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                                        } else {
-                                           printf("In %d: NULL\n", slot);
+                                           printf("   In %d: NULL\n", slot);
                                        }
                                    }
                                }
@@ -2966,19 +2985,24 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                                for (int slot = 0; slot < socket->input_window->length; ++slot) {
                                    if (socket->output_window->queue[slot].inuse) {
                                        if (socket->output_window->queue[slot].packet != NULL) {
-                                           printf("Out %d: %d\n", slot, get_uint_field(socket->output_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                           printf("   Out %d: %d\n", slot, get_uint_field(socket->output_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                                        } else {
-                                           printf("Out %d: NULL\n", slot);
+                                           printf("   Out %d: NULL\n", slot);
                                        }
                                    }
                                }
                            } else {
-                               printf("Output window missing\n");
+                               printf("   Output window missing\n");
                            }
                 }
                 break;
             }
         }
+#ifdef SOCKET_LOCKING_DEBUG
+        if (socket->lock_count != 0) {
+            printf("   Lock count %d last by %s:%d\n", socket->lock_count, socket->last_lock_file, socket->last_lock_line);
+        }
+#endif
     } else {
         printf("%s: invalid socket\n", msg);
     }
@@ -3031,7 +3055,6 @@ static void socket_scanner_thread(void* param)
                     /* This one runs on demand to flush the output_window as needed - runs until successful or timesout closing connection */
                     if (simpletimer_is_expired_or_remaining(&socket->output_window_timer, &next_time)) {
                         simpletimer_stop(&socket->output_window_timer);
-//printf("send_output_window fired by output_window_timer\n");
                         send_output_window(socket, /* disconnect_on_error */ true);
                     }
 
@@ -3041,7 +3064,6 @@ static void socket_scanner_thread(void* param)
                         /* Finished with timer */
                         simpletimer_stop(&socket->ack_delay_timer);
 
-//printf("ack_input_window fired by ack_delay_timer\n");
                         ///* Delay input window ack until next time */
                         ack_input_window(socket);
                     }
@@ -3049,7 +3071,6 @@ static void socket_scanner_thread(void* param)
 #if 1
                     /* This one runs continually and only works when the socket is input-busy */
                     if (simpletimer_is_expired_or_remaining(&socket->input_window_timer, &next_time)) {
-//printf("ack_input_window fired by input_window_timer\n");
                         simpletimer_stop(&socket->input_window_timer);
                         ack_input_window(socket);
                     }

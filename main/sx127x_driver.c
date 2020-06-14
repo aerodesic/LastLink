@@ -263,7 +263,7 @@ bool sx127x_create(radio_t* radio)
 
             /* Initialize defaults */
             data->sync_word                 = 0x12;    /* 0x34 LoRaWAN; 0x12 LoRa */
-            data->preamble_length           = 8;
+            data->preamble_length           = 32;      /* Was 8 */
             data->coding_rate               = 5;
             data->implicit_header           = false;
             data->implicit_header_set       = false;
@@ -395,9 +395,8 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
                 packet->snr = get_packet_snr(radio);
                 packet->radio_num = radio->radio_num;
 
-
                 /* Pass it to protocol layer */
-                radio->on_receive(radio, ref_packet(packet));
+                radio->on_receive(ref_packet(packet));
             }
 
             release_packet(packet);
