@@ -733,7 +733,11 @@ static int find_free_local_port(void) {
 }
 
 
-/* Look in socket table for socket matching the connection and type */
+/*
+ * Look in socket table for socket matching the connection and type.
+ *
+ * Returns LOCKED socket.
+ */
 static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type)
 {
     ls_socket_t *socket = NULL;
@@ -750,6 +754,7 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
                 (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port)) {
 
                 socket = &socket_table[index];
+                LOCK_SOCKET(socket);
             }
         }
     }
@@ -817,6 +822,7 @@ static bool datagram_packet_process(packet_t *packet)
                 if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) &packet)) {
                     release_packet(packet);
                 }
+                UNLOCK_SOCKET(socket);
             }
 
             /* say 'handled' it if directed to us (i.e. don't retransmit it) */
@@ -1066,14 +1072,15 @@ static bool stream_packet_process(packet_t *packet)
 
                         /* If an extra connect-ack in connected state, don't reject and send the expected connect ack */
                         } else if (socket->state == LS_STATE_CONNECTED) {
-                        //    stream_send_connect_ack(socket);
                             reject = false;
                         }
 
-                        int length = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
-                        if (length != 0 && length < socket->output_window->length) {
+                        if (!reject && socket->output_window != NULL) {
+                            int length = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
+                            if (length != 0 && length < socket->output_window->length) {
 ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__, socket->output_window->length, length, socket - socket_table);
-                            socket->output_window->length = length;
+                                socket->output_window->length = length;
+                            }
                         }
                     }
                     break;
@@ -1199,6 +1206,10 @@ ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__,
 //}
                     ack_output_window(socket, sequence, ack_mask);
                 }
+            }
+
+            if (socket != NULL) {
+                UNLOCK_SOCKET(socket);
             }
 
             handled = true;
@@ -1606,6 +1617,7 @@ static void state_machine_timeout(ls_socket_t *socket)
         /* Send error code to connect response queue */
         state_machine_send_results(socket, LSE_TIMEOUT);
 
+        /* Print a second callback  */
         socket->state_machine_running = false;
     }
 }
@@ -1621,17 +1633,22 @@ static void state_machine_timeout(ls_socket_t *socket)
  */
 void state_machine_send_results(ls_socket_t *socket, ls_error_t response)
 {
-    state_machine_cancel(socket);
+    if (! socket->state_machine_running) {
+        printf("%s: state machine cancelled before call\n", __func__);
+    } else {
+        state_machine_cancel(socket);
 
-    if (socket->state_machine_results_callback == NULL) {
+        if (socket->state_machine_results_callback == NULL) {
+
 if (socket->state_machine_results_queue == NULL) {
     ls_dump_socket_ptr("queue is null", socket);
     printf("state_machine_running %s  state_machine_ident \"%s\"  socket state %s\n", socket->state_machine_running ? "YES" : "NO", socket->state_machine_ident, socket_state_of(socket));
 }
-        assert(socket->state_machine_results_queue != NULL);
-        os_put_queue(socket->state_machine_results_queue, (os_queue_item_t) &response);
-    } else {
-        socket->state_machine_results_callback(socket, response);
+            assert(socket->state_machine_results_queue != NULL);
+            os_put_queue(socket->state_machine_results_queue, (os_queue_item_t) &response);
+        } else {
+            socket->state_machine_results_callback(socket, response);
+        }
     }
 }
 
@@ -2169,6 +2186,9 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
                         /* Only do on the last one in list */
                         if (slot == to_send - 1) {
                             packet_set_transmitted_callback(packet, stream_packet_transmit_complete, (void*) socket);
+                        } else {
+                            /* Keep the window of packets sent as a group as much as possible */
+                            set_bits_field(packet, HEADER_FLAGS, FLAGS_LEN, HEADER_FLAGS_PRIORITY);
                         }
 //printf("%s: sending %d to linklayer_route_packet\n", __func__, slot);
                         total_message_time += linklayer_route_packet(ref_packet(add_data_ack(socket->input_window, packet)));

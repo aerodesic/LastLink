@@ -67,7 +67,8 @@ static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval)
 }
 
 /*
- * Make sure the timer is set for at least <interval>.  Don't decrease if smaller.
+ * Make sure the timer is set for at least <interval>.
+ * Don't decrease if new interval is smaller.
  */
 static inline void simpletimer_update(simpletimer_t *timer, uint32_t interval)
 {
@@ -77,6 +78,9 @@ static inline void simpletimer_update(simpletimer_t *timer, uint32_t interval)
     }
 }
 
+/*
+ * Restart timer with <interval> if not running, else extend interval by <interval>
+ */
 static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval)
 {
     if (!simpletimer_is_running(timer)) {

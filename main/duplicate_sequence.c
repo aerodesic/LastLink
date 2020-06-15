@@ -55,8 +55,6 @@ bool is_duplicate(duplicate_sequence_list_t* duplist, int address, int sequence)
             if (!duplicate) {
                 /* Remember the new one now */
                 dupinfo->sequence = sequence;
-            } else {
-                printf("%s: %d duplicate of %d\n", __func__, sequence, dupinfo->sequence);
             }
 
             /* End the search when we find an address match */

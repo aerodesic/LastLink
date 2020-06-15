@@ -1145,7 +1145,6 @@ int linklayer_route_packet(packet_t* packet)
                 if (promiscuous_queue != NULL) {
                     packet_t *p_packet = duplicate_packet(packet);
                     if (p_packet != NULL) {
-                        p_packet->transmitted = true;
                         os_put_queue(promiscuous_queue, (os_queue_item_t) &p_packet);
                     }
                 }
@@ -1355,7 +1354,9 @@ static void linklayer_process_received_packets(void *param)
                         /* Ignored */
                     } else if (is_duplicate(&duplicate_sequence_numbers, origin, sequence)) {
                         /* Duplicate */
-linklayer_print_packet("duplicate", packet);
+if (debug_flag) {
+  linklayer_print_packet("duplicate", packet);
+}
                     } else {
 
 if (debug_flag) {

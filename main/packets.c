@@ -76,7 +76,7 @@ packet_t *allocate_packet_plain(void)
 
                 memset(packet->buffer, 0, MAX_PHYSICAL_PACKET_LEN);
                 packet->length = 0;
-                packet->transmitted = false;
+                packet->transmitted = 0;
                 packet->delay = 0;
                 packet->ref = 1;
                 packet->radio_num = UNKNOWN_RADIO;

@@ -55,6 +55,7 @@
 #define HEADER_ROUTETO_ADDRESS         0                                              // Node to receive packet
 #define HEADER_FLAGS                   (HEADER_ROUTETO_ADDRESS + ADDRESS_LEN)         // Flags from origin.
 #define  HEADER_FLAGS_RESET_SEQUENCE   0x80                                           // Causes local sequence number pool to be discarded
+#define  HEADER_FLAGS_PRIORITY         0x40                                           // Used to send a group of associated messages.  Limits delay
 #define HEADER_ORIGIN_ADDRESS          (HEADER_FLAGS + FLAGS_LEN)                     // Original sender
 #define HEADER_DEST_ADDRESS            (HEADER_ORIGIN_ADDRESS + ADDRESS_LEN)          // Final destination
 #define HEADER_SENDER_ADDRESS          (HEADER_DEST_ADDRESS + ADDRESS_LEN)            // Last sender

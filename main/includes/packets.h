@@ -53,7 +53,7 @@ typedef struct packet {
     void                    *transmitted_callback_data; /*   .. with this data */
 
     uint8_t                 transmitting;               /* Counts up one for each time transmit queue */
-    bool                    transmitted;                /* true if packet was transmitted (promiscuous mode status) */
+    int                     transmitted;                /* Number of times packet was transmitted.  0 means received */
     int                     delay;                      /* A delay factor before transmitting packet */
     uint8_t                 radio_num;                  /* Radio source of packet (and placeholder for destination when sending) */
     int8_t                  rssi;                       /* Received signal strength */
