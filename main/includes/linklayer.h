@@ -214,6 +214,8 @@ radio_t* linklayer_get_radio_from_number(int radio_num);
 
 bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate);
 
+bool linklayer_lock_transmit_queue(bool lock, int timeout);
+
 #if CONFIG_LASTLINK_RADIO_SX126x_ENABLED
 bool sx126x_radio(radio_t* radio);
 #endif
@@ -225,6 +227,7 @@ bool sx127x_radio(radio_t* radio);
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
 void linklayer_set_receive_only_from(const char* addresses);
 #endif
+
 
 #endif /* __linklayer_h_included */
 

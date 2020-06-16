@@ -58,7 +58,7 @@ packet_t *allocate_packet_plain(void)
 
     packet_t *packet = NULL;
 
-    packet_lock();
+    packet_global_lock();
 
     /* Make sure free packet queue is present */
     if (free_packets_queue != NULL) {
@@ -95,7 +95,7 @@ packet_t *allocate_packet_plain(void)
 printf("no packets\n");
     }
 
-    packet_unlock();
+    packet_global_unlock();
 
     return packet;
 }
@@ -142,19 +142,23 @@ bool release_packet_plain(packet_t *packet)
     if (packet != NULL) {
 
         if (free_packets_queue != NULL) {
-            packet_lock();
 
-            if (--(packet->ref) == 0) {
-                packet->routed_callback = NULL;
-                packet->routed_callback_data = NULL;
-                ok = os_put_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0);
-                packets_in_use--;
+            packet_global_lock();
+
+            if (packet->ref != 0) {
+                if (--(packet->ref) == 0) {
+                    packet->routed_callback = NULL;
+                    packet->routed_callback_data = NULL;
+                    ok = os_put_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0);
+                    packets_in_use--;
+
 ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
-            } else {
-                ok = true;
-            }
+                } else {
+                    ok = true;
+                }
+            } /* else packet already released */
 
-            packet_unlock();
+            packet_global_unlock();
         }
     }
 
@@ -164,9 +168,9 @@ ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
 packet_t *ref_packet_plain(packet_t *packet)
 {
     if (packet != NULL) {
-        packet_lock();
+        packet_global_lock();
         packet->ref++;
-        packet_unlock();
+        packet_global_unlock();
     }
     return packet;
 }
@@ -396,16 +400,53 @@ int set_str_field(packet_t *p, size_t from, size_t length, const char* value)
     return moved;
 }
 
-bool packet_lock(void)
+bool packet_global_lock(void)
 {
     return os_acquire_recursive_mutex(packet_mutex);
     // This was failing without being noticed.  Lots of bad stuff could happen...
     //return xSemaphoreTakeRecursive(packet_mutex, 0) == pdTRUE;
 }
 
-void packet_unlock(void)
+void packet_global_unlock(void)
 {
     os_release_mutex(packet_mutex);
+}
+
+bool packet_lock(packet_t *packet)
+{
+    bool success;
+
+    if (packet_global_lock()) {
+        if (packet->locked == NULL) {
+            packet->locked = os_current_thread();
+        }
+
+        success = packet->locked == os_current_thread();
+            
+        packet_global_unlock();
+
+    } else {
+        success = false;
+    }
+
+    return success;
+}
+
+bool packet_unlock(packet_t *packet)
+{
+    bool success;
+
+    if (packet_global_lock()) {
+        success = packet->locked == os_current_thread();
+        if (success) {
+            packet->locked = NULL;
+        }
+        packet_global_unlock();
+    } else {
+        success = false;
+    }
+
+    return success;
 }
 
 /*
@@ -496,7 +537,7 @@ int print_packet_table(int argc, const char **argv)
 
         packet_info_table_t table[CONFIG_LASTLINK_NUM_PACKETS];
 
-        if (packet_lock()) {
+        if (packet_global_lock()) {
             /* Make a static copy of the table */
             while (num_packets < ELEMENTS_OF(table)) {
                 table[num_packets].buffer                   = packet_table[num_packets].buffer;
@@ -522,7 +563,7 @@ int print_packet_table(int argc, const char **argv)
                 ++num_packets;
             }
 
-            packet_unlock();
+            packet_global_unlock();
         }
 
         bool all = false;
@@ -614,7 +655,7 @@ bool init_packets(int num_packets)
     if (packet_mutex != NULL) {
         // ESP_LOGI(TAG, "packet_mutex created");
 
-        packet_lock();
+        packet_global_lock();
 
         packets_in_use = num_packets;  // Until initially freed, they are 'in use'.
 
@@ -658,7 +699,7 @@ bool init_packets(int num_packets)
             ESP_LOGE(TAG, "%s: Unable to allocate packet table", __func__);
         }
 
-        packet_unlock();
+        packet_global_unlock();
     }
 
     if (!ok) {
@@ -688,7 +729,7 @@ int deinit_packets(void)
 
     if (packet_mutex != NULL) {
 
-        packet_lock();
+        packet_global_lock();
 
         if (free_packets_queue != NULL) {
 
@@ -706,7 +747,7 @@ int deinit_packets(void)
             }
         }
 
-        packet_unlock();
+        packet_global_unlock();
 
         if (packets_left == 0) {
             os_delete_mutex(packet_mutex);

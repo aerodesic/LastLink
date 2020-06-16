@@ -30,6 +30,7 @@ void os_init(void);
 os_semaphore_t* os_thread_sem_get(void);
 os_semaphore_t* os_thread_sem_init(void);
 void os_thread_sem_deinit(void);
+os_thread_t os_current_thread(void);
 
 /* Mutexes */
 os_mutex_t os_create_mutex(void);

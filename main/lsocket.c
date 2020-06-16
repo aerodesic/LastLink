@@ -1,4 +1,29 @@
 /*
+ * All packets generated should go through a test for 'has the previous one been transmitted'
+ * in order to avoid flooding the packet transmit queue with redundant messages that haven't
+ * been sent.
+ *
+ * Give packet assembly takes care of packets that are out of order where order matters, the
+ * packet transmit queue should be built such that a new packet of type 'x' send to radio 'y'
+ * will purge the queue of any older messages of this type for the radio before inserting
+ * a new one.  Further, it would be useful to simply ignore attempts to send packets with the
+ * same data as before, just leaving them in the queue instead of removing and inserting at
+ * the end of the queue.
+ *
+ * Should be simple enough to check if packet is has same address, as data packets are not
+ * duplicated for transmission.
+ *
+ * Control packets are duplicated, but this could be relaxed by using a holder for the packet
+ * until transmitted and retransmissions would just use the same packet and not requeue
+ * if not yet transmitted.
+ * 
+ * All packets have a 'queued' flag so we can use this to detemine if they are on any radio
+ * queue.
+ *
+ * This needs thought...
+ */
+ 
+ /*
  * lsocket.c
  *
  * Lightweight Socket layer.
@@ -866,6 +891,9 @@ static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_
     return new_packet;
 }
 
+/*
+ * Create a stream packet
+ */
 static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uint8_t flags, int sequence)
 {
     packet_t *packet = linklayer_create_generic_packet(socket->dest_addr, STREAM_PROTOCOL, STREAM_LEN);
@@ -881,6 +909,68 @@ static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uin
     return packet;
 }
 
+static void stream_control_packet_transmit_complete(packet_t *packet, void *data, radio_t *radio)
+{
+    ls_socket_t *socket = (ls_socket_t *) data;
+
+    int cmd = get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN) & STREAM_FLAGS_CMD;
+
+    /* Not used for data */
+    if (cmd != STREAM_FLAGS_CMD_DATA) {
+        if (LOCK_SOCKET(socket)) {
+            if (packet != socket->packet_cache[cmd]) {
+                /* Bugger! Not the same packet */
+                printf("%s: cached and transmitted packets not the same:\n", __func__);
+                linklayer_print_packet("Cached", socket->packet_cache[cmd]);
+                linklayer_print_packet("Transmitted", packet);
+            } else {
+                release_packet(socket->packet_cache[cmd]);
+                socket->packet_cache[cmd] = NULL;
+            }
+            UNLOCK_SOCKET(socket);
+        }
+    }
+
+    release_packet(packet);
+}
+
+/*
+ * create a stream packet from any cached copy of that command type.
+ * If not exists, create one from whole cloth.
+ * If reusing a packet, return with the transmit queue locked and set user "*locked" to true
+ */
+static packet_t *stream_packet_create_from_socket_cached(ls_socket_t *socket, uint8_t flags, int sequence)
+{
+    int cmd = flags & STREAM_FLAGS_CMD;
+
+    LOCK_SOCKET(socket);
+
+    if (socket->packet_cache[cmd] == NULL || ! packet_lock(socket->packet_cache[cmd])) {
+
+        /* Either it didn't exist or we couldn't lock it - create a new one */
+        if (socket->packet_cache[cmd] != NULL) {
+            /* In queue still so release it */
+            release_packet(socket->packet_cache[cmd]);
+        }
+
+        /* Create a new one */
+        socket->packet_cache[cmd] = ref_packet(stream_packet_create_from_socket(socket, flags, sequence));
+        
+        packet_set_transmitted_callback(socket->packet_cache[flags & STREAM_FLAGS_CMD], stream_control_packet_transmit_complete, (void*) socket);
+    }
+
+    /* If reusing a packet, it is now locked and won't be transmitted until unlocked.
+     * Do this quicly because it doesn't stop the transmit processes.  As long as a
+     * packet on the transmit queue is locked, it will be recycled to the end of the
+     * queue each time it pops to the top.  If the queue is otherwise empty, this will
+     * occur on every CAD interrupt cycle (every few milliseconds.)
+     */
+
+    UNLOCK_SOCKET(socket);
+
+    return socket->packet_cache[cmd];
+}
+  
 static void stream_shutdown_windows(ls_socket_t *socket)
 {
     packet_window_shutdown_window(socket->input_window);
@@ -890,6 +980,9 @@ static void stream_shutdown_windows(ls_socket_t *socket)
 static void stream_packet_transmit_complete(packet_t *packet, void *data, radio_t *radio)
 {
     ls_socket_t *socket = (ls_socket_t*) data;
+
+    /* Do the control queue stuff */
+    stream_control_packet_transmit_complete(packet, socket, radio);
 
     /* Packet has been launched - set retry time */
 
@@ -901,36 +994,50 @@ static void stream_packet_transmit_complete(packet_t *packet, void *data, radio_
         socket->output_retry_time = CONFIG_LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME;
     }
 
+    /* Do the control queue stuff (also releases packet) */
+    stream_control_packet_transmit_complete(packet, socket, radio);
+#if 0
     release_packet(packet);
+#endif
 }
 
 #if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE
+/*
+ * This should only happen if there is no inbound traffic on socket */
 static void stream_send_keepalive(ls_socket_t *socket)
 {
-    packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_NOP, 0);
+    packet_t *packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_NOP, 0);
 
     /* Add sequence info to packet just because we can */
     add_data_ack(socket->input_window, packet);
 
     linklayer_route_packet(packet);
+
+    packet_unlock(packet);
 }
 #endif
 
 static void stream_send_connect_ack(ls_socket_t *socket)
 {
-    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, 0));
+    packet_t * packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_CONNECT_ACK, 0);
+    linklayer_route_packet(packet); 
+    packet_unlock(packet);
 }
 
 #ifdef NOTUSED
 static void stream_send_disconnect(ls_socket_t *socket)
 {
-    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT, 0));
+    packet_t *packet =stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECT, 0);
+    linklayer_route_packet(packet); 
+    packet_unlock(packet);
 }
 #endif
 
 static void stream_send_disconnected(ls_socket_t *socket)
 {
-    linklayer_route_packet(stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0));
+    packet_t * packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0);
+    linklayer_route_packet(packet); 
+    packet_unlock(packet);
 }
 
 static bool stream_packet_process(packet_t *packet)
@@ -965,7 +1072,6 @@ static bool stream_packet_process(packet_t *packet)
                     break;
                 }
 
-                case STREAM_FLAGS_CMD_DATA_EOR:
                 case STREAM_FLAGS_CMD_DATA: {
                     /*
                      * Pass the data through the assembly phase.  This might require modifying the current outbound packet
@@ -1770,7 +1876,7 @@ static int state_machine_send_add_callback(ls_socket_t *socket, packet_t *packet
     /* Callback to detect route failure */
     packet_set_routed_callback(packet, state_machine_packet_route_complete, (void*) socket);
 
-    /* Callback to set retry time after transmission */
+    /* Callback to set retry time after transmission (this overrides the control_packet transmitted callback */
     packet_set_transmitted_callback(packet, state_machine_packet_transmit_complete, (void*) socket);
 
     int action;
@@ -1783,6 +1889,9 @@ static int state_machine_send_add_callback(ls_socket_t *socket, packet_t *packet
         /* We've already received the transmit callback so do nothing now */
         action = STATE_MACHINE_ACTION_NONE;
     }
+
+    /* If we had the packet locked, unlock it now */
+    packet_unlock(packet);
 
     /* Message time will be set after transmission (or in some cases before we get back) */
     return action;
@@ -1799,25 +1908,25 @@ static int state_machine_send_add_callback(ls_socket_t *socket, packet_t *packet
  */
 static int state_machine_action_send_connect(ls_socket_t *socket)
 {
-    packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT, 0);
+    packet_t *packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_CONNECT, 0);
     return state_machine_send_add_callback(socket, packet);
 }
 
 static int state_machine_action_send_connect_ack(ls_socket_t *socket)
 {
-    packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_CONNECT_ACK, socket->input_window->length);
+    packet_t *packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_CONNECT_ACK, socket->input_window->length);
     return state_machine_send_add_callback(socket, packet);
 }
 
 static int state_machine_action_send_disconnect(ls_socket_t *socket)
 {
-    packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECT, 0);
+    packet_t *packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECT, 0);
     return state_machine_send_add_callback(socket, packet);
 }
 
 static int state_machine_action_send_disconnected(ls_socket_t *socket)
 {
-    packet_t *packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0);
+    packet_t *packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0);
     return state_machine_send_add_callback(socket, packet);
 }
 
@@ -2087,8 +2196,10 @@ static void ack_input_window(ls_socket_t* socket)
 
         packet_t *packet;
 
+#ifdef NOTUSED
         /* If output exists in output window, send first packet instead of ACK */
         packet_t *packets[socket->output_window->length];
+
         int num_packets = packet_window_get_all_packets(socket->output_window, packets, ELEMENTS_OF(packets));
 
         if (num_packets != 0) {
@@ -2097,10 +2208,13 @@ static void ack_input_window(ls_socket_t* socket)
                 release_packet(packets[slot]);
             }
         } else {
-            packet = stream_packet_create_from_socket(socket, STREAM_FLAGS_CMD_NOP, 0);
+            packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_NOP, 0);
         }
+#endif
+        packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_NOP, 0);
 
         simpletimer_restart(&socket->input_window_timer);
+
 //linklayer_print_packet("Ack", packet);
 
         /* Add sequence info to packet */
@@ -2108,6 +2222,9 @@ static void ack_input_window(ls_socket_t* socket)
 
         /* Send it */
         (void) linklayer_route_packet(packet);
+
+        /* Let if fly if it was locked */
+        packet_unlock(packet);
     }
 }
 
@@ -2326,11 +2443,11 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
                          }
 
                          /*
-                          * Last packet generated.  If eor, change packet to DATA_EOR.
+                          * Last packet generated.  If eor, add EOR falg
                           */
                          if (eor || socket->current_write_packet->length == MAX_PACKET_LEN) {
                              if (eor) {
-                                 set_uint_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN, STREAM_FLAGS_CMD_DATA_EOR);
+                                 set_bits_field(socket->current_write_packet, STREAM_FLAGS, FLAGS_LEN, STREAM_FLAGS_EOR);
                              }
                              UNLOCK_SOCKET(socket);
                              socket_flush_current_packet(socket, /* wait */ true);
@@ -2538,14 +2655,10 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
                         total_len += available;
                         offset += available;
 
-                        //if ((get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN) & STREAM_FLAGS_CMD) == STREAM_FLAGS_CMD_DATA_EOR) {
-                        //    printf("Reading EOR packet: offset %d end of packet %d\n", offset, packet->length - STREAM_PAYLOAD);
-                        //}
-
                         /* if we consumed all the data in the packet, release it */
                         if (offset == packet->length - STREAM_PAYLOAD) {
                             /* If this was end of record, stop the reading here */
-                            eor = (get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN) & STREAM_FLAGS_CMD) == STREAM_FLAGS_CMD_DATA_EOR;
+                            eor = (get_uint_field(packet, STREAM_FLAGS, FLAGS_LEN) & STREAM_FLAGS_EOR) != 0;
                             /* Release packet */
                             release_packet(packet);
                             socket->current_read_packet = NULL;

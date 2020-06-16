@@ -77,6 +77,10 @@ typedef struct radio {
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
     void (*on_receive)(packet_t* packet);
+
+    /* A global pause on transmission when locked */
+    bool (*lock_transmit_queue)(bool lock, int timeout);
+
 #if 0
     packet_t* (*on_transmit)(radio_t*, bool first_packet);
 #endif

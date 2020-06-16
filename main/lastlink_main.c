@@ -151,6 +151,8 @@ void app_main(void)
     wifi_init_softap();
 #endif
 
+    printf("Size of StaticSemaphrore_t is %d\n", sizeof(StaticSemaphore_t));
+
     printf("Node address %d\n", linklayer_node_address);
 
     if (listen_only) {

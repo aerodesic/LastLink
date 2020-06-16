@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+#include "os_specific.h"
+
 #if CONFIG_LASTLINK_CRC16_PACKETS
   /* If CRC enabled, two bytes are taken to support crc transfer */
   #define MAX_PACKET_LEN       (CONFIG_LASTLINK_MAX_PACKET_LENGTH - 2)
@@ -41,6 +43,7 @@ typedef bool (*routed_callback_t)(bool success, packet_t *packet, void *data, ra
 typedef void (*transmitted_callback_t)(packet_t *packet, void *data, radio_t *radio);
 
 typedef struct packet {
+    os_thread_t            locked;                      /* If non-zero, is thread id of locking thread */
 #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
     const char             *last_referenced_filename;
     int                    last_referenced_lineno;
@@ -76,6 +79,8 @@ packet_t *create_packet_plain(uint8_t *buf, size_t length);
 packet_t *duplicate_packet_plain(packet_t *packet);
 bool release_packet_plain(packet_t *packet);
 packet_t* ref_packet_plain(packet_t* packet);
+bool lock_packet(packet_t *packet);
+void unlock_packet(packet_t *packet);
 inline packet_t *touch_packet_plain(packet_t *packet)
 {
     return packet;
@@ -168,8 +173,11 @@ static inline packet_t *packet_dup(packet_t *p)
 }
 #endif
 
-bool packet_lock(void);
-void packet_unlock(void);
+bool packet_global_lock(void);
+void packet_global_unlock(void);
+
+bool packet_lock(packet_t *packet);
+bool packet_unlock(packet_t *packet);
 
 bool packet_tell_routed_callback(packet_t *packet, bool success, radio_t *radio);
 packet_t *packet_set_routed_callback(packet_t *packet, routed_callback_t callback, void *data);

@@ -101,6 +101,7 @@ static int                        receive_only_from[CONFIG_LASTLINK_RECEIVE_ONLY
 #endif
 static radio_t**                  radio_table;
 static int                        activity_count = -1;
+static os_mutex_t                 transmit_lock;       /* Shared with all transmitters through route_t structure.  lock_transmit_queue(radio, true/false) */
 
 typedef struct protocol_entry {
     bool        (*process)(packet_t*);                 /* Process function; return true if processed */
@@ -924,6 +925,11 @@ bool linklayer_remove_radio(int radio_num)
     return ok;
 }
 
+bool linklayer_lock_transmit_queue(bool lock, int timeout)
+{
+    return lock ? os_acquire_mutex_with_timeout(transmit_lock, timeout) : os_release_mutex(transmit_lock);
+}
+
 static bool linklayer_init_radio(radio_t* radio)
 {
     radio->attach_interrupt = linklayer_attach_interrupt;
@@ -931,6 +937,7 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->transmit_queue = os_create_queue(NUM_PACKETS, sizeof(packet_t*));
     radio->activity_indicator = linklayer_activity_indicator;
     radio->reset_device = reset_device;
+    radio->lock_transmit_queue = linklayer_lock_transmit_queue;
 
     return true;
 }
@@ -1021,7 +1028,8 @@ int linklayer_route_packet(packet_t* packet)
     if (packet == NULL) {
         ESP_LOGE(TAG, "%s: Packet is NULL", __func__);
     } else if (packet->transmitting != 0) {
-        printf("********************** packet is still transmitting\n");
+        //printf("********************** packet is still transmitting\n");
+        /* Already on transmit queue somewhere - just leave alone */
     } else if (listen_only) {
         /* In listen-only mode, just discard sending packets */
     } else {
@@ -1608,6 +1616,8 @@ bool linklayer_init(int address, int flags, int announce)
         debug_flag = false;
         announce_interval = announce;
 
+        transmit_lock = os_create_mutex();
+
         if (announce_interval != 0) {
             /* Start the route announce thread */
         }
@@ -1688,6 +1698,11 @@ bool linklayer_deinit(void)
         }
 
         linklayer_unlock();
+
+        if (transmit_lock != NULL) {
+            os_delete_mutex(transmit_lock);
+            transmit_lock = NULL;
+        }
 
         os_delete_mutex(linklayer_mutex);
         linklayer_mutex = NULL;

@@ -58,7 +58,6 @@
 #define   STREAM_FLAGS_CMD                0x0F
 #define   STREAM_FLAGS_CMD_NOP            0x00   /* No operation (only look at FLAGS) */
 #define   STREAM_FLAGS_CMD_DATA           0x01   /* Data for stream connection */
-#define   STREAM_FLAGS_CMD_DATA_EOR       0x02   /* Data for stream connection with end of record */
 /*
  * Connect is:
  *      -> CONNECT                               // One side starts with connect
@@ -70,31 +69,34 @@
  * used to minimize the number (length) of the receive * window (hence setting the transmit
  * window length) of the sender.
  */
-#define   STREAM_FLAGS_CMD_CONNECT        0x03   /* Connect request */
-#define   STREAM_FLAGS_CMD_CONNECT_ACK    0x04   /* Ack to connect request or ack to ACK */
+#define   STREAM_FLAGS_CMD_CONNECT        0x02   /* Connect request */
+#define   STREAM_FLAGS_CMD_CONNECT_ACK    0x03   /* Ack to connect request or ack to ACK */
 /*
  * Disconnect is:
  *     -> DISCONNECT                   // One side send DISCONNECT
  *        DISCONNECTED <-              // Other side responds with DISCONNECTED
  *     -> DISCONNECTED                 // Originator responds back with DISCONNECTED
  */
-#define   STREAM_FLAGS_CMD_DISCONNECT     0x05   /* Disconnect request */
-#define   STREAM_FLAGS_CMD_DISCONNECTED   0x06   /* Disconect ack */
+#define   STREAM_FLAGS_CMD_DISCONNECT     0x04   /* Disconnect request */
+#define   STREAM_FLAGS_CMD_DISCONNECTED   0x05   /* Disconect ack */
 /*
  * REJECT is sent when something went wrong.
  */
-#define   STREAM_FLAGS_CMD_REJECT         0x07   /* Reject - something's wrong */
+#define   STREAM_FLAGS_CMD_REJECT         0x06   /* Reject - something's wrong */
+// #define  STREAM_FLAGS_UNUSED_7         0x07
 // #define  STREAM_FLAGS_UNUSED_8         0x08
-// #define  STREAM_FLAGS_UNUSED_8         0x09
+// #define  STREAM_FLAGS_UNUSED_9         0x09
 // #define  STREAM_FLAGS_UNUSED_A         0x0A
 // #define  STREAM_FLAGS_UNUSED_B         0x0B
 // #define  STREAM_FLAGS_UNUSED_C         0x0C
 // #define  STREAM_FLAGS_UNUSED_D         0x0D
 // #define  STREAM_FLAGS_UNUSED_E         0x0E
 // #define  STREAM_FLAGS_UNUSED_F         0x0F
-#define   STREAM_FLAGS_BITS               0xF0
-#define   STREAM_FLAGS_ACKNUM             0x10   /* ACK Sequence number is present */
-// #define  STREAM_FLAGS_UNUSED           0xE0   /* Unused flags */
+#define STREAM_FLAGS_CMD_COUNT            (STREAM_FLAGS_CMD+1)
+#define   STREAM_FLAGS_BITS               0xF8
+#define   STREAM_FLAGS_ACKNUM             0x80   /* ACK Sequence number is present */
+#define   STREAM_FLAGS_EOR                0x40   /* End of record flag */
+// #define  STREAM_FLAGS_UNUSED           0x38   /* Unused flags */
 #define STREAM_SEQUENCE                (STREAM_FLAGS + FLAGS_LEN)
 #define STREAM_ACK_SEQUENCE            (STREAM_SEQUENCE + SEQUENCE_NUMBER_LEN)
 #define STREAM_ACK_WINDOW              (STREAM_ACK_SEQUENCE + SEQUENCE_NUMBER_LEN)
@@ -200,6 +202,11 @@ typedef struct ls_socket {
            simpletimer_t           socket_flush_timer;
            packet_t                *current_write_packet;
            bool                    end_of_data;
+
+           /* Outbound packet cache to avoid duplication.  Packets are released from here after transmission,
+            * otherwise they are reused inplace when updates are needed.
+            */
+           packet_t                *packet_cache[STREAM_FLAGS_CMD_COUNT];
         };
     };
 

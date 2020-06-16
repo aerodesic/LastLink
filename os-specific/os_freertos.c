@@ -340,6 +340,11 @@ bool os_delete_thread(os_thread_t thread)
     return true;
 }
 
+os_thread_t os_current_thread(void)
+{
+    return (os_thread_t) xTaskGetCurrentTaskHandle();
+}
+
 bool os_exit_thread(void)
 {
     vTaskDelete(NULL);

@@ -1,3 +1,12 @@
+/*
+ * sx127x_driver.c
+ *
+ * The driver for all SX127x chips.  Supports SPI currently but is rather agnostic to the interface
+ * type.  The caller who instantiates this handler supplies pointers to read and write register and
+ * buffer functions, as well as some ancillary (e.g. attach to interrupt) functions that allows
+ * performing the lower-level platform specific operations.
+ */
+
 #undef USE_FHSS
 #include "sdkconfig.h"
 
@@ -150,6 +159,7 @@ typedef struct sx127x_private_data {
     os_mutex_t        rlock;
     int               packet_memory_failed;
     packet_t         *current_packet;
+    int               current_packet_window;          /* Calculated window number for this packet */
     int               packet_crc_errors;
     int               cad_interrupts;
     int               cad_last_interrupts;
@@ -165,12 +175,16 @@ typedef struct sx127x_private_data {
 #define HANDLER_WAKEUP_TIMER_PERIOD 1000              /* Once a second */
     simpletimer_t     handler_wakeup_timer_status;    /* So we can check status of non-readble timer */
     uint8_t           irq_flags;                      /* Flags acquired at irq scan time */
-    simpletimer_t     tx_timeout_timer;               /* Used to force stop a tx that lost it's interrupt */
-    bool              tx_new_packet;
     handler_state_t   handler_state;
 #ifdef DISPLAY_HANDLER_STATE
     handler_state_t   last_handler_state;
 #endif
+
+    int               window_number;
+#define WINDOW_NUMBER_MODULUS  8
+    int               window_interval;
+    os_timer_t        window_timer_id;
+    int               window_count;
 
 #define TX_MAX_TIMEOUT  5000                      /* 5 second timeout */
 
@@ -196,15 +210,18 @@ static int          global_number_radios_active;
 
 #define WANTED_VERSION  0x12
 
-typedef struct handler_queue_item {
+typedef struct handler_queue_event {
     radio_t *radio;
     enum {
-        HQI_INTERRUPT=1,
-        HQI_WAKEUP,
-        HQI_TIMER,
+        HQI_INTERRUPT=1,   /* A hardware interrupt */
+        HQI_RESET,         /* Reset from hung software */
+        HQI_WINDOW,        /* A window */
     } type; 
-    handler_state_t state;  
-} handler_queue_item_t;
+    union {
+        handler_state_t state;  
+        int             window;
+    };
+} handler_queue_event_t;
 
 /* Called when radio's wakeup timer fires - generates 'interrupt' to handler */
 static void handler_wakeup_timer(os_timer_t timer_id)
@@ -215,15 +232,15 @@ static void handler_wakeup_timer(os_timer_t timer_id)
     if (data->cad_last_interrupts == data->cad_interrupts) {
         /* No CAD interrupts detected in the past few cycles, so reset state via event */
     
-        handler_queue_item_t item = {
-            .type = HQI_TIMER,
+        handler_queue_event_t event = {
+            .type = HQI_RESET,
             .radio = radio,
             .state = data->handler_state,
         };
 
 printf("%s: radio %d timeout\n", __func__, radio->radio_num);
 
-        os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
+        os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
 
     } else {
         data->cad_last_interrupts = data->cad_interrupts;
@@ -233,6 +250,43 @@ printf("%s: radio %d timeout\n", __func__, radio->radio_num);
 
     /* Restart the software timer that is used to indicate system timer status, which we cannot read. */
     simpletimer_start(&data->handler_wakeup_timer_status, HANDLER_WAKEUP_TIMER_PERIOD);
+}
+
+inline static int calculate_window_number(radio_t *radio, packet_t *packet)
+{
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    return (get_uint_field(data->current_packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) *
+            get_uint_field(data->current_packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) *
+            get_uint_field(data->current_packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN) *
+            get_uint_field(data->current_packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN)) % WINDOW_NUMBER_MODULUS;
+}
+
+/*
+ * Called to update the window.
+ */
+static void window_timer(os_timer_t timer_id)
+{
+    radio_t *radio = (radio_t*) os_get_timer_data(timer_id);
+    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+    /* Set interval in case we were short cycled to get here */
+    os_set_timer(timer_id, data->window_interval);
+
+    /* Change the window */
+    data->window_number = (data->window_number + 1) % WINDOW_NUMBER_MODULUS;
+
+    /* Count the number of window events */
+    data->window_count++;
+
+    /* Send the window event */
+    handler_queue_event_t event = {
+        .type = HQI_WINDOW,
+        .radio = radio,
+        .window = data->window_number,
+    };
+
+    os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
 }
 
 /*
@@ -250,7 +304,7 @@ bool sx127x_create(radio_t* radio)
     if (radio != NULL) {
         /* Start global interrupt processing thread if not yet running */
         if (global_interrupt_handler_thread == NULL) {
-            global_interrupt_handler_queue = os_create_queue(MAX_IRQ_PENDING, sizeof(handler_queue_item_t));
+            global_interrupt_handler_queue = os_create_queue(MAX_IRQ_PENDING, sizeof(handler_queue_event_t));
             global_interrupt_handler_thread = os_create_thread_on_core(global_interrupt_handler, "sx127x_handler",
                                                                GLOBAL_IRQ_THREAD_STACK, GLOBAL_IRQ_THREAD_PRIORITY, NULL, 0);
         }
@@ -286,19 +340,20 @@ bool sx127x_create(radio_t* radio)
             data->coding_rate               = 5;
             data->implicit_header           = false;
             data->implicit_header_set       = false;
-            data->hop_period                = 0;
+            //data->hop_period                = 0;
             data->enable_crc                = true;
             data->bandwidth                 = 125000;
             data->spreading_factor          = 10;
             data->tx_power                  = 2;
-            data->rx_interrupts             = 0;
-            data->tx_interrupts             = 0;
-            data->rx_timeouts               = 0;
-            data->tx_timeouts               = 0;
-            data->cad_interrupts            = 0;
-            data->cad_detected              = 0;
-            data->receive_busy              = false;
-            data->handler_cycles            = 0;
+            //data->rx_interrupts             = 0;
+            //data->tx_interrupts             = 0;
+            //data->rx_timeouts               = 0;
+            //data->tx_timeouts               = 0;
+            //data->cad_interrupts            = 0;
+            //data->cad_detected              = 0;
+            //data->receive_busy              = false;
+            //data->handler_cycles            = 0;
+            //data->window_number     = 0;
 
             data->rlock                     = os_create_recursive_mutex();
 
@@ -309,20 +364,21 @@ bool sx127x_create(radio_t* radio)
             data->last_handler_state        = -1;
 #endif
 
-            /* Set the interval to delay transmit after last receive or transmit */
-            simpletimer_start(&data->tx_timeout_timer, radio->transmit_after_receive_delay);
-
             /* Create the wakeup timer and start it */
             data->handler_wakeup_timer_id = os_create_repeating_timer("wakeup_timer", HANDLER_WAKEUP_TIMER_PERIOD, radio, handler_wakeup_timer);
             os_start_timer(data->handler_wakeup_timer_id);
 
+            /* Create window event timer */
+            data->window_timer_id = os_create_timer("wakeup_timer", HANDLER_WAKEUP_TIMER_PERIOD, radio, window_timer);
+
+
             /* Send initial wakeup call to handler */
-            handler_queue_item_t item = {
+            handler_queue_event_t event = {
                 .radio = radio,
-                .type = HQI_WAKEUP,
+                .type = HQI_INTERRUPT,
             };
 
-            os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
+            os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
 
 //ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->radio_num, radio->transmit_after_receive_delay);
         }
@@ -374,19 +430,6 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
         length = radio->read_register(radio, SX127x_REG_RX_NUM_BYTES);
     }
 
-//ESP_LOGI(TAG, "%s: -------- entry -------", __func__);
-//ESP_LOGI(TAG, "%s: length              %02x", __func__, length);
-//ESP_LOGI(TAG, "%s: fifo_current        %02x", __func__, fifo_current);
-//ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
-//ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
-//ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
-//ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
-//ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
-//ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
-//ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
-//ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
-//ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
-
     /* Cannot reliably capture packet if CRC error so don't even try */
     if ((data->irq_flags & (SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR )) == 0) {
 
@@ -427,6 +470,15 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
 
                 /* Pass it to protocol layer */
                 radio->on_receive(ref_packet(packet));
+
+                /* Calculate window and starting point */
+                int window = calculate_window_number(radio, packet);
+                int time_of_flight = get_message_time(radio, packet->length);
+              
+                /* Synchronize window to align to next assumed slot (it is reset inside interval handler) */
+                os_stop_timer(data->window_timer_id);
+                data->window_number = window;
+                os_set_timer(data->window_timer_id, data->window_interval - time_of_flight);
             }
 
             release_packet(packet);
@@ -442,21 +494,6 @@ ESP_LOGE(TAG, "%s: rxint with crc", __func__);
         }
         data->irq_flags &= ~(SX127x_IRQ_PAYLOAD_CRC_ERROR | SX127x_IRQ_VALID_HEADER | SX127x_IRQ_PAYLOAD_CRC_ERROR);
     }
-
-
-
-//ESP_LOGI(TAG, "%s: -------- exit --------", __func__);
-//ESP_LOGI(TAG, "%s: IRQ_FLAGS           %02x", __func__, data->irq_flags);
-//ESP_LOGI(TAG, "%s: RX_NUM_BYTES        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_NUM_BYTES));
-//ESP_LOGI(TAG, "%s: RX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_BASE));
-//ESP_LOGI(TAG, "%s: FIFO_PTR            %02x", __func__, radio->read_register(radio, SX127x_REG_FIFO_PTR));
-//ESP_LOGI(TAG, "%s: RX_FIFO_CURRENT     %02x", __func__, radio->read_register(radio, SX127x_REG_RX_FIFO_CURRENT));
-//ESP_LOGI(TAG, "%s: PAYLOAD_LENGTH      %02x", __func__, radio->read_register(radio, SX127x_REG_PAYLOAD_LENGTH));
-//ESP_LOGI(TAG, "%s: TX_FIFO_BASE        %02x", __func__, radio->read_register(radio, SX127x_REG_TX_FIFO_BASE));
-//ESP_LOGI(TAG, "%s: MODEM_CONFIG_1      %02x", __func__, radio->read_register(radio, SX127x_REG_MODEM_CONFIG_1));
-//ESP_LOGI(TAG, "%s: MAX_PAYLOAD_LENGTH  %02x", __func__, radio->read_register(radio, SX127x_REG_MAX_PAYLOAD_LENGTH));
-
-//printf("%llu: rx\n", get_milliseconds());
 }
 
 #ifdef USE_FHSS
@@ -528,6 +565,9 @@ static bool tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
         data->current_packet->transmitted++;
         /* Tell any interested listener that it has been transmitted */
         packet_tell_transmitted_callback(data->current_packet, radio);
+
+        assert(packet_unlock(data->current_packet));
+
         release_packet(data->current_packet);
         data->current_packet = NULL;
     }
@@ -542,31 +582,27 @@ static bool tx_next_packet(radio_t *radio, sx127x_private_data_t *data)
 {
     /* Get a new packet if we have none */
     if (data->current_packet == NULL) {
-        os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t) &data->current_packet, 0);
+        if (os_get_queue_with_timeout(radio->transmit_queue, (os_queue_item_t) &data->current_packet, 0)) {
 
-        /*
-         * If the 'delay' flag is set on the packet, wait a random time before transmitting
-         * to try and avoid other broadcasters also transmitting the packet.
-         */
-        data->tx_new_packet = true;
-    }
-
-    if (data->tx_new_packet) {
-        data->tx_new_packet = false;
-
-        if ((data->current_packet != NULL) && data->current_packet->delay) {
-            int base_delay = get_message_time(radio, data->current_packet->length) * 2;
-
-            int msg_delay = (esp_random() + data->current_packet->delay + base_delay) % (2 * base_delay) + base_delay;
-
-            //simpletimer_extend(&data->tx_timeout_timer, msg_delay);
-            simpletimer_update(&data->tx_timeout_timer, msg_delay);
-
-//printf("%s: base_delay %d delay tx_timer by %d to %d\n", __func__, base_delay, msg_delay, simpletimer_remaining(&data->tx_timeout_timer));
+            /* Fetched a new packet, so calculate it's window */
+            data->current_packet_window = calculate_window_number(radio, data->current_packet);
+//printf("%s: window %d\n", __func__, data->current_packet_window);
         }
     }
 
     return data->current_packet != NULL;
+}
+
+/*
+ * Move current packet to end of transmit queue for sending later.
+ */
+static void tx_recycle_packet(radio_t *radio, sx127x_private_data_t *data)
+{
+    if (data->current_packet != NULL) {
+        if (os_put_queue_with_timeout(radio->transmit_queue, (os_queue_item_t) &data->current_packet, 0)) {
+            data->current_packet = NULL;
+        }
+    }
 }
 
 static void tx_start_packet(radio_t *radio, sx127x_private_data_t *data)
@@ -581,27 +617,49 @@ static void tx_start_packet(radio_t *radio, sx127x_private_data_t *data)
 /* Force start transmit interrupt handler */
 static void transmit_start(radio_t *radio)
 {
+#if 0
     if (acquire_lock(radio)) {
-
-        /* Transmitter is idle - issue a wakeup call */
-        handler_queue_item_t item = {
-            .radio = radio,
-            .type = HQI_WAKEUP,
-        };
-
-        os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &item, 0);
 
         release_lock(radio);
 
     } else {
         ESP_LOGE(TAG, "%s: Cannot acquire lock", __func__);
     }
+#endif
 }
 
 /*
  * Need to pass in a 'code' for the reason.
  *
  *   reasons:  Interrupt; Timer
+ *
+ * Normal operation is via direct interrupts, specifically receive and CAD interrupts (for
+ * scanning channel available and read-packet detection.  Transmit is controlled by items
+ * coming from the input queue and the 'window' tick timer.
+ *
+ * When a packet is ready to transmit, a determination is made as to how close it is
+ * to the window edge and a timer is activated to start the operation at that time.
+ *
+ * The window determination is federated: each node is responsible for self-synchronizing
+ * to the window period.  For example, when a packet is read, after the interrupt the
+ * window starting point is calculated to be:
+ *             <current time> - <'time of flight' of the packet>
+ * This value is used to reset the next window event detection interrupt time.
+ *
+ * When the window heartbeat is detected, the system determines if a packet exists that
+ * hashes to the current window interval and if so, launches it.
+ *
+ * Window interval hashing is a work-in-progress but is based upon a hash of the
+ * origin, destination and sequence number of the packet.  This hash is reduced to
+ * an N bit number and this drives the window cycle.
+ *
+ * For example when a packet is received, the window hash for that packet is calculated
+ * and used to reset the current window number and this becomes the basis for the next
+ * window to be delivered to the handler.
+ *
+ * The rate of the window number update is based on the maximum time-of-flight for a
+ * packet at the current bandwidth / coding_rate / spreading_factor.
+ *
  */
 /* Param is ignored */
 static void global_interrupt_handler(void* param)
@@ -611,21 +669,27 @@ static void global_interrupt_handler(void* param)
     ESP_LOGD(TAG, "%s: running", __func__);
 
     while (running) {
-        handler_queue_item_t item;
+        handler_queue_event_t event;
 
-        if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t) &item)) {
+        if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t) &event)) {
 
-            radio_t *radio = item.radio;
+            radio_t *radio = event.radio;
 
 
             if (radio != NULL) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-                if (item.type == HQI_TIMER) {
+                if (event.type == HQI_RESET) {
                     /* Force state transition */
-                    data->handler_state = item.state;
+                    data->handler_state = event.state;
                     data->cad_timeouts++;
                 }
+
+#if 0
+                if (event.type == HQI_WINDOW) {
+                    printf("window %d\n", event.window);
+                }
+#endif
 
                 data->handler_cycles++;
 
@@ -713,17 +777,28 @@ static void global_interrupt_handler(void* param)
                                     data->cad_detected++;
                                     data->handler_state = HS_RECEIVING;
 
-                                /* If no CAD detected and we have packet ready to go, start the transmitter if delays have elapsed */
-                                } else if (tx_next_packet(radio, data)) {
-                                    if (simpletimer_is_expired(&data->tx_timeout_timer)) {
-                                        if (!data->receive_busy) {
-                                            tx_start_packet(radio, data);
-                                            data->handler_state = HS_WAIT_TX_INT;
-                                        }
-                                    }
                                 }
 
                                 data->irq_flags &= ~(SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);
+                            }
+
+                            if ((data->handler_state == HS_WAITING) && (event.type == HQI_WINDOW)) {
+//printf("%s: window %d\n", __func__, data->current_packet_window);
+                                /* If packet exists and it's window id is for the current window, start it going */
+                                if (tx_next_packet(radio, data)) {
+                                    if (data->current_packet_window == event.window) {
+                                        if (packet_lock(data->current_packet)) {
+                                            /* Remains locked through the interrupt return */
+                                            tx_start_packet(radio, data);
+                                            data->handler_state = HS_WAIT_TX_INT;
+                                        } else {
+                                            /* Recycle packet to end of queue in hopes we can do some other work while waiting. */
+                                            /* If not, we'll keep moving it back into the queue on each CAD interrupt for a while. */
+                                            tx_recycle_packet(radio, data);
+                                        }
+                                    }
+//else { printf("%s: window %d want %d\n", __func__, event.window, data->current_packet_window); }
+                                }
                             }
                             break;
                         }
@@ -792,9 +867,6 @@ static void global_interrupt_handler(void* param)
 
                             set_cad_detect_mode(radio);
 
-                            /* Wait a random number of receive delay cycles before starting new transmit */
-                            simpletimer_update(&data->tx_timeout_timer, radio->transmit_after_receive_delay + (esp_random() % (radio->transmit_after_receive_delay * 3)));
-
                             /* And go back to waiting */
                             data->handler_state = HS_WAITING;
                             break;
@@ -803,8 +875,6 @@ static void global_interrupt_handler(void* param)
                         case HS_TRANSMIT_DONE_PRIORITY: {
                             set_standby_mode(radio);
                             set_cad_detect_mode(radio);
-
-//                            simpletimer_update(&data->tx_timeout_timer, radio->transmit_after_transmit_delay);
 
                             /* And go back to waiting */
                             data->handler_state = HS_WAITING;
@@ -815,17 +885,6 @@ static void global_interrupt_handler(void* param)
                             set_standby_mode(radio);
                             set_cad_detect_mode(radio);
 
-                            /*
-                             * Wait to transmit after a transmit
-                             * 25% of the time, wait the rx timeout instead.
-                             */
-                            if ((esp_random() % 100) < 25) {
-                                // simpletimer_update(&data->tx_timeout_timer, radio->transmit_after_receive_delay);
-                                simpletimer_update(&data->tx_timeout_timer, radio->transmit_after_receive_delay * (esp_random() % 4 +1));
-                            } else {
-                                /* Resume transmitting with different delay */
-                                simpletimer_update(&data->tx_timeout_timer, radio->transmit_after_transmit_delay);
-                            }
 
                             /* And go back to waiting */
                             data->handler_state = HS_WAITING;
@@ -872,6 +931,10 @@ static bool radio_stop(radio_t* radio)
              && radio->attach_interrupt(radio, GPIO_DIO1, GPIO_PIN_INTR_DISABLE, NULL)
 #endif
              ;
+
+        /* Kill handler window timer */
+        os_delete_timer(data->window_timer_id);
+        data->window_timer_id = NULL;
 
         /* Kill handler wakeup timer */
         os_delete_timer(data->handler_wakeup_timer_id);
@@ -1576,6 +1639,13 @@ static void update_data_rate(radio_t *radio)
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth) / (data->coding_rate * (1 << data->spreading_factor));
+
+    /* Set the window interval to 1.25 times the maximum packet time */
+    //data->window_interval = (get_message_time(radio, MAX_PACKET_LEN)) * 125 / 100;
+    data->window_interval = (get_message_time(radio, MAX_PACKET_LEN)) / 4;
+
+    /* Change the window update rate.  Things may be a bit wonky until the first packet is received */
+    os_set_timer(data->window_timer_id, data->window_interval);
 }
 
 /*
@@ -1601,12 +1671,12 @@ static void catch_interrupt(void *param)
 
     bool awakened;
 
-    handler_queue_item_t item = {
+    handler_queue_event_t event = {
         .radio = radio,
         .type = HQI_INTERRUPT,
     };
 
-    os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) &item, &awakened);
+    os_put_queue_from_isr(global_interrupt_handler_queue, (os_queue_item_t) &event, &awakened);
 
     if (awakened) {
         portYIELD_FROM_ISR();
@@ -1665,6 +1735,10 @@ void print_status(radio_t *radio)
         printf("handler_state:          %s\n", handler_state_of(data.handler_state));
         printf("handler_cycles:         %d\n", data.handler_cycles);
         printf("wakeup_ticks:           %d\n", data.wakeup_ticks);
+        printf("window_number:          %d\n", data.window_number);
+        printf("current_packet_window:  %d\n", data.current_packet_window);
+        printf("window_interval:        %d\n", data.window_interval);
+        printf("window_count:           %d\n", data.window_count);
 
         int wakeup_timer_remaining = simpletimer_remaining(&data.handler_wakeup_timer_status);
 
