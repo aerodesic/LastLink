@@ -561,10 +561,22 @@ static bool tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
         priority = (get_uint_field(data->current_packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_PRIORITY) != 0;
 
         data->current_packet->transmitting--;
+
         /* Count as transmitted */
         data->current_packet->transmitted++;
-        /* Tell any interested listener that it has been transmitted */
-        packet_tell_transmitted_callback(data->current_packet, radio);
+
+        /*
+         * No critical race with respect to packet fields and the packet will not
+         * enter transmitting mode if it is locked by another thread.  Only
+         * when the current 'winner' finishes the thread will the next one be
+         * able to lock and start a transmit.
+         */
+
+        /* Only do when all radios have finished. */
+        if (data->current_packet->transmitting == 0) {
+            /* Tell any interested listener that it has been transmitted */
+            packet_tell_transmitted_callback(data->current_packet, radio);
+        }
 
         assert(packet_unlock(data->current_packet));
 
