@@ -26,7 +26,6 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
-#include "wifi_init.h"
 #include "spiffs.h"
 #include "nvs_support.h"
 
@@ -148,8 +147,7 @@ void app_main(void)
     free((void*) buffer);
 
 #if 1
-    // wifi_init_softap();
-    https_server_start();
+    https_server();
 #endif
 
     printf("Node address %d\n", linklayer_node_address);

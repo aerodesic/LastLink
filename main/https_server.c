@@ -98,11 +98,7 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-#ifdef NOTUSED
-static void https_server(void *dummy)
-#else
-static void https_server(void)
-#endif
+void https_server(void)
 {
     static httpd_handle_t server = NULL;
 
@@ -125,32 +121,5 @@ static void https_server(void)
 #endif // CONFIG_LASTLINK_CONNECT_ETHERNET
 
     ESP_ERROR_CHECK(network_connect());
-}
-
-#ifdef NOTSUSED
-#define HTTPS_SERVER_STACK_SIZE 16384
-static os_thread_t https_thread_id;
-#endif
-
-bool https_server_start(void)
-{
-#ifdef NOTUSED
-    https_thread_id = os_create_thread(https_server, "https", HTTPS_SERVER_STACK_SIZE, 0, NULL);
-
-    return https_thread_id != NULL;
-#else
-    https_server();
-    return true;
-#endif
-}
-
-void https_server_stop(void)
-{
-#ifdef NOTUSED
-    if (https_thread_id != NULL) {
-        os_delete_thread(https_thread_id);
-        https_thread_id = NULL;
-    }
-#endif
 }
 

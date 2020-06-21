@@ -8,8 +8,7 @@
 #ifndef __https_server_h_included
 #define __https_server_h_included
 
-bool https_server_start(void);
-void https_server_stop(void);
+void https_server(void);
 
 #endif /* __https_server_h_included */
 

@@ -1,4 +1,3 @@
-
 /* Common functions for protocol examples, to establish Wi-Fi or Ethernet connection.
 
    This example code is in the Public Domain (or CC0 licensed, at your option.)
@@ -14,9 +13,6 @@
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-#include "esp_eth.h"
-#endif
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "driver/gpio.h"
@@ -45,10 +41,6 @@
 #endif
 
 static int s_active_interfaces = 0;
-#ifdef NOTUSED
-static xSemaphoreHandle s_semph_get_ip_addrs;
-static esp_ip4_addr_t s_ip_addr;
-#endif
 static esp_netif_t *s_lastlink_esp_netif = NULL;
 
 #ifdef CONFIG_LASTLINK_CONNECT_IPV6
@@ -71,10 +63,6 @@ static const char *TAG = "network_connect";
 static esp_netif_t* wifi_start(void);
 static void wifi_stop(void);
 #endif
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-static esp_netif_t* eth_start(void);
-static void eth_stop(void);
-#endif
 
 /**
  * @brief Checks the netif description if it contains specified prefix.
@@ -94,20 +82,6 @@ static void start(void)
     s_lastlink_esp_netif = wifi_start();
     s_active_interfaces++;
 #endif
-
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-    s_lastlink_esp_netif = eth_start();
-    s_active_interfaces++;
-#endif
-
-#if defined(CONFIG_LASTLINK_CONNECT_WIFI) && defined(CONFIG_LASTLINK_CONNECT_ETHERNET)
-    /* if both intefaces at once, clear out to indicate that multiple netifs are active */
-    s_lastlink_esp_netif = NULL;
-#endif
-
-#ifdef NOTUSED
-    s_semph_get_ip_addrs = xSemaphoreCreateCounting(NR_OF_IP_ADDRESSES_TO_WAIT_FOR, 0);
-#endif
 }
 
 /* tear down connection, release resources */
@@ -117,64 +91,12 @@ static void stop(void)
     wifi_stop();
     s_active_interfaces--;
 #endif
-
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-    eth_stop();
-    s_active_interfaces--;
-#endif
 }
-
-#ifdef NOTUSED
-static void on_got_ip(void *arg, esp_event_base_t event_base,
-                      int32_t event_id, void *event_data)
-{
-    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    if (!is_our_netif(TAG, event->esp_netif)) {
-        ESP_LOGW(TAG, "Got IPv4 from another interface \"%s\": ignored", esp_netif_get_desc(event->esp_netif));
-        return;
-    }
-    ESP_LOGI(TAG, "Got IPv4 event: Interface \"%s\" address: " IPSTR, esp_netif_get_desc(event->esp_netif), IP2STR(&event->ip_info.ip));
-    memcpy(&s_ip_addr, &event->ip_info.ip, sizeof(s_ip_addr));
-    xSemaphoreGive(s_semph_get_ip_addrs);
-}
-
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-
-static void on_got_ipv6(void *arg, esp_event_base_t event_base,
-                        int32_t event_id, void *event_data)
-{
-    ip_event_got_ip6_t *event = (ip_event_got_ip6_t *)event_data;
-    if (!is_our_netif(TAG, event->esp_netif)) {
-        ESP_LOGW(TAG, "Got IPv6 from another netif: ignored");
-        return;
-    }
-    esp_ip6_addr_type_t ipv6_type = esp_netif_ip6_get_addr_type(&event->ip6_info.ip);
-    ESP_LOGI(TAG, "Got IPv6 event: Interface \"%s\" address: " IPV6STR ", type: %s", esp_netif_get_desc(event->esp_netif),
-            IPV62STR(event->ip6_info.ip), s_ipv6_addr_types[ipv6_type]);
-    if (ipv6_type == EXAMPLE_CONNECT_PREFERRED_IPV6_TYPE) {
-        memcpy(&s_ipv6_addr, &event->ip6_info.ip, sizeof(s_ipv6_addr));
-        xSemaphoreGive(s_semph_get_ip_addrs);
-    }
-}
-
-#endif // CONFIG_LASTLINK_CONNECT_IPV6
-#endif
 
 esp_err_t network_connect(void)
 {
-#ifdef NOTUSED
-    if (s_semph_get_ip_addrs != NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-#endif
     start();
     ESP_ERROR_CHECK(esp_register_shutdown_handler(&stop));
-#ifdef NOTUSED
-    ESP_LOGI(TAG, "Waiting for IP(s)");
-    for (int i=0; i<NR_OF_IP_ADDRESSES_TO_WAIT_FOR; ++i) {
-        xSemaphoreTake(s_semph_get_ip_addrs, portMAX_DELAY);
-    }
-#endif
     // iterate over active interfaces, and print out IPs of "our" netifs
     esp_netif_t *netif = NULL;
     esp_netif_ip_info_t ip;
@@ -201,41 +123,11 @@ esp_err_t network_connect(void)
 
 esp_err_t network_disconnect(void)
 {
-#ifdef NOTUSED
-    if (s_semph_get_ip_addrs == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    vSemaphoreDelete(s_semph_get_ip_addrs);
-    s_semph_get_ip_addrs = NULL;
-#endif
     stop();
     return ESP_OK;
 }
 
 #ifdef CONFIG_LASTLINK_CONNECT_WIFI
-
-#ifdef NOTUSED
-static void on_wifi_disconnect(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    ESP_LOGI(TAG, "Wi-Fi disconnected, trying to reconnect...");
-    esp_err_t err = esp_wifi_connect();
-    if (err == ESP_ERR_WIFI_NOT_STARTED) {
-        return;
-    }
-    ESP_ERROR_CHECK(err);
-}
-
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-
-static void on_wifi_connect(void *esp_netif, esp_event_base_t event_base,
-                            int32_t event_id, void *event_data)
-{
-    esp_netif_create_ip6_linklocal(esp_netif);
-}
-
-#endif // CONFIG_LASTLINK_CONNECT_IPV6
-#endif
 
 static esp_netif_t* wifi_start(void)
 {
@@ -256,16 +148,6 @@ static esp_netif_t* wifi_start(void)
 
     //esp_wifi_set_default_wifi_sta_handlers();
     esp_wifi_set_default_wifi_ap_handlers();
-
-#ifdef NOTUSED
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_wifi_disconnect, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_got_ip, NULL));
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-    //ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &on_wifi_connect, netif));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &on_wifi_connect, netif));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, &on_got_ipv6, NULL));
-#endif
-#endif
 
     wifi_config_t wifi_config = {
         .ap = {
@@ -292,14 +174,6 @@ static esp_netif_t* wifi_start(void)
 static void wifi_stop(void)
 {
     esp_netif_t *wifi_netif = get_lastlink_netif_from_desc("sta");
-#ifdef NOTUSED
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_wifi_disconnect));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_got_ip));
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_GOT_IP6, &on_got_ipv6));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &on_wifi_connect));
-#endif
-#endif
     esp_err_t err = esp_wifi_stop();
     if (err == ESP_ERR_WIFI_NOT_INIT) {
         return;
@@ -311,134 +185,6 @@ static void wifi_stop(void)
     s_lastlink_esp_netif = NULL;
 }
 #endif // CONFIG_LASTLINK_CONNECT_WIFI
-
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-
-/** Event handler for Ethernet events */
-static void on_eth_event(void *esp_netif, esp_event_base_t event_base,
-                         int32_t event_id, void *event_data)
-{
-    switch (event_id) {
-    case ETHERNET_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Ethernet Link Up");
-        esp_netif_create_ip6_linklocal(esp_netif);
-        break;
-    default:
-        break;
-    }
-}
-
-#endif // CONFIG_LASTLINK_CONNECT_IPV6
-
-static esp_eth_handle_t s_eth_handle = NULL;
-static esp_eth_mac_t *s_mac = NULL;
-static esp_eth_phy_t *s_phy = NULL;
-static void *s_eth_glue = NULL;
-
-static esp_netif_t* eth_start(void)
-{
-    char *desc;
-    esp_netif_inherent_config_t esp_netif_config = ESP_NETIF_INHERENT_DEFAULT_ETH();
-    // Prefix the interface description with the module TAG
-    // Warning: the interface desc is used in tests to capture actual connection details (IP, gw, mask)
-    asprintf(&desc, "%s: %s", TAG, esp_netif_config.if_desc);
-    esp_netif_config.if_desc = desc;
-    esp_netif_config.route_prio = 64;
-    esp_netif_config_t netif_config = {
-            .base = &esp_netif_config,
-            .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH
-    };
-    esp_netif_t *netif = esp_netif_new(&netif_config);
-    assert(netif);
-    free(desc);
-    // Set default handlers to process TCP/IP stuffs
-    ESP_ERROR_CHECK(esp_eth_set_default_handlers(netif));
-    // Register user defined event handers
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &on_got_ip, NULL));
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ETHERNET_EVENT_CONNECTED, &on_eth_event, netif));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, &on_got_ipv6, NULL));
-#endif
-    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
-    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
-    phy_config.phy_addr = CONFIG_LASTLINK_ETH_PHY_ADDR;
-    phy_config.reset_gpio_num = CONFIG_LASTLINK_ETH_PHY_RST_GPIO;
-#ifdef CONFIG_LASTLINK_USE_INTERNAL_ETHERNET
-    mac_config.smi_mdc_gpio_num = CONFIG_LASTLINK_ETH_MDC_GPIO;
-    mac_config.smi_mdio_gpio_num = CONFIG_LASTLINK_ETH_MDIO_GPIO;
-    s_mac = esp_eth_mac_new_esp32(&mac_config);
-#ifdef CONFIG_LASTLINK_ETH_PHY_IP101
-    s_phy = esp_eth_phy_new_ip101(&phy_config);
-#elif defined(CONFIG_LASTLINK_ETH_PHY_RTL8201)
-    s_phy = esp_eth_phy_new_rtl8201(&phy_config);
-#elif CONFIG_LASTLINK_ETH_PHY_LAN8720
-    s_phy = esp_eth_phy_new_lan8720(&phy_config);
-#elif CONFIG_LASTLINK_ETH_PHY_DP83848
-    s_phy = esp_eth_phy_new_dp83848(&phy_config);
-#endif
-#elif CONFIG_LASTLINK_USE_DM9051
-    gpio_install_isr_service(0);
-    spi_device_handle_t spi_handle = NULL;
-    spi_bus_config_t buscfg = {
-        .miso_io_num = CONFIG_LASTLINK_DM9051_MISO_GPIO,
-        .mosi_io_num = CONFIG_LASTLINK_DM9051_MOSI_GPIO,
-        .sclk_io_num = CONFIG_LASTLINK_DM9051_SCLK_GPIO,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-    ESP_ERROR_CHECK(spi_bus_initialize(CONFIG_LASTLINK_DM9051_SPI_HOST, &buscfg, 1));
-    spi_device_interface_config_t devcfg = {
-        .command_bits = 1,
-        .address_bits = 7,
-        .mode = 0,
-        .clock_speed_hz = CONFIG_LASTLINK_DM9051_SPI_CLOCK_MHZ * 1000 * 1000,
-        .spics_io_num = CONFIG_LASTLINK_DM9051_CS_GPIO,
-        .queue_size = 20
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(CONFIG_LASTLINK_DM9051_SPI_HOST, &devcfg, &spi_handle));
-    /* dm9051 ethernet driver is based on spi driver */
-    eth_dm9051_config_t dm9051_config = ETH_DM9051_DEFAULT_CONFIG(spi_handle);
-    dm9051_config.int_gpio_num = CONFIG_LASTLINK_DM9051_INT_GPIO;
-    s_mac = esp_eth_mac_new_dm9051(&dm9051_config, &mac_config);
-    s_phy = esp_eth_phy_new_dm9051(&phy_config);
-#elif CONFIG_LASTLINK_USE_OPENETH
-    phy_config.autonego_timeout_ms = 100;
-    s_mac = esp_eth_mac_new_openeth(&mac_config);
-    s_phy = esp_eth_phy_new_dp83848(&phy_config);
-#endif
-
-    // Install Ethernet driver
-    esp_eth_config_t config = ETH_DEFAULT_CONFIG(s_mac, s_phy);
-    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &s_eth_handle));
-    // combine driver with netif
-    s_eth_glue = esp_eth_new_netif_glue(s_eth_handle);
-    esp_netif_attach(netif, s_eth_glue);
-    esp_eth_start(s_eth_handle);
-    return netif;
-}
-
-static void eth_stop(void)
-{
-    esp_netif_t *eth_netif = get_lastlink_netif_from_desc("eth");
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &on_got_ip));
-#ifdef CONFIG_LASTLINK_CONNECT_IPV6
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_GOT_IP6, &on_got_ipv6));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(ETH_EVENT, ETHERNET_EVENT_CONNECTED, &on_eth_event));
-#endif
-    ESP_ERROR_CHECK(esp_eth_stop(s_eth_handle));
-    ESP_ERROR_CHECK(esp_eth_del_netif_glue(s_eth_glue));
-    ESP_ERROR_CHECK(esp_eth_clear_default_handlers(eth_netif));
-    ESP_ERROR_CHECK(esp_eth_driver_uninstall(s_eth_handle));
-    ESP_ERROR_CHECK(s_phy->del(s_phy));
-    ESP_ERROR_CHECK(s_mac->del(s_mac));
-
-    esp_netif_destroy(eth_netif);
-    s_lastlink_esp_netif = NULL;
-}
-
-#endif // CONFIG_LASTLINK_CONNECT_ETHERNET
 
 esp_netif_t *get_lastlink_netif(void)
 {
