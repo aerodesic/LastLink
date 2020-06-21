@@ -114,7 +114,7 @@ packet_t *create_packet_plain(uint8_t* buf, size_t length)
     if (p != NULL) {
         memcpy(p->buffer, buf, length);
         p->length = length;
-       p->radio_num = UNKNOWN_RADIO;
+        p->radio_num = UNKNOWN_RADIO;
     }
 
     return p;
@@ -214,9 +214,9 @@ bool release_packet_debug(const char *filename, int lineno, packet_t *packet)
 
     if (packet != NULL) {
         if (packet->ref != 0) {
-            // For now, don't 'touch' a packet when released.  We want to find the last actual use (or ref)
-            ok = release_packet_plain(packet);
-            // ok = release_packet_plain(touch_packet_debug(filename, lineno, packet));
+     //       // For now, don't 'touch' a packet when released.  We want to find the last actual use (or ref)
+     //       ok = release_packet_plain(packet);
+            ok = release_packet_plain(touch_packet_debug(filename, lineno, packet));
         } else {
             ESP_LOGE(TAG, "********************************************************");
             ESP_LOGE(TAG, "%s: packet_release called by %s:%d", __func__, filename, lineno);

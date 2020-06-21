@@ -954,12 +954,17 @@ static packet_t *stream_packet_create_from_socket_cached(ls_socket_t *socket, ui
         }
 
         /* Create a new one */
-        socket->packet_cache[cmd] = ref_packet(stream_packet_create_from_socket(socket, flags, sequence));
+        socket->packet_cache[cmd] = stream_packet_create_from_socket(socket, flags, sequence);
         
         packet_set_transmitted_callback(socket->packet_cache[flags & STREAM_FLAGS_CMD], stream_control_packet_transmit_complete, (void*) socket);
+    } else {
+        /* Add flags and sequence to this packet */
+        set_uint_field(socket->packet_cache[cmd], STREAM_FLAGS, FLAGS_LEN, flags);
+        set_uint_field(socket->packet_cache[cmd], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
     }
 
-    /* If reusing a packet, it is now locked and won't be transmitted until unlocked.
+    /*
+     * If reusing a packet, it is now locked and won't be transmitted until unlocked.
      * Do this quicly because it doesn't stop the transmit processes.  As long as a
      * packet on the transmit queue is locked, it will be recycled to the end of the
      * queue each time it pops to the top.  If the queue is otherwise empty, this will
@@ -968,7 +973,7 @@ static packet_t *stream_packet_create_from_socket_cached(ls_socket_t *socket, ui
 
     UNLOCK_SOCKET(socket);
 
-    return socket->packet_cache[cmd];
+    return ref_packet(socket->packet_cache[cmd]);
 }
   
 static void stream_shutdown_windows(ls_socket_t *socket)
@@ -981,11 +986,7 @@ static void stream_packet_transmit_complete(packet_t *packet, void *data, radio_
 {
     ls_socket_t *socket = (ls_socket_t*) data;
 
-    /* Do the control queue stuff */
-    stream_control_packet_transmit_complete(packet, socket, radio);
-
     /* Packet has been launched - set retry time */
-
     simpletimer_start(&socket->output_window_timer, socket->output_retry_time);
 
     /* Next time wait twice as long (up to a limit) */
@@ -996,9 +997,6 @@ static void stream_packet_transmit_complete(packet_t *packet, void *data, radio_
 
     /* Do the control queue stuff (also releases packet) */
     stream_control_packet_transmit_complete(packet, socket, radio);
-#if 0
-    release_packet(packet);
-#endif
 }
 
 #if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE
@@ -1010,6 +1008,9 @@ static void stream_send_keepalive(ls_socket_t *socket)
 
     /* Add sequence info to packet just because we can */
     add_data_ack(socket->input_window, packet);
+
+    /* There is one ref for the cache and one for us; May be more for on-radio queue holdings */
+    assert(packet->ref >= 2);
 
     linklayer_route_packet(packet);
 
@@ -2213,9 +2214,14 @@ static void ack_input_window(ls_socket_t* socket)
 #endif
         packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_NOP, 0);
 
-        simpletimer_restart(&socket->input_window_timer);
+if (packet->ref <= 0) {
+  char buf[20];
+  sprintf(buf, "REF %d", packet->ref);
+  linklayer_print_packet(buf, packet);
+}
+        assert(packet->ref >= 2);
 
-//linklayer_print_packet("Ack", packet);
+        simpletimer_restart(&socket->input_window_timer);
 
         /* Add sequence info to packet */
         add_data_ack(socket->input_window, packet);

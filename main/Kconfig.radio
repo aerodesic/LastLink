@@ -30,7 +30,7 @@ menu "Radio $(RADIO_NUM) SPI configuration"
     depends on LASTLINK_RADIO_$(RADIO_NUM)_SX126x_SPI || LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
 
     config LASTLINK_RADIO_$(RADIO_NUM)_SPI_HOST
-        int "SPI bus number to use"
+        int "SPI bus number"
         default 2
         range 0 3
         help
@@ -39,63 +39,63 @@ menu "Radio $(RADIO_NUM) SPI configuration"
             careful.
 
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO0
-        int "DIO0 GPIO line for RADIO $(RADIO_NUM)"
+        int "DIO0 GPIO line"
         default 26
         range 1 36
         help
             Connection for the DIO0 line used to report transmit and receive interrupts.
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO1
-        int "DIO1 GPIO line for RADIO $(RADIO_NUM)"
+        int "DIO1 GPIO line"
         default 35
         range 1 36
         help
             Connection for the DIO1 line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO2
-        int "DIO2 GPIO line for RADIO $(RADIO_NUM)"
+        int "DIO2 GPIO line"
         default 34
         range 1 36
         help
             Connection for the DIO2 line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_SCK
-        int "SCK GPIO line for RADIO $(RADIO_NUM)"
+        int "SCK GPIO line"
         default 5
         range 1 36
         help
             Connection for the SPI Clock line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_MOSI
-        int "MOSI GPIO line for RADIO $(RADIO_NUM)"
+        int "MOSI GPIO line"
         default 27
         range 1 36
         help
             Connection for the MOSI line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_MISO
-        int "MISO GPIO line for RADIO $(RADIO_NUM)"
+        int "MISO GPIO line"
         default 19
         range 1 36
         help
             Connection for the MISO line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_SS
-        int "SS GPIO line for RADIO $(RADIO_NUM)"
+        int "SS GPIO line"
         default 18
         range 1 36
         help
             Connection for the SS (Select) line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_RESET
-        int "RESET GPIO line for RADIO $(RADIO_NUM)"
+        int "RESET GPIO line"
         default 14
         range 1 36
         help
             Connection for the RESET line
 
     config LASTLINK_RADIO_$(RADIO_NUM)_SPI_CLOCK_HZ
-        int "SPI Clock speed for RADIO $(RADIO_NUM)"
+        int "SPI Clock speed"
         default 10000000
         range 100000 40000000
         help
@@ -127,23 +127,21 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Initial datarate.  Note: not all datarates are valied.
 
-    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_AFTER_RECEIVE_DELAY
-        int "Transmit delay for RADIO $(RADIO_NUM) after a receive"
-        default 50
-        range 0 1000
+    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_WINDOWS
+        int "Number transmit windows"
+        default 8
+        range 1 20
         help
-            Milliseconds to wait to start transmit after a receive
-            completes.  Normally this should be longer than the
-            transmit-after-transmit delay in order to give priority
-            to transmits.
+            Number of transmit slots
 
-    config LASTLINK_RADIO_$(RADIO_NUM)_TRANSMIT_AFTER_TRANSMIT_DELAY
-        int "Transmit delay for RADIO $(RADIO_NUM) after a transmit"
-        default 50
-        range 0 1000
+    config LASTLINK_RADIO_$(RADIO_NUM)_WINDOW_WIDTH_PERCENT
+        int "Width expressed as percentage of max message time"
+        default 100
+        range 10 300
         help
-            Milliseconds to wait to start a transmit after a
-            transmit completes.
+            This controls the calculated width of a window in milliseconds.
+            It is expressed as a percentage of calculated maximum message
+            length at the selected bandwidth / coding_rate / spread_factor.
 
 endmenu
 

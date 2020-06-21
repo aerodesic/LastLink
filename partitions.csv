@@ -3,7 +3,7 @@
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
 nvs,      data, nvs,     0x009000,   0x006000,
 phy_init, data, phy,     0x00f000,   0x001000,
-factory,  app,  factory, 0x010000,   0x100000,
-ota_1,    app,  ota_1,   0x110000,   0x100000,
+factory,  app,  factory, 0x010000,   0x200000,
+#ota_1,    app,  ota_1,   0x110000,   0x100000,
 storage,  data, spiffs,  0x210000,   0x1F0000,
 

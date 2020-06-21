@@ -55,7 +55,7 @@
  * STREAMING data connection is based on datagram with sequence numbers.
  */
 #define STREAM_FLAGS                   (DATAGRAM_PAYLOAD)
-#define   STREAM_FLAGS_CMD                0x0F
+#define   STREAM_FLAGS_CMD                0x07
 #define   STREAM_FLAGS_CMD_NOP            0x00   /* No operation (only look at FLAGS) */
 #define   STREAM_FLAGS_CMD_DATA           0x01   /* Data for stream connection */
 /*
@@ -84,14 +84,6 @@
  */
 #define   STREAM_FLAGS_CMD_REJECT         0x06   /* Reject - something's wrong */
 // #define  STREAM_FLAGS_UNUSED_7         0x07
-// #define  STREAM_FLAGS_UNUSED_8         0x08
-// #define  STREAM_FLAGS_UNUSED_9         0x09
-// #define  STREAM_FLAGS_UNUSED_A         0x0A
-// #define  STREAM_FLAGS_UNUSED_B         0x0B
-// #define  STREAM_FLAGS_UNUSED_C         0x0C
-// #define  STREAM_FLAGS_UNUSED_D         0x0D
-// #define  STREAM_FLAGS_UNUSED_E         0x0E
-// #define  STREAM_FLAGS_UNUSED_F         0x0F
 #define STREAM_FLAGS_CMD_COUNT            (STREAM_FLAGS_CMD+1)
 #define   STREAM_FLAGS_BITS               0xF8
 #define   STREAM_FLAGS_ACKNUM             0x80   /* ACK Sequence number is present */

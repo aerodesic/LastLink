@@ -40,7 +40,7 @@
 
 #include "commands.h"
 #include "ssd1306_i2c.h"
-
+#include "https_server.h"
 
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
@@ -147,11 +147,10 @@ void app_main(void)
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
 
-#if 0
-    wifi_init_softap();
+#if 1
+    // wifi_init_softap();
+    https_server_start();
 #endif
-
-    printf("Size of StaticSemaphrore_t is %d\n", sizeof(StaticSemaphore_t));
 
     printf("Node address %d\n", linklayer_node_address);
 

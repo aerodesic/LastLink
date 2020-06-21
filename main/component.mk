@@ -44,3 +44,13 @@ vfs_lastlink.o:     $(COMPONENT_PATH)/vfs_lastlink.c
 
 wifi_init.o:        $(COMPONENT_PATH)/wifi_init.c
 
+
+
+#
+# "main" pseudo-component makefile.
+#
+# (Uses default behaviour of compiling all source files in directory, adding 'include' to include path.)
+
+COMPONENT_EMBED_TXTFILES := certs/cacert.pem
+COMPONENT_EMBED_TXTFILES += certs/prvtkey.pem
+

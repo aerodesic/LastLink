@@ -46,6 +46,8 @@
 
 #define TAG "sx127x_driver"
 
+#undef MEASURE_RX_TIME
+
 static bool radio_stop(radio_t* radio);                              /* Stop and disassemble the radio */
 
 static bool set_sleep_mode(radio_t* radio);                          /* Set sleeping mode (low power) */
@@ -150,6 +152,10 @@ typedef struct sx127x_private_data {
     uint8_t           tx_power;
     packet_t          *rx_next_packet;
     int               rx_interrupts;
+#ifdef MEASURE_RX_TIME
+    uint64_t          rx_start_time;
+    uint64_t          rx_end_time;
+#endif
 #define RX_TIMEOUT_TIME  1000
     int               tx_interrupts;
 #define TX_TIMEOUT_TIME  1000
@@ -169,7 +175,6 @@ typedef struct sx127x_private_data {
     int               rx_timeouts;
     int               wakeup_ticks;
 #define CAD_TIMEOUT_TIME  100
-    bool              receive_busy;
     int               handler_cycles;
     os_timer_t        handler_wakeup_timer_id;        /* ID of radio wakeup timer in case things hang */
 #define HANDLER_WAKEUP_TIMER_PERIOD 1000              /* Once a second */
@@ -181,10 +186,9 @@ typedef struct sx127x_private_data {
 #endif
 
     int               window_number;
-#define WINDOW_NUMBER_MODULUS  8
-    int               window_interval;
+    int               window_width;
     os_timer_t        window_timer_id;
-    int               window_count;
+    int               window_event_count;
 
 #define TX_MAX_TIMEOUT  5000                      /* 5 second timeout */
 
@@ -258,8 +262,8 @@ inline static int calculate_window_number(radio_t *radio, packet_t *packet)
 
     return (get_uint_field(data->current_packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) *
             get_uint_field(data->current_packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) *
-            get_uint_field(data->current_packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN) *
-            get_uint_field(data->current_packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN)) % WINDOW_NUMBER_MODULUS;
+            get_uint_field(data->current_packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN) +
+            2 * get_uint_field(data->current_packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN)) % radio->transmit_windows;
 }
 
 /*
@@ -271,13 +275,13 @@ static void window_timer(os_timer_t timer_id)
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
     /* Set interval in case we were short cycled to get here */
-    os_set_timer(timer_id, data->window_interval);
+    os_set_timer(timer_id, data->window_width);
 
     /* Change the window */
-    data->window_number = (data->window_number + 1) % WINDOW_NUMBER_MODULUS;
+    data->window_number = (data->window_number + 1) % radio->transmit_windows;
 
     /* Count the number of window events */
-    data->window_count++;
+    data->window_event_count++;
 
     /* Send the window event */
     handler_queue_event_t event = {
@@ -351,7 +355,6 @@ bool sx127x_create(radio_t* radio)
             //data->tx_timeouts               = 0;
             //data->cad_interrupts            = 0;
             //data->cad_detected              = 0;
-            //data->receive_busy              = false;
             //data->handler_cycles            = 0;
             //data->window_number     = 0;
 
@@ -379,8 +382,6 @@ bool sx127x_create(radio_t* radio)
             };
 
             os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
-
-//ESP_LOGI(TAG, "%s: setting transmit delay for radio %d to %d", __func__, radio->radio_num, radio->transmit_after_receive_delay);
         }
 
         ++global_number_radios_active;
@@ -474,11 +475,16 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
                 /* Calculate window and starting point */
                 int window = calculate_window_number(radio, packet);
                 int time_of_flight = get_message_time(radio, packet->length);
-              
+
+#ifdef MEASURE_RX_TIME
+int measured = (int) (data->rx_end_time - data->rx_start_time);
+printf("%s: rx msg time: calc %d measured %d delta %d\n", __func__, time_of_flight, measured, time_of_flight - measured);
+#endif /* MEASURE_RX_TIME */
+             
                 /* Synchronize window to align to next assumed slot (it is reset inside interval handler) */
                 os_stop_timer(data->window_timer_id);
                 data->window_number = window;
-                os_set_timer(data->window_timer_id, data->window_interval - time_of_flight);
+                os_set_timer(data->window_timer_id, data->window_width - time_of_flight);
             }
 
             release_packet(packet);
@@ -788,7 +794,6 @@ static void global_interrupt_handler(void* param)
                                 if ((data->irq_flags & (SX127x_IRQ_CAD_DETECTED)) != 0) {
                                     data->cad_detected++;
                                     data->handler_state = HS_RECEIVING;
-
                                 }
 
                                 data->irq_flags &= ~(SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED);
@@ -821,6 +826,9 @@ static void global_interrupt_handler(void* param)
                         case HS_RECEIVING: {
                             if (data->irq_flags & SX127x_IRQ_RX_DONE) {
                                 /* Packet arrived.  Process it */
+#ifdef MEASURE_RX_TIME
+                                data->rx_end_time = get_milliseconds();
+#endif /* MEASURE_RX_TIME */
                                 rx_handle_interrupt(radio, data);
 
                                 /* Allocate a new packet if we can */
@@ -853,30 +861,24 @@ static void global_interrupt_handler(void* param)
                     switch (data->handler_state) {
                         case HS_STARTUP:
                         case HS_CAD_RESTART: {
-                            data->receive_busy = false;
-                            //data->tx_new_packet = true;
                             set_cad_detect_mode(radio);
                             break;
                         }
 
                         case HS_WAITING: {
-                            data->receive_busy = false;
                             set_cad_detect_mode(radio);
                             break;
                         }
 
                         case HS_RECEIVING: {
-                            data->receive_busy = true;
-                            /* The *real* receive mode */
                             set_receive_mode(radio);
+#ifdef MEASURE_RX_TIME
+                            data->rx_start_time = get_milliseconds();
+#endif /* MEASURE_RX_TIME */
                             break;
                         }
 
                         case HS_RECEIVE_DONE: {
-                            /* Receiver is no longer busy */
-                            data->receive_busy = false;
-                            //data->tx_new_packet = true;
-
                             set_cad_detect_mode(radio);
 
                             /* And go back to waiting */
@@ -1652,12 +1654,11 @@ static void update_data_rate(radio_t *radio)
 
     data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth) / (data->coding_rate * (1 << data->spreading_factor));
 
-    /* Set the window interval to 1.25 times the maximum packet time */
-    //data->window_interval = (get_message_time(radio, MAX_PACKET_LEN)) * 125 / 100;
-    data->window_interval = (get_message_time(radio, MAX_PACKET_LEN)) / 4;
+    /* Set the width of the transmit window in milliseconds */
+    data->window_width = (get_message_time(radio, MAX_PACKET_LEN) * radio->window_width_percent) / 100;
 
     /* Change the window update rate.  Things may be a bit wonky until the first packet is received */
-    os_set_timer(data->window_timer_id, data->window_interval);
+    os_set_timer(data->window_timer_id, data->window_width);
 }
 
 /*
@@ -1740,7 +1741,6 @@ void print_status(radio_t *radio)
 #endif /* USE_FHSS */
         printf("packet_memory_failed:   %d\n", data.packet_memory_failed);
         printf("packet_crc_errors:      %d\n", data.packet_crc_errors);
-        printf("receive_busy:           %s\n", data.receive_busy ? "YES" : "NO");
         printf("saved irq_flags:        %02x\n", data.irq_flags);
         printf("live irq_flags:         %02x\n", live_irq_flags);
         printf("live irq_mask:          %02x\n", live_irq_mask);
@@ -1749,8 +1749,8 @@ void print_status(radio_t *radio)
         printf("wakeup_ticks:           %d\n", data.wakeup_ticks);
         printf("window_number:          %d\n", data.window_number);
         printf("current_packet_window:  %d\n", data.current_packet_window);
-        printf("window_interval:        %d\n", data.window_interval);
-        printf("window_count:           %d\n", data.window_count);
+        printf("window_width:           %d\n", data.window_width);
+        printf("window_event_count:     %d\n", data.window_event_count);
 
         int wakeup_timer_remaining = simpletimer_remaining(&data.handler_wakeup_timer_status);
 
