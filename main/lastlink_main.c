@@ -41,12 +41,14 @@
 #include "ssd1306_i2c.h"
 #include "https_server.h"
 
+#if 0
 /* TEST */
 extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
 extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
 
 const uint8_t *xyz = server_root_cert_pem_end;
 /* END TEST */
+#endif
 
 const char* TAG = "lastlink";
 
@@ -146,9 +148,7 @@ void app_main(void)
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
 
-#if 1
     https_server();
-#endif
 
     printf("Node address %d\n", linklayer_node_address);
 

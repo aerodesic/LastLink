@@ -152,7 +152,7 @@ bool release_packet_plain(packet_t *packet)
                     ok = os_put_queue_with_timeout(free_packets_queue, (os_queue_item_t) &packet, 0);
                     packets_in_use--;
 
-ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
+//ESP_LOGI(TAG, "%s: in use %d", __func__, packets_in_use);
                 } else {
                     ok = true;
                 }

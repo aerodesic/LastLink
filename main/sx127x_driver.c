@@ -209,7 +209,7 @@ static int          global_number_radios_active;
 #define RX_DIO_MAPPING            0b00001111    /* DIO0 to RX_DONE;  DIO1 to RX_TIMEOUT;   DIO2 to undefined */
 #define TX_DIO_MAPPING            0b01111111    /* DIO0 to TX_DONE;  DIO1 to undefined;    DIO2 to undefined */
 
-#define GLOBAL_IRQ_THREAD_STACK    16000
+#define GLOBAL_IRQ_THREAD_STACK    8192
 #define GLOBAL_IRQ_THREAD_PRIORITY (configMAX_PRIORITIES-1)  /* Highest priority */
 
 #define WANTED_VERSION  0x12

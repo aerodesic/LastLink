@@ -8,6 +8,8 @@
 
 #ifdef CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
 
+#define SERVICES_STACK_SIZE  4096
+
 #include <stdarg.h>
 #include <sys/fcntl.h>
 #include <sys/types.h>
@@ -438,7 +440,7 @@ bool init_service_names(void)
     INIT_LIST(&service_cache);
 
     service_lock = os_create_recursive_mutex();
-    service_thread_id = os_create_thread(service_thread, "services", 8192, 0, NULL);
+    service_thread_id = os_create_thread(service_thread, "services", SERVICES_STACK_SIZE, 0, NULL);
 
     bool ok = service_lock && service_thread_id;
 

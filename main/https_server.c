@@ -70,6 +70,8 @@ static httpd_handle_t start_webserver(void)
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
     httpd_register_uri_handler(server, &root);
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, NULL);
+
     return server;
 }
 
@@ -79,8 +81,7 @@ static void stop_webserver(httpd_handle_t server)
     httpd_ssl_stop(server);
 }
 
-static void disconnect_handler(void* arg, esp_event_base_t event_base, 
-                               int32_t event_id, void* event_data)
+static void disconnect_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     httpd_handle_t* server = (httpd_handle_t*) arg;
     if (*server) {
@@ -89,8 +90,7 @@ static void disconnect_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-static void connect_handler(void* arg, esp_event_base_t event_base, 
-                            int32_t event_id, void* event_data)
+static void connect_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     httpd_handle_t* server = (httpd_handle_t*) arg;
     if (*server == NULL) {
@@ -98,27 +98,19 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+static httpd_handle_t server = NULL;
+
 void https_server(void)
 {
-    static httpd_handle_t server = NULL;
-
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* Register event handlers to start server when Wi-Fi or Ethernet is connected,
+    /* Register event handlers to start server when Wi-Fi is connected
      * and stop server when disconnection happens.
      */
 
-#ifdef CONFIG_LASTLINK_CONNECT_WIFI
-    //ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &connect_handler, &server));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &connect_handler, &server));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &disconnect_handler, &server));
-#endif // CONFIG_LASTLINK_CONNECT_WIFI
-#ifdef CONFIG_LASTLINK_CONNECT_ETHERNET
-    //ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &connect_handler, &server));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &connect_handler, &server));
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ETHERNET_EVENT_DISCONNECTED, &disconnect_handler, &server));
-#endif // CONFIG_LASTLINK_CONNECT_ETHERNET
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &disconnect_handler, &server));
 
     ESP_ERROR_CHECK(network_connect());
 }
