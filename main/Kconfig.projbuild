@@ -33,7 +33,7 @@ menu "LastLink Configuration"
 
     config LASTLINK_WIFI_SSID
         string "WiFi SSID"
-        default "lastlink"
+        default "LastLink"
         help
             SSID (network name) for the example to connect to.
 

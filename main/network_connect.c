@@ -7,9 +7,11 @@
    CONDITIONS OF ANY KIND, either express or implied.
  */
 
+#include "sdkconfig.h"
+#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
+
 #include <string.h>
 #include "network_connect.h"
-#include "sdkconfig.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
@@ -205,3 +207,5 @@ esp_netif_t *get_lastlink_netif_from_desc(const char *desc)
     free(expected_desc);
     return netif;
 }
+#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
+

@@ -13,7 +13,7 @@ else
             echo Starting flash on $dev
             gnome-terminal --window-with-profile=default --geometry 230x14 --hide-menubar  -- bash -c "
                 echo -ne '\033]0;Debug $dev\007'
-                idf.py -p $dev monitor
+                ESPPORT=$dev make monitor
             "
         done
     fi

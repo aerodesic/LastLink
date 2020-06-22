@@ -39,7 +39,11 @@
 
 #include "commands.h"
 #include "ssd1306_i2c.h"
+
+#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
 #include "https_server.h"
+#include "mdns_config.h"
+#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
 
 #if 0
 /* TEST */
@@ -148,7 +152,10 @@ void app_main(void)
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
 
+#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
     https_server();
+    start_mdns_service();
+#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
 
     printf("Node address %d\n", linklayer_node_address);
 

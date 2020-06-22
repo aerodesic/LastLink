@@ -15,7 +15,7 @@
 #include "listops.h"
 #include "simpletimer.h"
 
-#define ROUTE_SCANNER_STACK_SIZE  4096
+#define ROUTE_SCANNER_STACK_SIZE  2048
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
