@@ -11,7 +11,7 @@
 
 #include "esp_system.h"
 
-esp_err_t init_configuration(const char* filename, const char** default_config);
+esp_err_t init_configuration(const char* filename);
 bool lock_config(void);
 bool unlock_config(void);
 bool save_config(const char* filename);

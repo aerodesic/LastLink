@@ -32,7 +32,7 @@
 #include "linklayer.h"
 #include "lsocket.h"
 #include "configdata.h"
-#include "default_config.h"
+//#include "default_config.h"
 #include "os_specific.h"
 #include "packets.h"
 #include "service_names.h"
@@ -56,7 +56,7 @@ const uint8_t *xyz = server_root_cert_pem_end;
 
 const char* TAG = "lastlink";
 
-static const char* default_config[] = DEFAULT_CONFIG;
+//static const char* default_config[] = DEFAULT_CONFIG;
 
 #define NUMLINES 6
 char lines[NUMLINES][16];
@@ -115,7 +115,7 @@ void app_main(void)
     ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
-    init_configuration(CONFIG_LASTLINK_CONFIG_FILE, default_config);
+    init_configuration(CONFIG_LASTLINK_CONFIG_FILE);
     /* initialize the lastlink network */
     #if CONFIG_LASTLINK_ADDRESS_OVERRIDE
         linklayer_init(CONFIG_LASTLINK_ADDRESS_OVERRIDE, get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
@@ -148,9 +148,31 @@ void app_main(void)
     display->clear(display);
 
     char *buffer;
-    asprintf(&buffer, "Lastlink #%d", get_config_int("lastlink.address", 0));
+    asprintf(&buffer, "LastLink #%d", get_config_int("lastlink.address", 0));
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
+
+#ifdef NOTUSED
+// Check out fstat
+    struct stat sb;
+
+    if (stat(CONFIG_LASTLINK_CONFIG_FILE, &sb) == 0) {
+        printf("stat of %s:\n", CONFIG_LASTLINK_CONFIG_FILE);
+        printf("  st_dev:     %d\n", sb.st_dev);
+        printf("  st_ino:     %d\n", sb.st_ino);
+        printf("  st_ino:     %d\n", sb.st_ino);
+        printf("  st_mode:    %d\n", sb.st_mode);
+        printf("  st_nlink:   %d\n", sb.st_nlink);
+        printf("  st_uid:     %d\n", sb.st_uid);
+        printf("  st_gid:     %d\n", sb.st_gid);
+        printf("  st_rdev:    %d\n", sb.st_rdev);
+        printf("  st_size:    %ld\n", sb.st_size);
+        printf("  st_blksize: %ld\n", sb.st_blksize);
+        printf("  st_blocks:  %ld\n", sb.st_blocks);
+    } else {
+        printf("Cannot stat '%s'\n", CONFIG_LASTLINK_CONFIG_FILE);
+    }
+#endif
 
 #ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
     https_server();

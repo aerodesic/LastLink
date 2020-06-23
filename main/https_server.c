@@ -18,20 +18,146 @@
 #include "esp_eth.h"
 #include "network_connect.h"
 #include "os_specific.h"
+#include "listops.h"
 
 #include <esp_https_server.h>
 
+typedef struct var_item var_item_t;
 
-/* A simple example that demonstrates how to create GET and POST
+typedef struct var_item {
+    var_item_t     *next;
+    var_item_t     *prev;
+    const char     *name;
+    const char     *value;
+} var_item_t;
+
+typedef list_head_t  var_list_t;
+
+/*
+ * A simple example that demonstrates how to create GET and POST
  * handlers and start an HTTPS server.
-*/
+ */
 
 static const char *TAG = "LastLinkHTTPS";
+
+static var_item_t *create_var_item(const char* name, const char *value)
+{
+    var_item_t *item = (var_item_t *) malloc(sizeof(var_item_t) + strlen(name) + 1 + strlen(value) + 1);
+    if (item != NULL) {
+        char *p = (char *) (item + 1);
+        strcpy(p, name);
+        item->name = p;
+        p += strlen(name) + 1;
+        strcpy(p, value);
+        item->value = p;
+    }
+    return item;
+} 
+
+static void release_var_list(var_list_t *var_list)
+{
+    while (NUM_IN_LIST(var_list) != 0) {
+       var_item_t *item = (var_item_t *) FIRST_LIST_ITEM(var_list);
+       REMOVE_FROM_LIST(var_list, item);
+       free((void*) item);
+    }
+}
+
+/*
+ * Open a file and send it, after editing it with the values in the var_map
+ */
+static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *filename, var_list_t *varlist)
+{
+    esp_err_t ret;
+    char *text = NULL;
+    size_t len = 0;
+    struct stat  sb;
+
+    if (stat(filename, &sb) == 0) {
+        len = sb.st_size;
+ESP_LOGI(TAG, "%s: '%s' is %d bytes long", __func__, filename, len);
+
+        size_t max_len = len * 2; 
+        text = (char *) malloc(max_len + 1);
+        if (text != NULL) {
+            FILE *fp = fopen(filename, "r");
+            if (fp != NULL) {
+                size_t read_len = fread(text, 1, len, fp);
+                if (read_len == len) {
+ESP_LOGI(TAG, "%s: read %d bytes", __func__, len);
+                    /* Go through text and substitute all "{var}" with "value" from varlist */
+                    if (varlist != NULL) {
+                        for (var_item_t *var = (var_item_t *) FIRST_LIST_ITEM(varlist); var != NULL; var = NEXT_LIST_ITEM(var, varlist)) {
+
+ESP_LOGI(TAG, "%s: looking for '%s' ('%s')", __func__, var->name, var->value);
+
+                            size_t wanted_len = strlen(var->name) + 2;
+                            size_t value_len = strlen(var->value);
+                            char varwanted[wanted_len + 1];
+                            sprintf(varwanted, "{%s}", var->name);
+                            char *p = text;
+
+                            do {
+                                p = strstr(p, varwanted);
+                                if (p != NULL) {
+                                    /* Replace the text here */
+                                    int needed = value_len - wanted_len;
+
+                                    if (needed > 0) {
+                                        /* Need to make room - make sure there is enough */
+                                        if (len + needed < max_len) {
+                                            /* Move to make room */
+                                            memmove(p + needed, p, len - (p - text));
+                                            len += needed;
+ESP_LOGI(TAG, "%s: addec %d bytes to text", __func__, needed);
+                                        } else {
+                                            len = 0;
+                                        }
+                                    } else if (needed < 0) {
+                                        /* Need to remove space */
+                                        memcpy(p, p - needed, len - (p - text));
+                                        /* Remove from the current length (needed is currently negative) */
+                                        len += needed;
+ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, -needed);
+                                    } else {
+                                        /* Just right */
+                                    }
+
+                                    memcpy(p, var->value, value_len);
+                                }
+                            } while (len != 0 && p != NULL); 
+                        }
+                    } 
+                } else {
+ESP_LOGI(TAG, "%s: read %d bytes wanted %d", __func__, read_len, len);
+                    len = 0;
+                } 
+
+                fclose(fp);
+            }
+        }
+    }
+    
+    if (text == NULL) {
+        len = asprintf(&text, "<html><body><h1>%s not found</h1><body><html>", filename);
+    }
+
+    if (len > 0) {
+        ret = httpd_resp_send(req, text, len);
+    } else {
+        ret = httpd_resp_send(req, "<h1>Cannot edit file</h1>", -1);
+    }
+
+    free((void*) text);
+
+    return ret;
+}
+
 
 static bool authenticate(const char *username, const char *password, char *token, size_t token_len)
 {
     ESP_LOGI(TAG, "%s: username '%s' password '%s'", __func__, username, password);
-    snprintf(token, token_len, "%s:%s", username, password);
+    snprintf(token, token_len, "%s-%s", username, password);
     return true;
 }
 
@@ -39,13 +165,13 @@ static void redirect(httpd_req_t *req, const char* uri)
 {
     ESP_LOGI(TAG, "%s: to '%s'", __func__, uri);
 
-    /* Redirect to the login page */
+    /* Redirect to the page */
     httpd_resp_set_status(req, "301 Moved Permanently");
     httpd_resp_set_hdr(req, "Location", uri);
     httpd_resp_send(req, NULL, 0);
 }
 
-static bool get_auth_token(httpd_req_t *req, char *auth_token, size_t auth_token_len)
+static bool get_lastlink_auth_token(httpd_req_t *req, char *auth_token, size_t auth_token_len)
 {
     size_t cookie_len = httpd_req_get_hdr_value_len(req, "Cookie");
     if (cookie_len != 0) {
@@ -55,10 +181,10 @@ static bool get_auth_token(httpd_req_t *req, char *auth_token, size_t auth_token
         if (ret == ESP_OK) {
            ESP_LOGI(TAG, "%s: cookie is '%s'", __func__, cookie);
 
-           char *token = strstr(cookie, "auth_token=");
+           char *token = strstr(cookie, "lastlink_auth_token=");
 
            if (token != NULL) {
-               token += 11;
+               token = strchr(token, '=') + 1;
                char *p = strchr(token, '&');
                if (p != NULL) {
                   *p = '\0';
@@ -79,8 +205,8 @@ static bool check_if_logged_in(httpd_req_t *req)
     char auth_token[50];
 
     /* Simple test for now - just check for existance */
-    if (get_auth_token(req, auth_token, sizeof(auth_token))) {
-        ESP_LOGI(TAG, "%s: auth_token %s", __func__, auth_token);
+    if (get_lastlink_auth_token(req, auth_token, sizeof(auth_token))) {
+        ESP_LOGI(TAG, "%s: lastlink_auth_token %s", __func__, auth_token);
         return true;
 
     } else {
@@ -97,8 +223,16 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html");
 
     if (check_if_logged_in(req)) {
+        /* Create a var map to things */
+        var_list_t var_list;
+        INIT_LIST(&var_list);
+        ADD_TO_LIST(&var_list, create_var_item("test", "this is a test"));
+        ADD_TO_LIST(&var_list, create_var_item("zot", "this is a zot"));
+
         /* Present the home page */
-        httpd_resp_send(req, "<h1>Hello Secure World!</h1>", -1); // -1 = use strlen()
+        httpd_resp_send_file(req, CONFIG_LASTLINK_HTML_DIRECTORY "index.htm", &var_list);
+
+        release_var_list(&var_list);
     }
 
     return ESP_OK;
@@ -110,42 +244,11 @@ static const httpd_uri_t root = {
     .handler   = root_get_handler
 };
 
-static const char login_page_text[] = 
-       "<html>\n"
-         "<body>\n"
-           "<form action=\"login\" method=\"post\">\n"
-           // "<div class=\"imgcontainer\">\n"
-           //   "<img src=\"img_avatar2.png\" alt=\"Avatar\" class=\"avatar\">\n"
-           //"</div>\n"
-
-           "<div class=\"container\">\n"
-             "<label for=\"uname\"><b>Username</b></label>\n"
-             "<input type=\"text\" placeholder=\"Enter Username\" name=\"uname\" required>\n"
-             "<p>\n"
-             "<label for=\"psw\"><b>Password</b></label>\n"
-             "<input type=\"password\" placeholder=\"Enter Password\" name=\"psw\" required>\n"
-  
-             "<button type=\"submit\">Login</button>\n"
-             "<label>\n"
-               "<input type=\"checkbox\" checked=\"checked\" name=\"rem\"> Remember me\n"
-             "</label>\n"
-           "</div>\n"
-
-           "<div class=\"container\" style=\"background-color:#f1f1f1\">\n"
-             "<button type=\"button\" class=\"cancelbtn\">Cancel</button>\n"
-             "<span class=\"psw\">Forgot <a href=\"#\">password?</a></span>\n"
-           "</div>\n"
-         "</form> \n"
-       "</body>\n"
-     "</html>\n";
-
 static esp_err_t login_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
 
-    httpd_resp_send(req, login_page_text, sizeof(login_page_text));
-    
-    return ESP_OK;
+    return httpd_resp_send_file(req, CONFIG_LASTLINK_HTML_DIRECTORY "login.htm", NULL);
 }
 
 static const httpd_uri_t login = {
@@ -211,10 +314,12 @@ static esp_err_t login_post_handler(httpd_req_t *req)
 
 
         if (authenticate(username, password, token, sizeof(token))) {
-            char cookie[65];
-            snprintf(cookie, sizeof(cookie), "auth_token=%s", token);
-            httpd_resp_set_hdr(req, "Cookie", cookie);
+            char *cookie;
+            asprintf(&cookie, "lastlink_auth_token=%s; Max-Age=3600; Secure", token);
+            //asprintf(&cookie, "lastlink_auth_token=%s; Max-Age=3600", token);
+            httpd_resp_set_hdr(req, "Set-Cookie", cookie);
             httpd_resp_send(req, NULL, 0);  // Response body can be empty
+            free((void*) cookie);
             redirect(req, "/");
         } else {
             redirect(req, "/login");

@@ -12,6 +12,13 @@ menu "LastLink Configuration"
             help
                 Enter the name of the spiffs partition as used in the parition table.
 
+        config LASTLINK_HTML_DIRECTORY
+            string "Directory containing html files"
+            depends on ESP_HTTPS_SERVER_ENABLE
+            default "/spiffs/html/"
+            help
+                The directory containing the html, css and js files
+       
     endmenu
 
     config LASTLINK_RECEIVE_ONLY_FROM_TABLE

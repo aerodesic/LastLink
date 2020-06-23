@@ -35,14 +35,6 @@ typedef struct configitem {
     };
 } configitem_t;
 
-typedef struct rdinfo {
-    char* (*read)(struct rdinfo*, char* buffer, size_t length);
-    union {
-        FILE* fp;
-        const char** bufp;
-    };
-} rdinfo_t;
-
 static os_mutex_t config_lock;
 static int config_locked = 0;
 static int config_changes = 0;
@@ -54,10 +46,8 @@ static char* skip_blanks(char* bufp);
 static esp_err_t delete_config_cell(configitem_t* item);
 static esp_err_t release_config(configitem_t** table);
 static void write_config_value(FILE* fp, configitem_t* cell, int indent);
-static char* read_from_file(rdinfo_t* rdinfo, char* buffer, size_t length);
-static char* read_from_table(rdinfo_t* rdinfo, char* buffer, size_t length);
 static configitem_t* add_config_cell(configitem_t** owner, const char* info);
-static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char* buffer, size_t bufferlen);
+static esp_err_t load_config_table(FILE* fp, configitem_t** owner, char* buffer, size_t bufferlen);
 static configitem_t* find_config_entry(const char* name, configitem_t** parent, configitem_t* table);
 
 static char* skip_blanks(char* bufp)
@@ -148,25 +138,6 @@ static void write_config_value(FILE* fp, configitem_t* cell, int indent)
     }
 }
 
-static char* read_from_file(rdinfo_t* rdinfo, char* buffer, size_t length)
-{
-    return fgets(buffer, length, rdinfo->fp);
-}
-
-static char* read_from_table(rdinfo_t* rdinfo, char* buffer, size_t length)
-{
-    char* ret;
-    if (*(rdinfo->bufp) == NULL) {
-        ret = NULL;
-    } else {
-        strncpy(buffer, *(rdinfo->bufp), length);
-        buffer[length-1] = 0;
-        rdinfo->bufp++;
-        ret = buffer;
-    }
-    return ret;
-}
-
 static configitem_t* add_config_cell(configitem_t** owner, const char* info)
 {
     configitem_t* cell = (configitem_t*) malloc(sizeof(configitem_t));
@@ -190,7 +161,7 @@ static configitem_t* add_config_cell(configitem_t** owner, const char* info)
     return cell;
 }
 
-static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char* buffer, size_t bufferlen)
+static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer, size_t bufferlen)
 {
     esp_err_t ret = ESP_OK;
     bool done = false;
@@ -198,7 +169,7 @@ static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char*
 
     // ESP_LOGI(TAG, "load_config_table owner into %p -> %p", owner, *owner);
     /* Read the file and parse the values */
-    while (!done  && (ret == ESP_OK) && (rdinfo->read(rdinfo, buffer, bufferlen) != NULL)) {
+    while (!done  && (ret == ESP_OK) && (fgets(buffer, bufferlen, fp) != NULL)) {
         char* p = strchr(buffer, '\n');
         if (p != NULL) {
             *p = '\0';
@@ -223,7 +194,7 @@ static esp_err_t load_config_table(configitem_t** owner, rdinfo_t* rdinfo, char*
                         cell->section = NULL;
 
                         // ESP_LOGI(TAG, "start section in cell %p", cell);
-                        ret = load_config_table(&cell->section, rdinfo, buffer, bufferlen);
+                        ret = load_config_table(fp, &cell->section, buffer, bufferlen);
                     } else {
                         ret = ENOMEM;
                     }
@@ -333,80 +304,35 @@ bool unlock_config(void)
  *
  * Entry:
  *       filename       File containing configuration.
- *       default_config Default configuration text for preloading.
  *
  * Returns:
  *       esp_err_t      ESP_OK if all went well, otherwise an error code
  */
-esp_err_t init_configuration(const char* filename, const char **default_config)
+esp_err_t init_configuration(const char* filename)
 {
     esp_err_t ret = ESP_OK;
 
     config_lock = os_create_recursive_mutex();
 
-    // ESP_LOGI(TAG, "init_configuration '%s'", filename);
+    free((void*) config_file_name);
+
     config_file_name = strdup(filename);
 
     if (lock_config())
     {
-        /* Build head of config table (this is the root 'section') */
-        configitem_t* new_config;
-
-        rdinfo_t rdinfo;
-        char buffer[50];
-        bool reset_default = true;
-
-        rdinfo.read = read_from_table;
-        rdinfo.bufp = default_config;
-
-        esp_err_t ret1 = load_config_table(&new_config, &rdinfo, buffer, sizeof(buffer));
-
         FILE *fp = fopen(filename, "r");
 
         if (fp != NULL) {
+            char buffer[50];
             // ESP_LOGI(TAG, "init_configuration from file");
-            rdinfo.read = read_from_file;
-            rdinfo.fp = fp;
-            esp_err_t ret2 = load_config_table(&config_table, &rdinfo, buffer, sizeof(buffer));
+            ret = load_config_table(fp, &config_table, buffer, sizeof(buffer));
             fclose(fp);
-
-            /* If both reads ok, the  compare versions and don't switch if version matches */
-            if (ret1 == ESP_OK && ret2 == ESP_OK) {
-
-                configitem_t* new_version = find_config_entry("configversion", NULL, new_config);
-                configitem_t* old_version = find_config_entry("configversion", NULL, config_table);
-
-                if (new_version != NULL && new_version->type == CONFIG_VALUE &&
-                    old_version != NULL && old_version->type == CONFIG_VALUE) {
-
-                    ESP_LOGD(TAG, "old_version = %s  new_version = %s", old_version->value, new_version->value);
-
-                    if (strtol(new_version->value, NULL, 0) == strtol(old_version->value, NULL, 0)) {
-
-                        /* Same version, so do not reset */
-                        reset_default = false;
-                    }
-                }
-            }
-        }
-
-        if (reset_default) {
-            ESP_LOGD(TAG, "init_configuration from default");
-            release_config(&config_table);
-            config_table = new_config;
-            save_config(config_file_name);
-        } else {
-            ESP_LOGD(TAG, "init_configuration from file");
-            release_config(&new_config);
         }
 
         unlock_config();
     }
 
-    /* Write messages to logfile */
-#ifdef DEBUG
     save_config(NULL);
-#endif
 
     return ret;
 }
