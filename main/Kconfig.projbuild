@@ -15,7 +15,7 @@ menu "LastLink Configuration"
         config LASTLINK_HTML_DIRECTORY
             string "Directory containing html files"
             depends on ESP_HTTPS_SERVER_ENABLE
-            default "/spiffs/html/"
+            default "/spiffs/html"
             help
                 The directory containing the html, css and js files
        
