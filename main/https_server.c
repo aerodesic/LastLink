@@ -23,12 +23,25 @@
 
 #include <esp_https_server.h>
 
+/* Include stack so to avoid recursive includes */
+typedef struct include_stack_item include_stack_item_t;
+typedef struct include_stack_item {
+    include_stack_item_t    *next;
+    include_stack_item_t    *prev;
+    char                    filename[1];
+} include_stack_item_t;
+
+typedef list_head_t  include_stack_t;
+
+static include_stack_t include_stack;
+
 /* Defines an editable text buffer */
 typedef struct text_buffer {
-    char *base;     /* Base of buffer containing the text */
-    char *current;  /* Current pointer while roving through text */
-    size_t len;     /* Always the number of bytes allocated at base */
-    size_t used;    /* Number of bytes currently in use at base */
+    char   *base;            /* Base of buffer containing the text */
+    char   *current;         /* Current pointer while roving through text */
+                             /* Stored here in case a realloc is necessary. */
+    size_t len;              /* Always the number of bytes allocated at base */
+    size_t used;             /* Number of bytes currently in use at base */
 } text_buffer_t;
 
 /* A variable item (fwd ref) */
@@ -48,10 +61,10 @@ typedef list_head_t  var_list_t;
 /* A command item  */
 typedef struct command_item {
     const char *   command;
-    bool (*function)(text_buffer_t *text_buffer, size_t item_size, int argc, const char **argv);
+    bool (*function)(text_buffer_t *text_buffer, size_t item_size, var_list_t *varlist, int argc, const char **argv);
 } command_item_t;
 
-static bool command_include(text_buffer_t *text_buffer, size_t item_size, int argc, const char **argv);
+static bool command_include(text_buffer_t *text_buffer, size_t item_size, var_list_t *varlist, int argc, const char **argv);
 
 static command_item_t command_table[] = {
     { .command = "include", .function = command_include },
@@ -90,7 +103,7 @@ static void release_var_list(var_list_t *var_list)
 /*
  * Read a file relative to the HTML base directory
  */
-static bool read_file(const char *filename, size_t* size, char **buffer)
+static bool read_file(text_buffer_t *text_buffer, const char *filename)
 {
     struct stat  sb;
     bool ok = false;
@@ -98,19 +111,20 @@ static bool read_file(const char *filename, size_t* size, char **buffer)
     char *pathname;
     if (asprintf(&pathname, "%s/%s", CONFIG_LASTLINK_HTML_DIRECTORY, filename) > 0) {
         if (stat(pathname, &sb) == 0) {
-            *size = sb.st_size;
-            char *buf = malloc(sb.st_size + 1);
-            if (buf != NULL) {
+            text_buffer->len = sb.st_size;
+            text_buffer->used = sb.st_size;
+            text_buffer->base = malloc(sb.st_size + 1);
+            text_buffer->current = text_buffer->base;
+
+            if (text_buffer->base!= NULL) {
                 FILE *fp = fopen(pathname, "r");
                 if (fp != NULL) {
-                    size_t read_len = fread(buf, 1, sb.st_size, fp);
-                    if (read_len != *size) {
+                    size_t read_len = fread(text_buffer->base, 1, sb.st_size, fp);
+                    if (read_len != sb.st_size) {
 ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
                     } else {
                         /* NUL terminate the buffer */
-                        buf[sb.st_size] = '\0';
-                        *buffer = buf;
-                        *size = sb.st_size;
+                        text_buffer->base[sb.st_size] = '\0';
                         ok = true;
                     }
 
@@ -118,7 +132,11 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
                 }
 
                 if (! ok) {
-                    free(buf);
+                    free(text_buffer->base);
+                    text_buffer->base = NULL;
+                    text_buffer->current = NULL;
+                    text_buffer->used = 0;
+                    text_buffer->len = 0;
                 }
             }
         }
@@ -133,15 +151,18 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
 
 /*
  * Replace <item_size> bytes at <text_buffer.current> with <replaced>
+ *
+ * Returns true if ok else false
  */
 static bool replace_text(text_buffer_t *text_buffer, size_t item_size, const char *replaced)
 {
     bool ret = true;
-    size_t replace_len = strlen(replaced);
 
+    size_t replace_len = strlen(replaced);
+    
     /* We found a var to replace; replace the text here with var value */
     int needed = replace_len - item_size;
-
+    
     /* If needed > 0 then we may need to expand the area */
     if (needed > 0) {
         /* Difference between len and used is the room currently available */
@@ -156,16 +177,16 @@ static bool replace_text(text_buffer_t *text_buffer, size_t item_size, const cha
                 size_t current_offset = text_buffer->current - text_buffer->base;
                 text_buffer->base = new_text;
                 /* Reset current pointer after reallocating */
-                text_buffer->current = text_buffer->base + current_offset;
+                text_buffer->current = new_text + current_offset;
                 text_buffer->len += resize;
 ESP_LOGI(TAG, "%s: resized text_buffer by %d to %d", __func__, resize, text_buffer->len);
             }
         }
-
+    
         /* Need to make room - make sure we succeeded if allocation was requred */
-        if (needed >= (text_buffer->len - text_buffer->used)) {
+        if (needed < (text_buffer->len - text_buffer->used)) {
             /* Move text down to make a bigger hole */
-            memmove(text_buffer->current + needed, text_buffer->current, text_buffer->used - (text_buffer->current - text_buffer->base));
+            memmove(text_buffer->current + needed, text_buffer->current, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
             text_buffer->used += needed;
 ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
         } else {
@@ -174,19 +195,201 @@ ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
         }
     } else if (needed < 0) {
         /* Need to remove space */
-        memcpy(text_buffer->current, text_buffer->current - needed, text_buffer->used - (text_buffer->current - text_buffer->base));
+        needed = -needed;
+        memcpy(text_buffer->current, text_buffer->current + needed, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
         /* Remove the returned space from used */
         text_buffer->used += needed;
-ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, -needed);
+ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, needed);
     } else {
         /* Just right; nothing to move */
     }
-
+    
     if (ret) {
         memcpy(text_buffer->current, replaced, replace_len);
     }
+ 
+    return ret;
+}
+
+static include_stack_item_t *add_include_stack_item(const char* filename)
+{
+    include_stack_item_t *item = (include_stack_item_t *) malloc(sizeof(include_stack_item_t) + strlen(filename));
+    if (item != NULL) {
+        strcpy(item->filename, filename);
+        ADD_TO_LIST(&include_stack, item);
+ESP_LOGI(TAG, "%s: added %s at %d", __func__, filename, NUM_IN_LIST(&include_stack));
+    }
+    return item;
+}
+
+static void remove_include_stack_item(include_stack_item_t *item)
+{
+ESP_LOGI(TAG, "%s: removing %s at %d", __func__, item->filename, NUM_IN_LIST(&include_stack));
+    REMOVE_FROM_LIST(&include_stack, item);
+}
+
+static bool is_include_in_use(const char *filename)
+{
+    bool found = false;
+
+    for (include_stack_item_t *item = (include_stack_item_t *) FIRST_LIST_ITEM(&include_stack); !found && item != NULL; item = NEXT_LIST_ITEM(item, &include_stack)) {
+        found = strcmp(item->filename, filename) == 0;
+    }
+
+    return found; 
+}
+
+static void post_include_error(text_buffer_t *text_buffer, size_t item_size, const char* func, const char *msg, const char *filename)
+{
+    const char* current_file;
+    if (NUM_IN_LIST(&include_stack) == 0) {
+        current_file = "NONE";
+    } else { 
+        current_file = ((include_stack_item_t*) LAST_LIST_ITEM(&include_stack))->filename;
+    }
+
+    ESP_LOGE(TAG, "%s: In %s (text_buffer.base %p text_buffer.len %d item_size %d, %s '%s'", func, current_file, text_buffer->base, text_buffer->len, item_size, msg, filename);
+
+    char *text;
+    asprintf(&text, "['%s': %s '%s']", current_file, msg, filename);
+
+    /* If buffer is currently empty (as in we haven't read anything to it yet) just put the message in the entire buffer */
+    if (text_buffer->base == NULL) {
+        text_buffer->base = text;
+        text_buffer->current = text;
+        text_buffer->used = strlen(text);
+        text_buffer->len = text_buffer->used;
+    } else {
+        replace_text(text_buffer, item_size, text);
+        free((void*) text);
+    }
+}
+
+
+#define MAX_ARGS   5
+static bool do_commands(text_buffer_t *text_buffer, var_list_t *varlist)
+{
+    bool ret = true;
+
+    /* Go through text looking for {% xxx %} and parsing the xxx to call a command */
+    text_buffer->current = text_buffer->base;
+    do {
+        text_buffer->current = strstr(text_buffer->current, "{%");
+        if (text_buffer->current != NULL) {
+            char *start = text_buffer->current;
+            text_buffer->current = strstr(text_buffer->current, "%}");
+
+            if (text_buffer->current != NULL) {
+                char *end = text_buffer->current + 2;
+
+                /* Back up current to beginning of item */
+                text_buffer->current = start;
+
+                /* Total size of item including surrounding "{% %}" */
+                size_t text_item_len = end - start;
+                text_buffer->current[text_item_len - 2] = '\0';
+
+                const char *args[MAX_ARGS + 1];
+                int argc = tokenize(start + 2, args, MAX_ARGS);
+
+                command_item_t *found = NULL;
+                for (command_item_t *command = &command_table[0]; !found && command < &command_table[ELEMENTS_OF(command_table)]; ++command) {
+                    if (strcmp(command->command, args[0]) == 0) {
+                        found = command;
+                    }
+                }
+
+                bool ok = false;
+
+                if (found) {
+                    /* Parse into argv/argc and pass to function after looking up argv[0] for command */
+                    ok = found->function(text_buffer, text_item_len, varlist, argc, args);
+                }
+
+                if (!ok) {
+                    /* Error - just remove the text */
+                    replace_text(text_buffer, text_item_len, "");
+                }
+            }
+        }
+    } while (text_buffer->current != NULL);
+
+    /* Then go through text and substitute all "{var}" with "value" from varlist */
+
+    if (varlist != NULL) {
+        for (var_item_t *var = (var_item_t *) FIRST_LIST_ITEM(varlist); var != NULL; var = NEXT_LIST_ITEM(var, varlist)) {
+
+ESP_LOGI(TAG, "%s: looking for '%s' ('%s')", __func__, var->name, var->value);
+
+            size_t wanted_len = strlen(var->name) + 2;
+
+            char varwanted[wanted_len + 1];
+            sprintf(varwanted, "{%s}", var->name);
+
+            /* Start at base of buffer and search until failulre */
+            text_buffer->current = text_buffer->base;
+
+            do {
+                text_buffer->current = strstr(text_buffer->current, varwanted);
+                if (text_buffer->current != NULL) {
+                    if (! replace_text(text_buffer, wanted_len, var->value)) {
+                        ESP_LOGE(TAG, "%s: out of memory", __func__);
+                        text_buffer->current = NULL;
+                    }
+                }
+            } while (text_buffer->current != NULL);
+        }
+    }
 
     return ret;
+}
+
+/*
+ * Include file <filename> at text_buffer.current, replacing <item_size> bytes with result.
+ */
+static bool do_include(text_buffer_t *text_buffer, size_t item_size, const char *filename, var_list_t *varlist)
+{
+    if (is_include_in_use(filename)) {
+        post_include_error(text_buffer, item_size, __func__, "Recursive include", filename);
+
+    } else {
+
+        /* Read in include file */
+        text_buffer_t  local_text_buffer;
+
+        /* Read file into local text buffer */
+        if (read_file(&local_text_buffer, filename)) {
+
+            include_stack_item_t *item = add_include_stack_item(filename);
+
+            /* Remove any trailing newlines */
+            while (local_text_buffer.used != 0 && local_text_buffer.base[local_text_buffer.used-1] == '\n') {
+                local_text_buffer.base[local_text_buffer.used - 1] = '\0';
+                local_text_buffer.used--;
+            }
+
+            do_commands(&local_text_buffer, varlist);
+
+            if (text_buffer->base == NULL) {
+                /* Uninitialized, so just replace it with the contents of local_text_buffer */
+                *text_buffer = local_text_buffer;
+
+            } else {
+                if (! replace_text(text_buffer, item_size, local_text_buffer.base)) {
+                    ESP_LOGI(TAG, "%s: replace failed", __func__);
+                }
+            
+                free(local_text_buffer.base);
+            }
+
+            remove_include_stack_item(item);
+        } else {
+            /* No file */
+            post_include_error(text_buffer, item_size, __func__, "No file", filename);
+        }
+    }
+ 
+    return true;
 }
 
 /*
@@ -194,28 +397,17 @@ ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, -needed);
  *
  * We probably need a way to guard against recursive includes...
  */
-static bool command_include(text_buffer_t *text_buffer, size_t item_size, int argc, const char **argv)
+static bool command_include(text_buffer_t *text_buffer, size_t item_size, var_list_t *varlist, int argc, const char **argv)
 {
     ESP_LOGI(TAG, "%s: item_size %d argc %d", __func__, item_size, argc);
+
     for (int arg = 0; arg < argc; ++arg) {
         ESP_LOGI(TAG, "%s: arg %d = '%s'", __func__, arg, argv[arg]);
     }
 
-    /* Read in include file */
-    char *buffer;
-    size_t size;
-
-    if (read_file(argv[1], &size, &buffer)) {
-        if (! replace_text(text_buffer, item_size, buffer)) {
-            ESP_LOGI(TAG, "%s: replace failed", __func__);
-        }
-        free(buffer);
-    }
-
-    return true;
+    return do_include(text_buffer, item_size, argv[1], varlist);
 }
 
-#define MAX_ARGS   5
 /*
  * Open a file and send it, after editing it with the values in the var_map
  */
@@ -223,84 +415,9 @@ static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *filename, va
 {
     esp_err_t ret;
 
-    text_buffer_t  text_buffer;
+    text_buffer_t  text_buffer = {0};
 
-    if (read_file(filename, &text_buffer.len, &text_buffer.base)) {
-
-        text_buffer.used = text_buffer.len;
-
-ESP_LOGI(TAG, "%s: '%s' is %d bytes long", __func__, filename, text_buffer.len);
-
-        /* Go through text looking for {% xxx %} and parsing the xxx to call a command */
-        text_buffer.current = text_buffer.base;
-        do {
-            text_buffer.current = strstr(text_buffer.current, "{%");
-            if (text_buffer.current != NULL) {
-                char *start = text_buffer.current;
-                text_buffer.current = strstr(text_buffer.current, "%}");
-
-                if (text_buffer.current != NULL) {
-                    char *end = text_buffer.current + 2;
-
-                    /* Back up current to beginning of item */
-                    text_buffer.current = start;
-
-                    /* Total size of item including surrounding "{% %}" */
-                    size_t text_item_len = end - start;
-                    text_buffer.current[text_item_len - 2] = '\0';
-
-                    const char *args[MAX_ARGS + 1];
-                    int argc = tokenize(start + 2, args, MAX_ARGS);
-
-                    command_item_t *found = NULL;
-                    for (command_item_t *command = &command_table[0]; !found && command < &command_table[ELEMENTS_OF(command_table)]; ++command) {
-                        if (strcmp(command->command, args[0]) == 0) {
-                            found = command;
-                        }
-                    }
-
-                    bool ok = false;
-
-                    if (found) {
-                        /* Parse into argv/argc and pass to function after looking up argv[0] for command */
-                        ok = found->function(&text_buffer, text_item_len, argc, args);
-                    }
-
-                    if (!ok) {
-                        /* Error - just remove the text */
-                        replace_text(&text_buffer, text_item_len, "");
-                    }
-                }
-            }
-        } while (text_buffer.current != NULL);
-
-        /* Then go through text and substitute all "{var}" with "value" from varlist */
-
-        if (varlist != NULL) {
-            for (var_item_t *var = (var_item_t *) FIRST_LIST_ITEM(varlist); var != NULL; var = NEXT_LIST_ITEM(var, varlist)) {
-
-ESP_LOGI(TAG, "%s: looking for '%s' ('%s')", __func__, var->name, var->value);
-
-                size_t wanted_len = strlen(var->name) + 2;
-
-                char varwanted[wanted_len + 1];
-                sprintf(varwanted, "{%s}", var->name);
-
-                /* Start at base of buffer and search until failulre */
-                text_buffer.current = text_buffer.base;
-
-                do {
-                    text_buffer.current = strstr(text_buffer.current, varwanted);
-                    if (text_buffer.current != NULL) {
-                        if (! replace_text(&text_buffer, wanted_len, var->value)) {
-                            ESP_LOGE(TAG, "%s: out of memory", __func__);
-                            text_buffer.current = NULL;
-                        }
-                    }
-                } while (text_buffer.current != NULL);
-            }
-        }
-    }
+    do_include(&text_buffer, 0, filename, varlist);
 
 ESP_LOGI(TAG, "%s: after parsing, base %p, current %p, len %d, used %d", __func__, text_buffer.base, text_buffer.current, text_buffer.len, text_buffer.used);
 

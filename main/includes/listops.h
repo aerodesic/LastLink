@@ -78,11 +78,15 @@ typedef struct list_head {
 
 #define FIRST_LIST_ITEM(__listhead) ((__listhead)->list)
 
+#define LAST_LIST_ITEM(__listhead) ((__listhead)->list->next)
+
 #define NUM_IN_LIST(__listhead) ((__listhead)->count)
 
 #define IS_LIST_EMPTY(__listhead) (NUM_IN_LIST(__listhead) == 0)
 
 #define NEXT_LIST_ITEM(__var, __listhead)  ((__var && (list_element_t*) __var->next != FIRST_LIST_ITEM(__listhead)) ? __var->next : NULL)
+
+#define PREV_LIST_ITEM(__var, __listhead)  ((__var && (list_element_t*) __var->prev != FIRST_LIST_ITEM(__listhead)) ? __var->prev : NULL)
 
 #endif /* __listops_h_included */
 
