@@ -1,10 +1,6 @@
-/* Simple HTTP + SSL Server Example
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
-
+/*
+ * LastLink web server.
+ */
 #include "sdkconfig.h"
 #ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
 
@@ -14,14 +10,19 @@
 #include <esp_system.h>
 #include <nvs_flash.h>
 #include <sys/param.h>
+#include <unistd.h>
+
 #include "esp_netif.h"
 #include "esp_eth.h"
 #include "network_connect.h"
 #include "os_specific.h"
 #include "listops.h"
 #include "tokenize.h"
+#include "varlist.h"
 
 #include <esp_https_server.h>
+
+static const char *TAG = "LastLinkHTTPS";
 
 /* Include stack so to avoid recursive includes */
 typedef struct include_stack_item include_stack_item_t;
@@ -44,20 +45,6 @@ typedef struct text_buffer {
     size_t used;             /* Number of bytes currently in use at base */
 } text_buffer_t;
 
-/* A variable item (fwd ref) */
-typedef struct var_item var_item_t;
-
-/* Define the var item */
-typedef struct var_item {
-    var_item_t     *next;
-    var_item_t     *prev;
-    const char     *name;
-    const char     *value;
-} var_item_t;
-
-/* Head of the var item list */
-typedef list_head_t  var_list_t;
-
 /* A command item  */
 typedef struct command_item {
     const char *   command;
@@ -70,78 +57,114 @@ static command_item_t command_table[] = {
     { .command = "include", .function = command_include },
 };
 
+
+#define TEMP_URL_BUFFER_LEN  80
+
 /*
- * A simple example that demonstrates how to create GET and POST
- * handlers and start an HTTPS server.
+ * Create a full pathname from a uri, adding '.htm' if necessary
  */
-
-static const char *TAG = "LastLinkHTTPS";
-
-static var_item_t *create_var_item(const char* name, const char *value)
+static const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t temp_buffer_len)
 {
-    var_item_t *item = (var_item_t *) malloc(sizeof(var_item_t) + strlen(name) + 1 + strlen(value) + 1);
-    if (item != NULL) {
-        char *p = (char *) (item + 1);
-        strcpy(p, name);
-        item->name = p;
-        p += strlen(name) + 1;
-        strcpy(p, value);
-        item->value = p;
+    size_t pathlen = strlen(uri);
+
+    const char *quest = strchr(uri, '?');
+    if (quest != NULL) {
+        pathlen = MIN(pathlen, quest - uri);
     }
-    return item;
+
+    const char *hash = strchr(uri, '#');
+    if (hash != NULL) {
+        pathlen = MIN(pathlen, hash - uri);
+    }
+
+    size_t baselen = strlen(CONFIG_LASTLINK_HTML_DIRECTORY);
+
+    pathlen += 5;   /* Room for additional ".htm" <nul> */
+
+    const char *pathname = NULL;
+
+    if ((pathlen + baselen) < temp_buffer_len) {
+        strcpy(temp_buffer, CONFIG_LASTLINK_HTML_DIRECTORY);
+        strlcpy(temp_buffer + baselen, uri, pathlen + 1);
+
+        if (strchr(temp_buffer, '.') == NULL) {
+            strcat(temp_buffer, ".htm");
+        }
+ 
+ESP_LOGI(TAG, "%s: '%s' -> '%s'", __func__, uri, temp_buffer);
+
+        int fd = open(temp_buffer, O_RDONLY);
+        if (fd >= 0) {
+            pathname = temp_buffer;
+            close(fd);
+        } else {
+            ESP_LOGI(TAG, "%s: cannot access %s", __func__, temp_buffer);
+        }
+    }
+
+    return pathname;
 }
 
-static void release_var_list(var_list_t *var_list)
+const char *get_pathname_from_file(const char *filename, char *temp_buffer, size_t temp_buffer_len)
 {
-    while (NUM_IN_LIST(var_list) != 0) {
-       var_item_t *item = (var_item_t *) FIRST_LIST_ITEM(var_list);
-       REMOVE_FROM_LIST(var_list, item);
-       free((void*) item);
+    const char* pathname = NULL;
+
+    if (strlen(CONFIG_LASTLINK_HTML_DIRECTORY) + strlen(filename) + 2 < temp_buffer_len) {
+        strcpy(temp_buffer, CONFIG_LASTLINK_HTML_DIRECTORY);
+        strcat(temp_buffer, "/");
+        strcat(temp_buffer, filename);
+
+ESP_LOGI(TAG, "%s: '%s' -> '%s'", __func__, filename, temp_buffer);
+
+        int fd = open(temp_buffer, O_RDONLY);
+        if (fd >= 0) {
+            pathname = temp_buffer;
+            close(fd);
+        } else {
+            ESP_LOGI(TAG, "%s: cannot access %s", __func__, temp_buffer);
+        }
     }
+
+    return pathname; 
 }
 
 /*
  * Read a file relative to the HTML base directory
  */
-static bool read_file(text_buffer_t *text_buffer, const char *filename)
+static bool read_file(text_buffer_t *text_buffer, const char *pathname)
 {
     struct stat  sb;
     bool ok = false;
 
-    char *pathname;
-    if (asprintf(&pathname, "%s/%s", CONFIG_LASTLINK_HTML_DIRECTORY, filename) > 0) {
-        if (stat(pathname, &sb) == 0) {
-            text_buffer->len = sb.st_size;
-            text_buffer->used = sb.st_size;
-            text_buffer->base = malloc(sb.st_size + 1);
-            text_buffer->current = text_buffer->base;
+    if (stat(pathname, &sb) == 0) {
+        text_buffer->len = sb.st_size;
+        text_buffer->used = sb.st_size;
+        text_buffer->base = malloc(sb.st_size + 1);
+        text_buffer->current = text_buffer->base;
 
-            if (text_buffer->base!= NULL) {
-                FILE *fp = fopen(pathname, "r");
-                if (fp != NULL) {
-                    size_t read_len = fread(text_buffer->base, 1, sb.st_size, fp);
-                    if (read_len != sb.st_size) {
+        if (text_buffer->base!= NULL) {
+            FILE *fp = fopen(pathname, "r");
+            if (fp != NULL) {
+                size_t read_len = fread(text_buffer->base, 1, sb.st_size, fp);
+                if (read_len != sb.st_size) {
 ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
-                    } else {
-                        /* NUL terminate the buffer */
-                        text_buffer->base[sb.st_size] = '\0';
-                        ok = true;
-                    }
-
-                    fclose(fp);
+                } else {
+                    /* NUL terminate the buffer */
+                    text_buffer->base[sb.st_size] = '\0';
+                    ok = true;
                 }
 
-                if (! ok) {
-                    free(text_buffer->base);
-                    text_buffer->base = NULL;
-                    text_buffer->current = NULL;
-                    text_buffer->used = 0;
-                    text_buffer->len = 0;
-                }
+                fclose(fp);
+            }
+
+            if (! ok) {
+                free(text_buffer->base);
+                text_buffer->base = NULL;
+                text_buffer->current = NULL;
+                text_buffer->used = 0;
+                text_buffer->len = 0;
             }
         }
-
-        free((void*) pathname);
     }
 
     return ok;
@@ -160,6 +183,8 @@ static bool replace_text(text_buffer_t *text_buffer, size_t item_size, const cha
 
     size_t replace_len = strlen(replaced);
     
+ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, item_size, replace_len, text_buffer->current - text_buffer->base);
+
     /* We found a var to replace; replace the text here with var value */
     int needed = replace_len - item_size;
     
@@ -198,7 +223,7 @@ ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
         needed = -needed;
         memcpy(text_buffer->current, text_buffer->current + needed, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
         /* Remove the returned space from used */
-        text_buffer->used += needed;
+        text_buffer->used -= needed;
 ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, needed);
     } else {
         /* Just right; nothing to move */
@@ -315,31 +340,53 @@ static bool do_commands(text_buffer_t *text_buffer, var_list_t *varlist)
     } while (text_buffer->current != NULL);
 
     /* Then go through text and substitute all "{var}" with "value" from varlist */
+    text_buffer->current = text_buffer->base;
 
-    if (varlist != NULL) {
-        for (var_item_t *var = (var_item_t *) FIRST_LIST_ITEM(varlist); var != NULL; var = NEXT_LIST_ITEM(var, varlist)) {
+    do {
+        /* Look for start of a var name */
+        text_buffer->current = strstr(text_buffer->current, "${");
+        if (text_buffer->current != NULL) {
+            /* Fetch up to the closing '}' */
+            char *var_start = text_buffer->current + 2;
+            while (isspace(*var_start)) {
+                ++var_start;
+            }
 
-ESP_LOGI(TAG, "%s: looking for '%s' ('%s')", __func__, var->name, var->value);
+            char *var_end = var_start;
 
-            size_t wanted_len = strlen(var->name) + 2;
+            /* Look for the end of the var name */
+            while (isalnum(*var_end)) {
+                ++var_end;
+            }
 
-            char varwanted[wanted_len + 1];
-            sprintf(varwanted, "{%s}", var->name);
+            while ((*var_end != '}') && (*var_end != '\0')) {
+                ++var_end;
+            }
 
-            /* Start at base of buffer and search until failulre */
-            text_buffer->current = text_buffer->base;
+            if (*var_end == '}') {
+                /* Process the var */
+                *var_end++ = '\0';
+                size_t item_len = var_end - text_buffer->current;
 
-            do {
-                text_buffer->current = strstr(text_buffer->current, varwanted);
-                if (text_buffer->current != NULL) {
-                    if (! replace_text(text_buffer, wanted_len, var->value)) {
-                        ESP_LOGE(TAG, "%s: out of memory", __func__);
-                        text_buffer->current = NULL;
-                    }
+ESP_LOGI(TAG, "%s: looking for var '%s'", __func__, var_start);
+                var_item_t *var = find_var(varlist, var_start);
+                if (var != NULL) {
+ESP_LOGI(TAG, "%s: found '%s' replacing with '%s'", __func__, var->name, var->value);
+                    replace_text(text_buffer, item_len, var->value);
+                } else {
+ESP_LOGI(TAG, "%s: did not find '%s'; replacing with ''", __func__, var_start);
+                    /* Replace with empty */
+                    replace_text(text_buffer, item_len, "");
                 }
-            } while (text_buffer->current != NULL);
+                /* Leave current pointing to begininng of replaced text so we can rescan for additional macros */
+            } else {
+                /* We didn't handle this one - skip over leading '{' so we don't create a forever loop */
+ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->current);
+                text_buffer->current++;
+            }
         }
-    }
+
+    } while (text_buffer->current != NULL);
 
     return ret;
 }
@@ -357,8 +404,18 @@ static bool do_include(text_buffer_t *text_buffer, size_t item_size, const char 
         /* Read in include file */
         text_buffer_t  local_text_buffer;
 
+        const char *pathname;
+
+        char temp_buffer[TEMP_URL_BUFFER_LEN];
+
+        if (filename[0] != '/') {
+            pathname = get_pathname_from_file(filename, temp_buffer, sizeof(temp_buffer));
+        } else {
+            pathname = filename;
+        }
+
         /* Read file into local text buffer */
-        if (read_file(&local_text_buffer, filename)) {
+        if (pathname != NULL && read_file(&local_text_buffer, pathname)) {
 
             include_stack_item_t *item = add_include_stack_item(filename);
 
@@ -409,34 +466,49 @@ static bool command_include(text_buffer_t *text_buffer, size_t item_size, var_li
 }
 
 /*
- * Open a file and send it, after editing it with the values in the var_map
+ * Process a file for commands a vars and send it to client.
+ *
+ * If pathname is absolute (prepended /) it does not get altered; otherwise prepends html folder name.
  */
-static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *filename, var_list_t *varlist)
+static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *pathname)
 {
     esp_err_t ret;
 
-    text_buffer_t  text_buffer = {0};
+    if (pathname == NULL) {
+        ret = httpd_resp_send_404(req);
 
-    do_include(&text_buffer, 0, filename, varlist);
+    } else {
+        text_buffer_t  text_buffer = {0};
+
+        do_include(&text_buffer, 0, pathname, (var_list_t *) req->sess_ctx);
 
 ESP_LOGI(TAG, "%s: after parsing, base %p, current %p, len %d, used %d", __func__, text_buffer.base, text_buffer.current, text_buffer.len, text_buffer.used);
 
-    if (text_buffer.base == NULL) {
-        text_buffer.len = text_buffer.used = asprintf(&text_buffer.base, "<html><body><h1>%s not found</h1><body><html>", filename);
-    }
+        if (text_buffer.base == NULL) {
+            text_buffer.len = text_buffer.used = asprintf(&text_buffer.base, "<html><body><h1>%s not found</h1><body><html>", pathname);
+        }
 
-    if (text_buffer.used > 0) {
-        ret = httpd_resp_send(req, text_buffer.base, text_buffer.used);
-    } else {
-        ret = httpd_resp_send(req, "<h1>Cannot edit file</h1>", -1);
-    }
+        if (text_buffer.used > 0) {
+            ret = httpd_resp_send(req, text_buffer.base, text_buffer.used);
+        } else {
+            ret = httpd_resp_send(req, "<h1>Cannot edit file</h1>", -1);
+        }
 
-    free((void*) text_buffer.base);
+        free((void*) text_buffer.base);
+    }
 
     return ret;
 }
 
-
+/*
+ * authenticate username/password.
+ *
+ * Performs authentication and return token (to be delivered to user as cookie.
+ *
+ * Returns true if successful authentication.
+ *
+ * This is currently a stub.
+ */
 static bool authenticate(const char *username, const char *password, char *token, size_t token_len)
 {
     ESP_LOGI(TAG, "%s: username '%s' password '%s'", __func__, username, password);
@@ -495,47 +567,80 @@ static bool check_if_logged_in(httpd_req_t *req)
     if (get_lastlink_auth_token(req, auth_token, sizeof(auth_token))) {
         ESP_LOGI(TAG, "%s: lastlink_auth_token \"%s\"", __func__, auth_token);
         return true;
-
-    } else {
-        /* Redirect to the login page */
-        redirect(req, "/login");
     }
 
     return false;
 }
 
-/* An HTTP GET handler */
-static esp_err_t root_get_handler(httpd_req_t *req)
+/* An HTTP GET handler that requires validation of user */
+static esp_err_t validate_user_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
 
+ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
+
     if (check_if_logged_in(req)) {
-        /* Create a var map to things */
-        var_list_t var_list;
-        INIT_LIST(&var_list);
-        ADD_TO_LIST(&var_list, create_var_item("test", "this is a test"));
-        ADD_TO_LIST(&var_list, create_var_item("zot", "this is a zot"));
+        /* Present the page from a file */
+        char temp_buffer[TEMP_URL_BUFFER_LEN];
 
-        /* Present the home page */
-        httpd_resp_send_file(req, "index.htm", &var_list);
+        const char *uri = req->uri;
+        if (strcmp(uri, "/") == 0) {
+            uri = "/index";
+        }
 
-        release_var_list(&var_list);
+        const char *pathname = get_pathname_from_uri(uri, temp_buffer, sizeof(temp_buffer));
+
+        httpd_resp_send_file(req, pathname);
+
+    } else {
+        redirect(req, "/login");
     }
 
     return ESP_OK;
 }
 
-static const httpd_uri_t root = {
-    .uri       = "/",
+static esp_err_t unprotected_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+
+ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
+
+    char temp_buffer[TEMP_URL_BUFFER_LEN];
+
+    const char *pathname = get_pathname_from_uri(req->uri, temp_buffer, sizeof(temp_buffer));
+
+    httpd_resp_send_file(req, pathname);
+
+    return ESP_OK;
+}
+
+static const httpd_uri_t validate_user_uri = {
+    .uri       = "/*",
     .method    = HTTP_GET,
-    .handler   = root_get_handler
+    .handler   = validate_user_get_handler
+};
+
+static const httpd_uri_t js_uri = {
+    .uri       = "/*.js",
+    .method    = HTTP_GET,
+    .handler   = unprotected_get_handler
+};
+
+static const httpd_uri_t css_uri = {
+    .uri       = "/*.css",
+    .method    = HTTP_GET,
+    .handler   = unprotected_get_handler
 };
 
 static esp_err_t login_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
 
-    return httpd_resp_send_file(req, "login.htm", NULL);
+    char temp_buffer[TEMP_URL_BUFFER_LEN];
+
+    const char *pathname = get_pathname_from_uri(req->uri, temp_buffer, sizeof(temp_buffer));
+
+    return httpd_resp_send_file(req, pathname);
 }
 
 static const httpd_uri_t login = {
@@ -599,14 +704,22 @@ static esp_err_t login_post_handler(httpd_req_t *req)
 
         char token[50];
 
-
         if (authenticate(username, password, token, sizeof(token))) {
             char *cookie;
             asprintf(&cookie, "lastlink_auth_token=\"%s\"; Max-Age=3600; Secure", token);
             httpd_resp_set_hdr(req, "Set-Cookie", cookie);
             httpd_resp_send(req, NULL, 0);  // Response body can be empty
             free((void*) cookie);
-            redirect(req, "/");
+
+            if (req->sess_ctx == NULL) {
+                var_list_t *var_list = (var_list_t*) malloc(sizeof(var_list_t));
+                INIT_LIST(var_list);
+                req->sess_ctx = (void*) var_list;
+                req->free_ctx = free_var_list;
+            }
+
+            set_var((var_list_t*) req->sess_ctx, "username", username);  
+            redirect(req, "/index");
         } else {
             redirect(req, "/login");
         }
@@ -630,19 +743,21 @@ static httpd_handle_t start_https_webserver(void)
     // Start the httpd server
     ESP_LOGI(TAG, "Starting https server");
 
-    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    config.httpd.uri_match_fn = httpd_uri_match_wildcard;
+    // config.httpd.max_resp_headers = 50;
 
     extern const unsigned char cacert_pem_start[] asm("_binary_cacert_pem_start");
     extern const unsigned char cacert_pem_end[]   asm("_binary_cacert_pem_end");
-    conf.cacert_pem = cacert_pem_start;
-    conf.cacert_len = cacert_pem_end - cacert_pem_start;
+    config.cacert_pem = cacert_pem_start;
+    config.cacert_len = cacert_pem_end - cacert_pem_start;
 
     extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
     extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
-    conf.prvtkey_pem = prvtkey_pem_start;
-    conf.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
+    config.prvtkey_pem = prvtkey_pem_start;
+    config.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
 
-    esp_err_t ret = httpd_ssl_start(&server, &conf);
+    esp_err_t ret = httpd_ssl_start(&server, &config);
     if (ESP_OK != ret) {
         ESP_LOGI(TAG, "Error starting server!");
         return NULL;
@@ -650,10 +765,12 @@ static httpd_handle_t start_https_webserver(void)
 
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
-    httpd_register_uri_handler(server, &root);
-    httpd_register_uri_handler(server, &login);
-    httpd_register_uri_handler(server, &login_answer);
-    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, NULL);
+    httpd_register_uri_handler(server, &login);                        /* The 'login' page */
+    httpd_register_uri_handler(server, &login_answer);                 /* Handler for login page */
+    httpd_register_uri_handler(server, &js_uri);                       /* All javascript refs */
+    httpd_register_uri_handler(server, &css_uri);                      /* All css refs */
+    httpd_register_uri_handler(server, &validate_user_uri);            /* All pages that need validation */
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, NULL);     /* Anything else if unavailable */
 
     return server;
 }
@@ -701,8 +818,8 @@ static httpd_handle_t start_http_webserver(void)
 {
     httpd_handle_t server = NULL;
 
-
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.uri_match_fn = httpd_uri_match_wildcard;
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting http server");

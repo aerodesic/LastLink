@@ -1,8 +1,5 @@
 <html>
-  <head>
-    <meta charset="UTF-8">
-  </head> 
-  {% include include.htm %}
+  {% include header.htm %}
   <body>
     <form action="login" method="post">
       <div class="container">
@@ -16,11 +13,12 @@
          <label>
             <input type="checkbox" checked="checked" name="rem"> Remember me
          </label>
-         </div>
+       </div>
 
-         <div class="container" style="background-color:#f1f1f1">
-           <span class="psw">Forgot <a href="#">Password?</a></span>
-         </div>
+       <div class="container" style="background-color:#f1f1f1">
+         <span class="psw">Forgot <a href="#">Password?</a></span>
+       </div>
     </form>
+    <h1>${error}</h1>
   </body>
 </html>
