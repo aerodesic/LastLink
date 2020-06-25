@@ -521,7 +521,7 @@ static void redirect(httpd_req_t *req, const char* uri)
     ESP_LOGI(TAG, "%s: to '%s'", __func__, uri);
 
     /* Redirect to the page */
-    httpd_resp_set_status(req, "301 Moved Permanently");
+    httpd_resp_set_status(req, "303 See Other");
     httpd_resp_set_hdr(req, "Location", uri);
     httpd_resp_send(req, NULL, 0);
 }
