@@ -28,8 +28,8 @@ bool set_var(var_list_t *var_list, const char *name, const char *value);
 var_item_t *find_var(var_list_t *varlist, const char *name);
 bool delete_var(var_list_t *varlist, const char *name);
 var_item_t *create_var_item(const char* name, const char *value);
-bool set_var(var_list_t *var_list, const char *name, const char *value);
 void free_var_list(void *param);
+var_list_t *create_var_list(void);
 
 #endif /* __varlist_h_included */
 

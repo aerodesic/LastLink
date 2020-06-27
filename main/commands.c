@@ -21,7 +21,7 @@
 
 #define TAG "commands"
 
-#define COMMAND_PROCESSOR_STACK_SIZE 20000
+#define COMMAND_PROCESSOR_STACK_SIZE 10000
 
 static int readline(char *buffer, size_t len)
 {
@@ -509,6 +509,15 @@ int spawn_command(int argc, const char **argv)
     return results;
 }
 
+int test_command(int argc, const char **argv)
+{
+    printf("%d args:\n", argc);
+    for (int arg = 0; arg < argc; ++arg) {
+        printf("   %d: '%s'\n", arg, argv[arg]);
+    }
+    return 0;
+}
+
 void CommandProcessor(void* params)
 {
     if (params != NULL) {
@@ -633,6 +642,7 @@ void init_commands(void)
     add_command("kill",       kill_command);
     add_command("time",       time_command);
     add_command("spawn",      spawn_command);
+    add_command("test",       test_command);
 
     os_release_recursive_mutex(command_lock);
 }

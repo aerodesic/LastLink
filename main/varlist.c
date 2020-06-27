@@ -37,6 +37,7 @@ bool delete_var(var_list_t *varlist, const char *name)
 var_item_t *create_var_item(const char* name, const char *value)
 {
     var_item_t *item = (var_item_t *) malloc(sizeof(var_item_t) + strlen(name) + 1 + strlen(value) + 1);
+
     if (item != NULL) {
         char *p = (char *) (item + 1);
         strcpy(p, name);
@@ -45,6 +46,7 @@ var_item_t *create_var_item(const char* name, const char *value)
         strcpy(p, value);
         item->value = p;
     }
+
     return item;
 }
 
@@ -73,3 +75,11 @@ void free_var_list(void *param)
     free(varlist);
 }
 
+var_list_t *create_var_list(void)
+{
+    var_list_t *varlist = (var_list_t*) malloc(sizeof(var_list_t));
+    if (varlist != NULL) {
+        INIT_LIST(varlist); 
+    }
+    return varlist;
+}

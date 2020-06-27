@@ -31,7 +31,9 @@ int tokenize(char *buffer, const char**args, int maxargs)
             *buffer++ = '\0';
         }
     }
-    args[argc] = NULL;
+
+    /* Put remainder in this arg */
+    args[argc++] = buffer;
 
     return argc;
 }
