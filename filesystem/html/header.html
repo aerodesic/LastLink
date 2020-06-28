@@ -1,6 +1,11 @@
-<head>
-   <meta charset="UTF-8">
-   {% if len(username) != 0 %}
-      <h1>User name is ${username}</h1>
-   {% endif %}
-</head> 
+<!DOCTYPE html>
+<html lang='en'>
+  <head>
+    <meta charset="utf-8">
+    {% if !defined(username) %}
+    {% setvar username "default-user" %}
+    {% endif %}
+    {% if len(username) != 0 %}
+       <h1>User name is ${username}</h1>
+    {% endif %}
+  </head> 

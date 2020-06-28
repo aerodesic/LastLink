@@ -5,6 +5,7 @@
 #define __mdns_config_h_included
 
 void start_mdns_service(void);
+void stop_mdns_service(void);
 
 #endif /* __mdns_config_h_included */
 

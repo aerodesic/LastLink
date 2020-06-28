@@ -27,3 +27,9 @@ void start_mdns_service()
     //set txt data for service (will free and replace current data)
     mdns_service_txt_set("_https", "_tcp", serviceTxtData, 3);
 }
+
+void stop_mdns_service(void)
+{
+    mdns_free();
+}
+

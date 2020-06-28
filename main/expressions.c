@@ -24,25 +24,31 @@
  * Operatons on values
  */
 
-void set_void_value(eval_value_t *value)
+void set_none_value(eval_value_t *value)
 {
     if (value->type == VT_STR) {
         free((void*) value->string);
     }
-    value->type = VT_VOID;
+    value->type = VT_NONE;
+}
+
+void set_undefined_value(eval_value_t *value)
+{
+    set_none_value(value);
+    value->type = VT_UNDEFINED;
 }
 
 void set_int_value(eval_value_t *value, int integer)
 {
-    if (value->type == VT_STR) {
-        free((void*) value->string);
-    }
+    set_none_value(value);
+
     value->integer = integer;
     value->type = VT_INT;
 }
 
 void set_str_value(eval_value_t *value, const char *string)
 {
+    /* Don't release value if setting to a string of current value */
     if (value->type != VT_STR || strcmp(value->string, string) != 0) {
         if (value->type == VT_STR) {
             free((void*) value->string);
@@ -119,11 +125,33 @@ eval_error_t built_in_function_len(eval_value_t *value, void *context, function_
     } else {
         function_parameter_t *param = (function_parameter_t *) FIRST_LIST_ITEM(parameters);
         if (param->value.type != VT_STR) {
-            error = EVERR_TYPE;
+            error = EVERR_NOT_STRING;
         } else {
             set_int_value(value, strlen(param->value.string));
         }
     }
+    return error;
+}
+ 
+/*
+ * defined() built-in function
+ *
+ * defined(variable_name)
+ */
+eval_error_t built_in_function_defined(eval_value_t *value, void *context, function_parameter_list_t *parameters)
+{
+    eval_error_t error = EVERR_NONE;
+
+    if (NUM_IN_LIST(parameters) != 1) {
+        error = EVERR_WRONG_ARG_COUNT;
+    } else {
+        function_parameter_t *param = (function_parameter_t *) FIRST_LIST_ITEM(parameters);
+        /* Lookup the symbol and set value to true resolved to value */
+        set_int_value(value, param->value.type != VT_UNDEFINED);
+printf("%s: defined function parameter type is %d\n", __func__, param->value.type);
+        error = EVERR_NONE;
+    }
+
     return error;
 }
  
@@ -151,7 +179,7 @@ eval_error_t eval_op_neg(eval_value_t *value)
     if (value->type == VT_INT) {
         value->integer = -value->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
     return error;
 }
@@ -163,7 +191,7 @@ eval_error_t eval_op_comp(eval_value_t *value)
     if (value->type == VT_INT) {
         value->integer = ~value->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -198,7 +226,7 @@ static eval_error_t eval_op_subtract(eval_value_t *val1, eval_value_t *val2)
     if (val1->type == VT_INT && val2->type == VT_INT) {
         val1->integer -= val2->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -211,7 +239,7 @@ static eval_error_t eval_op_multiply(eval_value_t *val1, eval_value_t *val2)
     if (val1->type == VT_INT && val2->type == VT_INT) {
         val1->integer *= val2->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -228,7 +256,7 @@ static eval_error_t eval_op_divide(eval_value_t *val1, eval_value_t *val2)
             error = EVERR_DIV0;
         }
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -241,7 +269,7 @@ static eval_error_t eval_op_bitor(eval_value_t *val1, eval_value_t *val2)
     if (val1->type == VT_INT && val2->type == VT_INT) {
         val1->integer |= val2->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -254,7 +282,7 @@ static eval_error_t eval_op_bitand(eval_value_t *val1, eval_value_t *val2)
     if (val1->type == VT_INT && val2->type == VT_INT) {
         val1->integer &= val2->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -267,7 +295,7 @@ static eval_error_t eval_op_bitxor(eval_value_t *val1, eval_value_t *val2)
     if (val1->type == VT_INT && val2->type == VT_INT) {
         val1->integer ^= val2->integer;
     } else {
-        error = EVERR_TYPE;
+        error = EVERR_NOT_INTEGER;
     }
 
     return error;
@@ -445,7 +473,7 @@ static eval_op_t eval_operator(const char **args, ...)
 
     va_end(ap);
 
-printf("%s: found '%s'\n", __func__, op);
+//printf("%s: found '%s'\n", __func__, op);
 
     return found;
 }
@@ -458,7 +486,7 @@ static eval_error_t eval_number(eval_value_t *value, const char **args)
     set_int_value(value, strtol(*args, &endp, 0));
     *args = endp;
 
-printf("eval_number %d at '%s'\n", value->integer, *args);
+//printf("eval_number %d at '%s'\n", value->integer, *args);
 
     return error;
 }
@@ -471,7 +499,7 @@ static int hex_char(const char **args)
    int ch1 = *++(*args);
    int ch2 = *++(*args);
    
-printf("%s: ch1 %02x ch2 %02x\n", __func__, ch1, ch2);
+//printf("%s: ch1 %02x ch2 %02x\n", __func__, ch1, ch2);
 
    ch1 = tolower(ch1);
    ch2 = tolower(ch2);
@@ -575,18 +603,17 @@ static eval_error_t eval_symbol(eval_value_t *value, get_var_value_t get_var_val
             INIT_LIST(&parameters);
 
             do {
-                value->type = VT_VOID;
+                /* Use return value as temporary */
+                value->type = VT_NONE;
                 error = eval_expression(value, get_var_value, context, args);
-                if (error == EVERR_NONE) {
-                    /* Tack on the new parameter */
-                    function_parameter_t *parameter = (function_parameter_t *) malloc(sizeof(function_parameter_t));
-                    parameter->value = *value;
-                    value->type = VT_VOID;
-                    ADD_TO_LIST(&parameters, parameter);
-                }
-            } while (error == EVERR_NONE && eval_is_next(args, ","));
+                /* Tack on the new parameter */
+                function_parameter_t *parameter = (function_parameter_t *) malloc(sizeof(function_parameter_t));
+                parameter->value = *value;
+                value->type = VT_NONE;
+                ADD_TO_LIST(&parameters, parameter);
+            } while ((error == EVERR_NONE || error == EVERR_UNDEFINED) && eval_is_next(args, ","));
 
-            if (error == EVERR_NONE) {
+            if ((error == EVERR_NONE) || (error == EVERR_UNDEFINED)) {
                 if (eval_is_next(args, ")")) {
                      error = function->function(value, context, &parameters);
                 }
@@ -595,7 +622,8 @@ static eval_error_t eval_symbol(eval_value_t *value, get_var_value_t get_var_val
             while (NUM_IN_LIST(&parameters) != 0) {
                 function_parameter_t *param = (function_parameter_t *) FIRST_LIST_ITEM(&parameters);
                 REMOVE_FROM_LIST(&parameters, param);
-                set_void_value(&param->value);
+                /* Release any space in use */
+                set_none_value(&param->value);
             }
         }
     } else {
@@ -604,7 +632,7 @@ static eval_error_t eval_symbol(eval_value_t *value, get_var_value_t get_var_val
         if (var != NULL) {
             set_str_value(value, var->value);
         } else {
-            error = EVERR_UNDEFINED;
+            set_undefined_value(value);
         }
     }
 
@@ -745,7 +773,8 @@ static eval_error_t eval_logical(eval_value_t *value, get_var_value_t get_var_va
 eval_error_t eval_expression(eval_value_t *value, get_var_value_t get_var_value, void *context, const char **args)
 {
     if (NUM_IN_LIST(&built_in_functions) == 0) {
-        expr_add_built_in_function("len", built_in_function_len);
+        expr_add_built_in_function("len",     built_in_function_len);
+        expr_add_built_in_function("defined", built_in_function_defined);
     }
 
     return eval_logical(value, get_var_value, context, args);
@@ -767,6 +796,23 @@ const char *eval_get_expr_value(eval_value_t *value, char *buf, size_t buflen)
     return buf;
 }
 
+
+const char *eval_error(eval_error_t error)
+{
+    switch (error) {
+        case EVERR_NONE:              return "None";
+        case EVERR_ATOM:              return "Unknown atom";
+        case EVERR_DIV0:              return "Divide by 0";
+        case EVERR_PARENS:            return "Mismatched ()";
+        case EVERR_UNDEFINED:         return "Undefined";
+        case EVERR_TYPE:              return "Mismatched types";
+        case EVERR_NOT_STRING:        return "Not a string";
+        case EVERR_NOT_INTEGER:       return "Not an integer";
+        case EVERR_STRING:            return "Missing string terminator";
+        case EVERR_WRONG_ARG_COUNT:   return "Wrong arg count";
+        default:                      return "UNKNOWN";
+    }
+}
 
 #ifdef TESTING
 var_list_t var_list;
@@ -793,13 +839,13 @@ int main(int argc, char **argv)
             *p = '\0';
         }
 
-        eval_value_t value = { .type = VT_VOID };
+        eval_value_t value = { .type = VT_NONE };
         const char *bufp = buffer;
 
         eval_error_t error = eval_expression(&value, get_var_value, NULL, &bufp);
 
         if (error != EVERR_NONE) {
-            printf("Error %d Remaining \"%s\"\n", error, bufp);
+            printf("Error \"%s\" Remaining \"%s\"\n", eval_error(error), bufp);
         } else if (value.type == VT_INT) {
             printf("Integer %d Remaining \"%s\"\n", value.integer, bufp);
         } else if (value.type == VT_STR) {

@@ -18,6 +18,8 @@ typedef enum {
     EVERR_PARENS,
     EVERR_UNDEFINED,
     EVERR_TYPE,
+    EVERR_NOT_STRING,
+    EVERR_NOT_INTEGER,
     EVERR_STRING,
     EVERR_WRONG_ARG_COUNT,
 } eval_error_t;
@@ -26,7 +28,7 @@ typedef enum {
  Value cell
  *****************************************************************************/
 typedef struct eval_value {
-    enum { VT_VOID = 0, VT_INT, VT_STR }  type;
+    enum { VT_NONE = 0, VT_UNDEFINED, VT_INT, VT_STR }  type;
     union {
         const char* string;
         int         integer;
@@ -79,6 +81,8 @@ typedef eval_error_t(*eval_op_t)(eval_value_t*, eval_value_t*);
 eval_error_t eval_expression(eval_value_t *value, get_var_value_t get_var_value, void* context, const char **args);
 
 const char *eval_get_expr_value(eval_value_t *value, char *buf, size_t buflen);
+
+const char *eval_error(eval_error_t error);
 
 #endif /* __expressions_h_included */
 

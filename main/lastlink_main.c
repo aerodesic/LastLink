@@ -112,6 +112,7 @@ void app_main(void)
     }
 
 
+#ifdef DISABLED_WHILE_LOOKING_FOR_CRASH
     ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
@@ -137,13 +138,16 @@ void app_main(void)
 #if CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
     init_service_names();
 #endif
+#endif /* DISABLED_WHILE_LOOKING_FOR_CRASH */
 
     start_commands(stdin, stdout);
 
     bootloader_random_enable();
+#ifdef NOTUSED
     ESP_LOGI(TAG, "random number 1 %d", esp_random());
     ESP_LOGI(TAG, "random number 2 %d", esp_random());
     ESP_LOGI(TAG, "random number 3 %d", esp_random());
+#endif
 
     display->clear(display);
 
@@ -152,35 +156,34 @@ void app_main(void)
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
 
-#ifdef NOTUSED
-// Check out fstat
-    struct stat sb;
-
-    if (stat(CONFIG_LASTLINK_CONFIG_FILE, &sb) == 0) {
-        printf("stat of %s:\n", CONFIG_LASTLINK_CONFIG_FILE);
-        printf("  st_dev:     %d\n", sb.st_dev);
-        printf("  st_ino:     %d\n", sb.st_ino);
-        printf("  st_ino:     %d\n", sb.st_ino);
-        printf("  st_mode:    %d\n", sb.st_mode);
-        printf("  st_nlink:   %d\n", sb.st_nlink);
-        printf("  st_uid:     %d\n", sb.st_uid);
-        printf("  st_gid:     %d\n", sb.st_gid);
-        printf("  st_rdev:    %d\n", sb.st_rdev);
-        printf("  st_size:    %ld\n", sb.st_size);
-        printf("  st_blksize: %ld\n", sb.st_blksize);
-        printf("  st_blocks:  %ld\n", sb.st_blocks);
-    } else {
-        printf("Cannot stat '%s'\n", CONFIG_LASTLINK_CONFIG_FILE);
-    }
-#endif
-
 #ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
-    https_server();
+    https_server_start();
     start_mdns_service();
 #endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
 
     printf("Node address %d\n", linklayer_node_address);
 
+#if 0
+#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
+    os_delay(30000);
+
+    printf("Stopping mdns\n");
+    stop_mdns_service();
+
+    printf("Stopping network\n");
+    https_server_stop();
+
+    os_delay(60000);
+
+    printf("Starting network\n");
+    https_server_start();
+
+    printf("Starting mdns\n");
+    start_mdns_service();
+#endif
+#endif
+
+#ifdef NOTUSED
     if (listen_only) {
         linklayer_set_listen_only(true);
 
@@ -209,5 +212,10 @@ void app_main(void)
             os_delay(1000);
         }
     }
+#else
+    while (true) {
+        os_delay(1000);
+    }
+#endif
 }
 

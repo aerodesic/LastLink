@@ -175,7 +175,8 @@ static esp_netif_t* wifi_start(void)
 
 static void wifi_stop(void)
 {
-    esp_netif_t *wifi_netif = get_lastlink_netif_from_desc("sta");
+    //esp_netif_t *wifi_netif = get_lastlink_netif_from_desc("sta");
+    esp_netif_t *wifi_netif = get_lastlink_netif_from_desc("ap");
     esp_err_t err = esp_wifi_stop();
     if (err == ESP_ERR_WIFI_NOT_INIT) {
         return;

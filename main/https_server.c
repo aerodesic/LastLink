@@ -458,7 +458,7 @@ static void connect_http_handler(void* arg, esp_event_base_t event_base, int32_t
 static httpd_handle_t https_server_handler = NULL;
 static httpd_handle_t http_server_handler = NULL;
 
-void https_server(void)
+void https_server_start(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -475,6 +475,12 @@ void https_server(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &disconnect_http_handler, &http_server_handler));
 
     ESP_ERROR_CHECK(network_connect());
+}
+
+void https_server_stop(void)
+{
+    ESP_ERROR_CHECK(network_disconnect());
+    ESP_ERROR_CHECK(esp_event_loop_delete_default());
 }
 
 #endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */

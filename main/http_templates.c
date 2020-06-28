@@ -176,6 +176,30 @@ char *find_string(char *buffer, const char *string)
 }
 
 /*
+ * Fetch a symbol name from a char**.  Must start with alpha and contain only alphanumerics and _
+ *
+ * Returns pointer to string if symbol was fetched.
+ */
+char *fetch_symbol(const char **ptr, char *buffer, size_t bufsize)
+{
+    int len = 0;
+
+    /* Skip leanding spaces */
+    while (isspace(**ptr)) {
+       ++(*ptr);
+    }
+
+    if (isalpha(**ptr)) {
+        while (len < bufsize - 1 && isalnum(**ptr)) {
+            buffer[len++] = *(*ptr)++;
+        }
+        buffer[len] = '\0';
+    }
+
+    return len != 0 ? buffer : NULL;
+}
+
+/*
  * Create a full pathname from a uri, adding '.html' if necessary
  */
 const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t temp_buffer_len)
@@ -289,12 +313,25 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
     return ok;
 }
 
-void remove_text(text_buffer_t *text_buffer, char *from, char *to)
+/*
+ * Remove text from 'first' through 'last' characters.
+ */
+void remove_text(text_buffer_t *text_buffer, char *first, char *last)
 {
+    assert(first <= last);
+
+ESP_LOGI(TAG, "%s: removing %d chars from %d to %d", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base);
+
+char text[last - first + 1 + 1];
+strncpy(text, first, last - first + 1 + 1);
+text[last-first+1] = '\0';
+ESP_LOGI(TAG, "%s: %d characters at %d to %d \"%s\"", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base, text);
+
     /* Remove the selected text */
-    memcpy(from, to, text_buffer->used - (to - text_buffer->base) + 1);
+    memcpy(first, last+1, text_buffer->used - (last - text_buffer->base) + 1);
+
     /* Remove from buffer allocation */
-    text_buffer->used -= (to - from);
+    text_buffer->used -= (last - first + 1);
 }
 
 /*
@@ -346,7 +383,7 @@ ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
     } else if (needed < 0) {
         /* Need to remove space */
         needed = -needed;
-        remove_text(text_buffer, text_buffer->current, text_buffer->current + needed);
+        remove_text(text_buffer, text_buffer->current, text_buffer->current + needed - 1);
 #if 0
         memcpy(text_buffer->current, text_buffer->current + needed, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
         /* Remove the returned space from used */
@@ -444,39 +481,36 @@ static bool do_commands(text_buffer_t *text_buffer, session_context_t *session)
         text_buffer->current = find_string(text_buffer->current, "${");
         if (text_buffer->current != NULL) {
 ESP_LOGI(TAG, "%s: found macro header at position %d", __func__, text_buffer->current - text_buffer->base);
-            /* Fetch up to the closing '}' */
-            char *var_start = text_buffer->current + 2;
-            while (isspace(*var_start)) {
-                ++var_start;
+
+            const char *p = text_buffer->current + 2;
+
+            char temp_buffer[HTTPD_MAX_KEYWORD_LEN+1];
+            const char *varname = fetch_symbol(&p, temp_buffer, sizeof(temp_buffer));
+
+            /* Skip to end of macro or end of buffer */
+            while ((*p != '}') && (*p != '\0')) {
+                ++p;
             }
 
-            char *var_end = var_start;
+            const char *end_macro = p;
 
-            /* Look for the end of the var name */
-            while (isalnum(*var_end)) {
-                ++var_end;
-            }
+            /* If we see the closing brace of the macro and the first char is an alpha. */
+            if (*end_macro == '}' && varname != NULL) {
 
-            while ((*var_end != '}') && (*var_end != '\0')) {
-                ++var_end;
-            }
+                /* Compute size of var macro call */
+                size_t item_len = end_macro - text_buffer->current + 1;
 
-            if (*var_end == '}') {
-                /* Process the var */
-                *var_end++ = '\0';
-                size_t item_len = var_end - text_buffer->current;
-
-ESP_LOGI(TAG, "%s: looking for var '%s'", __func__, var_start);
-                var_item_t *var = find_var(session->varlist, var_start);
+ESP_LOGI(TAG, "%s: looking for var '%s'", __func__, varname);
+                var_item_t *var = find_var(session->varlist, varname);
                 if (var != NULL) {
 ESP_LOGI(TAG, "%s: found '%s' replacing with '%s'", __func__, var->name, var->value);
                     replace_text(text_buffer, item_len, var->value);
                 } else {
-ESP_LOGI(TAG, "%s: did not find '%s'; removing %d characters", __func__, var_start, item_len);
+ESP_LOGI(TAG, "%s: did not find '%s'; removing %d characters", __func__, varname, item_len);
                     /* Replace with empty */
                     replace_text(text_buffer, item_len, "");
                 }
-                /* Leave current pointing to begininng of replaced text so we can rescan for additional macros */
+                /* Leave current pointing to begininng of replaced text so we can rescan for additional macros (within the macros) */
             } else {
                 /* We didn't handle this one - skip over leading '{' so we don't create a forever loop */
 ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->current);
@@ -495,26 +529,25 @@ ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->cur
             text_buffer->current = find_string(text_buffer->current, "%}");
 
             if (text_buffer->current != NULL) {
+                /* Point to one past the end of command field */
                 char *end = text_buffer->current + 2;
+
+                /* Total size of item including surrounding "{% %}" */
+                size_t text_item_len = end - start;
 
                 /* Back up current to beginning of item */
                 text_buffer->current = start;
 
-                /* Total size of item including surrounding "{% %}" */
-                size_t text_item_len = end - start;
-                text_buffer->current[text_item_len - 2] = '\0';
+                /* Make a copy of this region (without the surrounding {% %} */
+                char raw_args[text_item_len - 4 + 1];
+                strncpy(raw_args, start + 2, (end - start) - 4);
+                raw_args[end - start - 4] = '\0';
 
                 /* Fetch keyword of the string */
-                char *args = start + 2;
-                while (isspace(*args)) {
-                    ++args;
-                }
-
-                char argv0[HTTPD_MAX_KEYWORD_LEN + 1];
-                int pos = 0;
-                while (isalnum(*args) && pos < HTTPD_MAX_KEYWORD_LEN) {
-                    argv0[pos++] = *args++;
-                }
+                const char *raw_argp = raw_args;
+                char temp_arg0[HTTPD_MAX_KEYWORD_LEN + 1];
+     
+                const char *argv0 = fetch_symbol(&raw_argp, temp_arg0, sizeof(temp_arg0));
 
                 command_item_t *command = find_command(argv0);
 
@@ -522,10 +555,10 @@ ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->cur
 
                 if (command != NULL) {
                     if (command->function_rawargs != NULL) {
-                        ok = command->function_rawargs(text_buffer, text_item_len, session, argv0, args);
+                        ok = command->function_rawargs(text_buffer, text_item_len, session, argv0, raw_argp);
                     } else if (command->function_argv != NULL) {
                         const char *args[HTTPD_MAX_COMMAND_ARGS + 1];
-                        int argc = tokenize(start + 2, args, HTTPD_MAX_COMMAND_ARGS);
+                        int argc = tokenize(raw_args, args, HTTPD_MAX_COMMAND_ARGS);
 
                         /* Parse into argv/argc and pass to function after looking up argv[0] for command */
                         ok = command->function_argv(text_buffer, text_item_len, session, argc, args);
@@ -640,23 +673,23 @@ static bool find_if_bounds(text_buffer_t *text_buffer, if_boundaries_t *if_bound
 {
     char *current = text_buffer->current;
     int level = 0;
-    bool ok = true;
+    bool ok = false;
     char **end_mark = NULL;
 
     /* Initialize to false */
     memset(if_boundaries, 0, sizeof(if_boundaries_t));
 
-    while (ok && current != NULL) {
+    while (current != NULL) {
         current = find_string(current, "{%");
         if (current != NULL) {
             char *start = current;
 
             current += 2;
-            while (isspace(*current)) {
-                ++current;
-            }
 
-            if (strcmp(current, "elseif") == 0) {
+            char temp_buffer[8];
+            char *if_command = fetch_symbol((const char **) &current, temp_buffer, sizeof(temp_buffer));
+
+            if (strcmp(if_command, "elseif") == 0) {
                 if (level == 0) {
                     /* Beginning of elseif */
                     if_boundaries->else_if = true;
@@ -664,21 +697,21 @@ static bool find_if_bounds(text_buffer_t *text_buffer, if_boundaries_t *if_bound
                     end_mark = &if_boundaries->else_end;
                 }
 
-            } else if (strcmp(current, "else") == 0) {
+            } else if (strcmp(if_command, "else") == 0 || strcmp(if_command, "elseif") == 0) {
                 if (level == 0) {
                     if_boundaries->else_begin = start;
                     end_mark = &if_boundaries->else_end;
                 }
 
-            } else if (strcmp(current, "endif ") == 0) {
-                if (--level < 0) {
-                    ok = false;
+            } else if (strcmp(if_command, "endif") == 0) {
+                if (level == 0) {
+                    if_boundaries->endif_begin = start;
+                    end_mark = &if_boundaries->endif_end;
+                } else {
+                    level--;
                 }
 
-                if_boundaries->endif_begin = start;
-                end_mark = &if_boundaries->endif_end;
-
-            } else if (strcmp(current, "if") == 0) {
+            } else if (strcmp(if_command, "if") == 0) {
                 ++level;
             }
 
@@ -688,13 +721,76 @@ static bool find_if_bounds(text_buffer_t *text_buffer, if_boundaries_t *if_bound
             }
 
             if (level == 0 && current != NULL && end_mark != NULL) {
-                *end_mark = current;
+                /* Mark position of closing brace */
+                *end_mark = current - 1;
                 end_mark = NULL;
+
+                if (if_boundaries->endif_end != NULL) {
+                    /* end if here */
+                    current = NULL;
+                    ok = true;
+                }
             }
         }
     }
 
+ESP_LOGI(TAG, "%s: ok %s else_begin %d  else_end %d  else_if %s endif_begin %d endif_end %d", __func__,
+         ok ? "Yes" : "No",
+         if_boundaries->else_begin  ? if_boundaries->else_begin - text_buffer->base : -1,
+         if_boundaries->else_end    ? if_boundaries->else_end - text_buffer->base : -1,
+         if_boundaries->else_if     ? "Yes" : "No",
+         if_boundaries->endif_begin ? if_boundaries->endif_begin - text_buffer->base : -1,
+         if_boundaries->endif_end  ? if_boundaries->endif_end - text_buffer->base : -1);
+
     return ok;
+}
+
+/*
+ * Set a var value
+ *
+ * {% setvar varname <value> %}
+ *
+ * Vars are only strings, so if evaluation to integer, convert to string.
+ * NONE values are converted to empty strings.
+ * Strings are saved as-is.
+ */
+static bool command_setvar(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, const char *arg0, const char *args)
+{
+ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
+    char temp_buffer[HTTPD_MAX_KEYWORD_LEN+1];
+    const char *var_name = fetch_symbol(&args, temp_buffer, sizeof(temp_buffer));
+
+    /* Evaluate expression */
+    eval_value_t value;
+    const char *argp = args;
+    eval_error_t error = eval_expression(&value, eval_get_session_var, session, &argp);
+    if (error == EVERR_NONE) {
+        /* Remove the command from the text buffer */
+        replace_text(text_buffer, item_size, "");
+        switch (value.type) {
+            default:
+            case VT_NONE: {
+                set_var(session->varlist, var_name, "");
+                break;
+            }
+            case VT_INT: {
+                char temp_buf[20];
+                snprintf(temp_buf, sizeof(temp_buf), "%d", value.integer);
+                set_var(session->varlist, var_name, temp_buf);
+                break;
+            }
+            case VT_STR: {
+                set_var(session->varlist, var_name, value.string);
+                break;
+            }
+        }
+    } else {
+        char temp_buf[80];
+        snprintf(temp_buf, sizeof(temp_buf), "[ \"setvar %s %s\" eval error %d ]", var_name, args, error);
+        replace_text(text_buffer, 0, temp_buf);
+    }
+
+    return true;
 }
 
 /*
@@ -706,6 +802,8 @@ static bool find_if_bounds(text_buffer_t *text_buffer, if_boundaries_t *if_bound
  */
 static bool command_if(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, const char *arg0, const char *args)
 {
+ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
+
     /* Remove the 'if' clause */
     replace_text(text_buffer, item_size, "");
 
@@ -735,12 +833,13 @@ static bool command_if(text_buffer_t *text_buffer, size_t item_size, session_con
                 /* Remove the "endif" */
                 remove_text(text_buffer, if_boundaries.endif_begin, if_boundaries.endif_end);
                 /* Remove the 'if' up to 'else' */
-                remove_text(text_buffer, text_buffer->current, if_boundaries.else_begin);
+                remove_text(text_buffer, text_buffer->current, if_boundaries.else_begin-1);
                 if (if_boundaries.else_if) {
                     /* An elseif - change to 'if' */
                     char *elseif = find_string(if_boundaries.else_begin, "elseif");
                     if (elseif != NULL) {
                         text_buffer->current = elseif;            
+                        /* Turn elseif into if */
                         replace_text(text_buffer, 6, "if");
                         text_buffer->current = current;
                     } else {
@@ -793,11 +892,12 @@ static bool command_endif(text_buffer_t *text_buffer, size_t item_size, session_
 
 static void init_command_list(void)
 {
-    add_template_command_argv("include", command_include);
-    add_template_command_rawargs("if", command_if);
-    add_template_command_rawargs("else", command_else);
-    add_template_command_rawargs("else", command_elseif);
-    add_template_command_rawargs("else", command_endif);
+    add_template_command_argv("include",    command_include);
+    add_template_command_rawargs("if",      command_if);
+    add_template_command_rawargs("else",    command_else);
+    add_template_command_rawargs("else",    command_elseif);
+    add_template_command_rawargs("else",    command_endif);
+    add_template_command_rawargs("setvar",  command_setvar);
 }
 
 void release_httpd_templates(void)
