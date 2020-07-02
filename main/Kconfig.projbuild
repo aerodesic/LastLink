@@ -23,17 +23,24 @@ menu "LastLink Configuration"
             depends on LASTLINK_WEB_SERVER_ENABLED
 
             config LASTLINK_HTTP_SERVER_ENABLED
-                bool "Enable LastLink HTTP server"
+                bool "HTTP"
                 help
                     Use HTTP server for user connection.
 
             config LASTLINK_HTTPS_SERVER_ENABLED
-                bool "Enable LastLink HTTPS server"
+                bool "HTTPS"
                 select ESP_HTTPS_SERVER_ENABLE
                 help
                     Enable the HTTPS server for user connection.
 
         endchoice
+
+        config LASTLINK_MDNS_ENABLED
+            bool "Activate MDNS server"
+            depends on LASTLINK_WEB_SERVER_ENABLED
+            default y
+            help
+                Select to enable MDNS server activation. 
 
         config LASTLINK_HTTP_REDIRECT_ENABLED
             bool "Enable HTTP redirect"

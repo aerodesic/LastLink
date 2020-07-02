@@ -91,7 +91,15 @@ void app_main(void)
     }
 
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     init_commands();
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
 #ifdef CONFIG_SSD1306_I2C_ENABLED
     display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
@@ -112,6 +120,9 @@ void app_main(void)
         }
     }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
 #ifdef ENABLE_LASTLINK_NETWORK
     ESP_LOGD(TAG, "About to load configuration");
@@ -138,12 +149,22 @@ void app_main(void)
 
 #if CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
     init_service_names();
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
 #endif
 #endif /* DISABLED_WHILE_LOOKING_FOR_CRASH */
 
     start_commands(stdin, stdout);
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     bootloader_random_enable();
+
 #ifdef NOTUSED
     ESP_LOGI(TAG, "random number 1 %d", esp_random());
     ESP_LOGI(TAG, "random number 2 %d", esp_random());
@@ -162,11 +183,25 @@ void app_main(void)
     asprintf(&buffer, "LastLink #%d", get_config_int("lastlink.address", 0));
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
 #endif  /* CONFIG_SSD1306_I2C_ENABLED */
 
 #ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
     httpd_server_start();
+ #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+ #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
+ #ifdef CONFIG_LASTLINK_MDNS_ENABLED
     start_mdns_service();
+ #endif /* CONFIG_LASTLINK_MDNS_ENABLED */
+ #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+ #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 #endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
     printf("Node address %d\n", linklayer_node_address);

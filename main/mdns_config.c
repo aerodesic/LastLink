@@ -12,12 +12,19 @@ void start_mdns_service()
 
     //set hostname
     mdns_hostname_set("LastLink");
+
     //set default instance
     mdns_instance_name_set("Lastlink access node");
 
+#ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
     mdns_service_add(NULL, "_https", "_tcp", 443, NULL, 0);
     mdns_service_instance_name_set("_https", "_tcp", "LastLink web server");
+#else
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    mdns_service_instance_name_set("_http", "_tcp", "LastLink web server");
+#endif
 
+#ifdef NOTUSED
     mdns_txt_item_t serviceTxtData[3] = {
         {"board","{esp32}"},
         {"u","user"},
@@ -25,7 +32,12 @@ void start_mdns_service()
     };
 
     //set txt data for service (will free and replace current data)
+#ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
     mdns_service_txt_set("_https", "_tcp", serviceTxtData, 3);
+#else
+    mdns_service_txt_set("_http", "_tcp", serviceTxtData, 3);
+#endif
+#endif
 }
 
 void stop_mdns_service(void)

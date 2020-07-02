@@ -1,4 +1,6 @@
 {% include header.html %}
+  <link rel="stylesheet" type="text/css" href='/ldbtn.min.css' />
+  <link rel="stylesheet" type="text/css" href="/loading.min.css"/>
   <body>
     <form action="login" method="post">
       <div class="container">
@@ -7,7 +9,10 @@
          <p>
          <label for="psw"><b>Password</b></label>
          <input type="password" placeholder="Enter Password" name="psw" required>
-         <button type="submit">Login</button>
+         <div class="btn btn-primary ld-ext-right">
+           <button type="submit" onclick="start_spinner('spin-button');">Login</button>
+           <div id="spin-button"></div>
+         </div>
          <label>
             <input type="checkbox" checked="checked" name="rem"> Remember me
          </label>

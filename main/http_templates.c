@@ -132,6 +132,7 @@ bool add_template_command_rawargs(const char *name, function_rawargs_t function)
 
 void free_session_context(void *param)
 {
+ESP_LOGI(TAG, "%s: called", __func__);
     session_context_t *session = (session_context_t *) param;
     free_var_list(session->varlist);
     free_include_stack(session->include_stack);
@@ -345,6 +346,7 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return ok;
 }
 
@@ -695,7 +697,7 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
                     ESP_LOGI(TAG, "%s: replace failed", __func__);
                 }
             
-                free(local_text_buffer.base);
+               free(local_text_buffer.base);
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
                 assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */

@@ -85,7 +85,11 @@ static authtoken_t *find_authtoken_by_token(char *tokenname)
         }
     }
 
-    return check_authtoken_expired(token);
+    token = check_authtoken_expired(token);
+
+    ESP_LOGI(TAG, "%s: authtoken is %s", __func__, token ? token->token : "NULL");
+
+    return token;
 }
 
 static void release_authtoken_list(void)
@@ -99,6 +103,15 @@ static void release_authtoken_list(void)
     } 
 
     os_release_recursive_mutex(authtoken_lock);
+}
+
+static void allocate_session(httpd_req_t *req)
+{
+    if (req->sess_ctx == NULL) {
+        req->sess_ctx = create_session_context();
+        assert(req->sess_ctx);
+        req->free_ctx = free_session_context;
+    }
 }
 
 /*
@@ -135,6 +148,10 @@ static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *pathname)
 
         free((void*) text_buffer.base);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return ret;
 }
@@ -189,6 +206,10 @@ static bool authenticate(const char *username, const char *password, authtoken_v
         ADD_TO_LIST(&authtoken_list, authtoken);
         os_release_recursive_mutex(authtoken_lock);
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
         return true;
     }
 
@@ -209,15 +230,15 @@ static authtoken_t *get_lastlink_authtoken(httpd_req_t *req)
         if (ret == ESP_OK) {
            //ESP_LOGI(TAG, "%s: cookie is '%s'", __func__, cookie);
 
+#ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
+           char *token = strstr(cookie, "__Secure-lastlink_auth_token=");
+#else
            char *token = strstr(cookie, "lastlink_auth_token=");
+#endif
 
             if (token != NULL) {
                 /* Get value between "" */
-                token = strchr(token, '"') + 1;
-                char *p = strchr(token, '"');
-                if (p != NULL) {
-                   *p = '\0';
-                }
+                token = strchr(token, '=') + 1;
 
                 authtoken = find_authtoken_by_token(token);
             }
@@ -227,6 +248,11 @@ static authtoken_t *get_lastlink_authtoken(httpd_req_t *req)
 
         free((void*) cookie);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return authtoken;
 }
 
@@ -268,6 +294,10 @@ ESP_LOGI(TAG, "%s: authtoken '%s' new '%s' for username '%s'", __func__, session
             set_session_var(session, "username", authtoken->username);  
         }
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return authtoken != NULL;
 }
@@ -345,6 +375,8 @@ static esp_err_t get_file_handler(httpd_req_t *req)
 {
     esp_err_t ret = ESP_OK;
 
+    allocate_session(req);
+
     if (protected_file_wanted(req->uri) && !check_if_logged_in(req)) {
         /* For html files we need to be logged in so all roads lead to "login" */
         ret = redirect(req, "/login");
@@ -352,18 +384,14 @@ static esp_err_t get_file_handler(httpd_req_t *req)
 
         httpd_resp_set_type(req, get_file_type(req->uri));
 
-        if (req->sess_ctx == NULL) {
-            session_context_t *session = create_session_context();
-            if (session != NULL) {
-                req->sess_ctx = session;
-                req->free_ctx = free_session_context;
-            }
-        }
-
         char temp_buffer[TEMP_URL_BUFFER_LEN];
         const char *pathname = get_pathname_from_uri(req->uri, get_file_prefix(req->uri), temp_buffer, sizeof(temp_buffer));
         ret = httpd_resp_send_file(req, pathname);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return ret;
 }
@@ -377,10 +405,7 @@ static const httpd_uri_t user_get_uri = {
 
 static esp_err_t login_post_handler(httpd_req_t *req)
 {
-    if (req->sess_ctx == NULL) {
-        req->sess_ctx = create_session_context();
-        req->free_ctx = free_session_context;
-    }
+    allocate_session(req);
 
 ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
 
@@ -440,7 +465,7 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
             *p = '\0';
         }
 
-        //ESP_LOGI(TAG, "%s: username '%s' password '%s' remember '%s'", __func__, username, password, remember);
+        ESP_LOGI(TAG, "%s: username '%s' password '%s' remember '%s'", __func__, username, password, remember);
 
         if (authenticate(username, password, user_token)) {
 
@@ -461,8 +486,12 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
     char *cookie;
 
     if (user_token[0] != '\0') {
-//ESP_LOGD(TAG, "%s: user_token %s", __func__, user_token);
-        asprintf(&cookie, "lastlink_auth_token=\"%s\"; Max-Age=3600; Secure", user_token);
+ESP_LOGD(TAG, "%s: user_token %s", __func__, user_token);
+  #ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
+        asprintf(&cookie, "__Secure-lastlink_auth_token=%s; Max-Age=3600; Secure", user_token);
+  #else
+        asprintf(&cookie, "lastlink_auth_token=%s; Max-Age=3600;", user_token);
+  #endif
         httpd_resp_set_hdr(req, "Set-Cookie", cookie);
 
         next_uri = "/"; 
@@ -471,10 +500,20 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
         next_uri = "/login";
     }
 
+
+    /* Redirect to the page */
     esp_err_t err = redirect(req, next_uri);
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     free((void*) cookie);
- 
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return err;
 }
 
@@ -494,7 +533,7 @@ static httpd_handle_t start_https_webserver(void)
 
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.httpd.uri_match_fn = httpd_uri_match_wildcard;
-    config.httpd.stack_size   = 30000;  /* Increased from default of 10240 */
+    // config.httpd.stack_size   = 30000;  /* Increased from default of 10240 */
 
     extern const unsigned char cacert_pem_start[] asm("_binary_cacert_pem_start");
     extern const unsigned char cacert_pem_end[]   asm("_binary_cacert_pem_end");
@@ -514,17 +553,29 @@ static httpd_handle_t start_https_webserver(void)
 
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
-    httpd_register_uri_handler(server, &user_get_uri);                 /* All gets pass through here */
     httpd_register_uri_handler(server, &login_post_uri);               /* The 'login' page POST */
+    httpd_register_uri_handler(server, &user_get_uri);                 /* All gets pass through here */
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, NULL);     /* Anything else if unavailable */
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return server;
 }
 
 static void stop_https_webserver(httpd_handle_t server)
 {
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     // Stop the httpd server
     httpd_ssl_stop(server);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 static void disconnect_https_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -534,6 +585,9 @@ static void disconnect_https_handler(void* arg, esp_event_base_t event_base, int
         stop_https_webserver(*server);
         *server = NULL;
     }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 static void connect_https_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -542,6 +596,9 @@ static void connect_https_handler(void* arg, esp_event_base_t event_base, int32_
     if (*server == NULL) {
         *server = start_https_webserver();
     }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 #ifdef CONFIG_LASTLINK_HTTP_REDIRECT_ENABLED
@@ -586,10 +643,14 @@ static httpd_handle_t start_http_webserver(void)
  #endif /* CONFIG_LASTLINK_HTTP_REDIRECT_ENABLED */
 #else /* HTTPS is not enabled so enable for HTTP */
     /* Running only HTTP */
-    httpd_register_uri_handler(server, &user_get_uri);                 /* All gets pass through here */
     httpd_register_uri_handler(server, &login_post_uri);               /* The 'login' page POST */
+    httpd_register_uri_handler(server, &user_get_uri);                 /* All gets pass through here */
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, NULL);     /* Anything else if unavailable */
 #endif /* ! defined(CONFIG_LASTLINK_HTTP_REDIRECT_ENABLED) */
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return server;
 }
@@ -607,6 +668,10 @@ static void disconnect_http_handler(void* arg, esp_event_base_t event_base, int3
         stop_http_webserver(*server);
         *server = NULL;
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 static void connect_http_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -615,6 +680,10 @@ static void connect_http_handler(void* arg, esp_event_base_t event_base, int32_t
     if (*server == NULL) {
         *server = start_http_webserver();
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 static httpd_handle_t http_server_handler = NULL;
@@ -645,7 +714,15 @@ void httpd_server_start(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &disconnect_http_handler, &http_server_handler));
 #endif /* defined(CONFIG_LASTLINK_HTTP_SERVER_ENABLED) || defined(CONFIG_LASTLINK_HTTP_REDIRECT_ENABLED)*/
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     ESP_ERROR_CHECK(network_connect());
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 void http_server_stop(void)
