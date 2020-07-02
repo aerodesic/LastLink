@@ -3,6 +3,8 @@
  */
 #include "sdkconfig.h"
 
+#undef ENABLE_LASTLINK_NETWORK
+
 #define VERSION "1.0"
 
 #include <stdio.h>
@@ -38,26 +40,20 @@
 #include "service_names.h"
 
 #include "commands.h"
+#ifdef CONFIG_SSD1306_I2C_ENABLED
 #include "ssd1306_i2c.h"
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 
-#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
-#include "https_server.h"
+#ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
+#include "httpd_server.h"
 #include "mdns_config.h"
-#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
+#endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
-#if 0
-/* TEST */
-extern const uint8_t server_root_cert_pem_start[] asm("_binary_server_root_cert_pem_start");
-extern const uint8_t server_root_cert_pem_end[]   asm("_binary_server_root_cert_pem_end");
-
-const uint8_t *xyz = server_root_cert_pem_end;
-/* END TEST */
-#endif
+#include "uuid.h"
 
 const char* TAG = "lastlink";
 
-//static const char* default_config[] = DEFAULT_CONFIG;
-
+#ifdef CONFIG_SSD1306_I2C_ENABLED
 #define NUMLINES 6
 char lines[NUMLINES][16];
 int nextline = 0;
@@ -85,6 +81,7 @@ static void add_line_to_buffer(const char* fmt, ...)
     }
     display->show(display);
 }
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 
 void app_main(void)
 {
@@ -96,15 +93,19 @@ void app_main(void)
 
     init_commands();
 
+#ifdef CONFIG_SSD1306_I2C_ENABLED
     display = ssd1306_i2c_create(DISPLAY_FLAGS_DEFAULT);
     display->contrast(display, get_config_int("display.contrast", 128));
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 
     if (init_spiffs() == ESP_OK) {
 	/* Try to open .config and if not found, format the spiffs */
         FILE *fp = fopen(CONFIG_LASTLINK_CONFIG_FILE, "r");
 	    if (fp == NULL) {
+#ifdef CONFIG_SSD1306_I2C_ENABLED
             /* Format the device */
             display->draw_text(display, 0, 32, "Formatting...");
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 	        format_spiffs();
         } else {
             fclose(fp);
@@ -112,7 +113,7 @@ void app_main(void)
     }
 
 
-#ifdef DISABLED_WHILE_LOOKING_FOR_CRASH
+#ifdef ENABLE_LASTLINK_NETWORK
     ESP_LOGD(TAG, "About to load configuration");
 
     /* load config file */
@@ -149,39 +150,26 @@ void app_main(void)
     ESP_LOGI(TAG, "random number 3 %d", esp_random());
 #endif
 
+    uuid_text_t          uuid_buf;
+    uuid_text_trimmed_t  uuid_buf_trimmed;
+    ESP_LOGI(TAG, "%s: uuid normal %s", __func__, uuid_gen(uuid_buf));
+    ESP_LOGI(TAG, "%s: uuid trimmed %s", __func__, uuid_gen_trimmed(uuid_buf_trimmed));
+
+#ifdef CONFIG_SSD1306_I2C_ENABLED
     display->clear(display);
 
     char *buffer;
     asprintf(&buffer, "LastLink #%d", get_config_int("lastlink.address", 0));
     display->draw_text(display, 0, 0, buffer);
     free((void*) buffer);
+#endif  /* CONFIG_SSD1306_I2C_ENABLED */
 
-#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
-    https_server_start();
+#ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
+    httpd_server_start();
     start_mdns_service();
-#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
+#endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
     printf("Node address %d\n", linklayer_node_address);
-
-#if 0
-#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
-    os_delay(30000);
-
-    printf("Stopping mdns\n");
-    stop_mdns_service();
-
-    printf("Stopping network\n");
-    https_server_stop();
-
-    os_delay(60000);
-
-    printf("Starting network\n");
-    https_server_start();
-
-    printf("Starting mdns\n");
-    start_mdns_service();
-#endif
-#endif
 
 #ifdef NOTUSED
     if (listen_only) {

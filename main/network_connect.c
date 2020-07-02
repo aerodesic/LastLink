@@ -8,7 +8,7 @@
  */
 
 #include "sdkconfig.h"
-#ifdef CONFIG_ESP_HTTPS_SERVER_ENABLE
+#ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
 
 #include <string.h>
 #include "network_connect.h"
@@ -208,5 +208,5 @@ esp_netif_t *get_lastlink_netif_from_desc(const char *desc)
     free(expected_desc);
     return netif;
 }
-#endif /* CONFIG_ESP_HTTPS_SERVER_ENABLE */
+#endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 

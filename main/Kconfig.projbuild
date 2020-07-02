@@ -12,13 +12,57 @@ menu "LastLink Configuration"
             help
                 Enter the name of the spiffs partition as used in the parition table.
 
+        config LASTLINK_WEB_SERVER_ENABLED
+            bool "Enable web server"
+            default y
+            help
+                "Enable a web server for local access"
+
+        choice
+            prompt "Choose type of web server"
+            depends on LASTLINK_WEB_SERVER_ENABLED
+
+            config LASTLINK_HTTP_SERVER_ENABLED
+                bool "Enable LastLink HTTP server"
+                help
+                    Use HTTP server for user connection.
+
+            config LASTLINK_HTTPS_SERVER_ENABLED
+                bool "Enable LastLink HTTPS server"
+                select ESP_HTTPS_SERVER_ENABLE
+                help
+                    Enable the HTTPS server for user connection.
+
+        endchoice
+
+        config LASTLINK_HTTP_REDIRECT_ENABLED
+            bool "Enable HTTP redirect"
+            depends on LASTLINK_HTTPS_SERVER_ENABLED
+            default y
+            help
+                Enable redirecting HTTP -> HTTPS automatically.
+
         config LASTLINK_HTML_DIRECTORY
+            depends on LASTLINK_WEB_SERVER_ENABLED
             string "Directory containing html files"
-            depends on ESP_HTTPS_SERVER_ENABLE
             default "/spiffs/html"
             help
                 The directory containing the html, css and js files
        
+        config LASTLINK_AUTHTOKEN_EXPIRE_TIME
+            depends on LASTLINK_WEB_SERVER_ENABLED
+            int "Authtoken expire time (seconds)"
+            default 3600
+            help
+                Time (in seconds) for AUTHTOKEN to expire.
+
+        config LASTLINK_ADDED_HEAP_CAPS_CHECK
+            bool "Add extra calls to check heap"
+            default y
+            help
+                Enable extra runtime heap checking.
+
+
     endmenu
 
     config LASTLINK_RECEIVE_ONLY_FROM_TABLE

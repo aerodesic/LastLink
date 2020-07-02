@@ -1,0 +1,4 @@
+Chip        SS   SCK   RST  MISO   MOSI   DIO0   DIO1   DIO2
+HELTEC      18     5    14    19     27     26     35     34
+TTGO        18     5    14    19     27     26     33     32
+SPARKFUN    16    14     -    12     13     26     33     32

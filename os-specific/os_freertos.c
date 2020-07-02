@@ -456,3 +456,9 @@ void* os_alloc_dma_memory(size_t size)
 {
     return heap_caps_malloc(size, MALLOC_CAP_DMA);
 }
+
+uint32_t os_urandom(void)
+{
+    return esp_random();
+}
+

@@ -5,11 +5,11 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-#ifndef __https_server_h_included
-#define __https_server_h_included
+#ifndef __httpd_server_h_included
+#define __httpd_server_h_included
 
-void https_server_start(void);
-void https_server_stop(void);
+void httpd_server_start(void);
+void httpd_server_stop(void);
 
-#endif /* __https_server_h_included */
+#endif /* __httpd_server_h_included */
 

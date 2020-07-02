@@ -34,10 +34,14 @@ typedef struct include_stack_item {
 
 include_stack_t *create_include_stack(void)
 {
-    include_stack_t *include_stack = (include_stack_t*) malloc(sizeof(include_stack_t*));
+    include_stack_t *include_stack = (include_stack_t*) malloc(sizeof(include_stack_t));
     if (include_stack != NULL) {
         INIT_LIST(include_stack);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return include_stack;
 }
@@ -49,6 +53,9 @@ void free_include_stack(include_stack_t *include_stack)
         REMOVE_FROM_LIST(include_stack, item);
         free((void*) item);
     }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 
@@ -92,6 +99,9 @@ static command_item_t *create_command_entry(const char *name)
             ADD_TO_LIST(&command_list, command);
         }
     }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
     return command;
 }
@@ -125,6 +135,16 @@ void free_session_context(void *param)
     session_context_t *session = (session_context_t *) param;
     free_var_list(session->varlist);
     free_include_stack(session->include_stack);
+
+    /* Free private context if present */
+    if (session->private_context != NULL) {
+        if (session->free_private_context != NULL) {
+            session->free_private_context(session->private_context);
+        } else {
+            free((void*) session->private_context);
+        }
+    }
+
     free((void*) session);
 }
 
@@ -135,7 +155,11 @@ session_context_t *create_session_context(void)
         session->varlist = create_var_list();
         session->include_stack = create_include_stack();
         session->private_context = NULL;
+        session->free_private_context = NULL;
     }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     return session;
 }
 
@@ -202,7 +226,7 @@ char *fetch_symbol(const char **ptr, char *buffer, size_t bufsize)
 /*
  * Create a full pathname from a uri, adding '.html' if necessary
  */
-const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t temp_buffer_len)
+const char* get_pathname_from_uri(const char *uri, const char *prefixdir, char *temp_buffer, size_t temp_buffer_len)
 {
     if (strcmp(uri, "/") == 0) {
         uri = "/index";
@@ -221,6 +245,9 @@ const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t tem
     }
 
     size_t baselen = strlen(CONFIG_LASTLINK_HTML_DIRECTORY);
+    if (prefixdir != NULL) {
+        baselen += strlen(prefixdir);
+    }
 
     pathlen += 6;   /* Room for additional ".html" <nul> */
 
@@ -228,7 +255,11 @@ const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t tem
 
     if ((pathlen + baselen) < temp_buffer_len) {
         strcpy(temp_buffer, CONFIG_LASTLINK_HTML_DIRECTORY);
-        strlcpy(temp_buffer + baselen, uri, pathlen + 1);
+        if (prefixdir != NULL) {
+           strcat(temp_buffer, prefixdir);
+        }
+//        strlcpy(temp_buffer + baselen, uri, pathlen + 1);
+        strncat(temp_buffer, uri, pathlen);
 
         if (strchr(temp_buffer, '.') == NULL) {
             strcat(temp_buffer, ".html");
@@ -257,7 +288,7 @@ const char *get_pathname_from_file(const char *filename, char *temp_buffer, size
         strcat(temp_buffer, "/");
         strcat(temp_buffer, filename);
 
-ESP_LOGI(TAG, "%s: '%s' -> '%s'", __func__, filename, temp_buffer);
+//ESP_LOGI(TAG, "%s: '%s' -> '%s'", __func__, filename, temp_buffer);
 
         int fd = open(temp_buffer, O_RDONLY);
         if (fd >= 0) {
@@ -282,6 +313,7 @@ bool read_file(text_buffer_t *text_buffer, const char *pathname)
     if (stat(pathname, &sb) == 0) {
         text_buffer->len = sb.st_size;
         text_buffer->used = sb.st_size;
+        /* Always one byte longer for the terminating NUL */
         text_buffer->base = (char *) malloc(sb.st_size + 1);
         text_buffer->current = text_buffer->base;
 
@@ -310,6 +342,9 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
         }
     }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     return ok;
 }
 
@@ -320,18 +355,21 @@ void remove_text(text_buffer_t *text_buffer, char *first, char *last)
 {
     assert(first <= last);
 
-ESP_LOGI(TAG, "%s: removing %d chars from %d to %d", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base);
+//ESP_LOGI(TAG, "%s: removing %d chars from %d to %d", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base);
 
-char text[last - first + 1 + 1];
-strncpy(text, first, last - first + 1 + 1);
-text[last-first+1] = '\0';
-ESP_LOGI(TAG, "%s: %d characters at %d to %d \"%s\"", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base, text);
+//char text[last - first + 1 + 1];
+//strncpy(text, first, last - first + 1 + 1);
+//text[last-first+1] = '\0';
+//ESP_LOGI(TAG, "%s: %d characters at %d to %d \"%s\"", __func__, last - first + 1, first - text_buffer->base, last - text_buffer->base, text);
 
     /* Remove the selected text */
     memcpy(first, last+1, text_buffer->used - (last - text_buffer->base) + 1);
 
     /* Remove from buffer allocation */
     text_buffer->used -= (last - first + 1);
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 /*
@@ -345,7 +383,7 @@ bool replace_text(text_buffer_t *text_buffer, size_t item_size, const char *repl
 
     size_t replace_len = strlen(replaced);
     
-ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, item_size, replace_len, text_buffer->current - text_buffer->base);
+//ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, item_size, replace_len, text_buffer->current - text_buffer->base);
 
     /* We found a var to replace; replace the text here with var value */
     int needed = replace_len - item_size;
@@ -353,9 +391,10 @@ ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, it
     /* If needed > 0 then we may need to expand the area */
     if (needed > 0) {
         /* Difference between len and used is the room currently available */
+//ESP_LOGI(TAG, "%s: need %d have %d", __func__, needed, text_buffer->len - text_buffer->used);
         if (needed > (text_buffer->len - text_buffer->used)) {
             /* Not enough space, so make some more room */
-            size_t resize = replace_len;
+            size_t resize = needed;
             if (resize < HTTPD_ALLOC_CHUNK_SIZE) {
                 resize = HTTPD_ALLOC_CHUNK_SIZE;
             }
@@ -366,30 +405,34 @@ ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, it
                 /* Reset current pointer after reallocating */
                 text_buffer->current = new_text + current_offset;
                 text_buffer->len += resize;
-ESP_LOGI(TAG, "%s: resized text_buffer by %d to %d", __func__, resize, text_buffer->len);
+//ESP_LOGI(TAG, "%s: resized text_buffer by %d to %d", __func__, resize, text_buffer->len);
+            } else {
+ESP_LOGI(TAG, "%s: resize failed", __func__);
             }
         }
     
         /* Need to make room - make sure we succeeded if allocation was requred */
-        if (needed < (text_buffer->len - text_buffer->used)) {
+        if (needed <= (text_buffer->len - text_buffer->used)) {
             /* Move text down to make a bigger hole */
             memmove(text_buffer->current + needed, text_buffer->current, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
             text_buffer->used += needed;
-ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
+//ESP_LOGI(TAG, "%s: added %d bytes to text", __func__, needed);
         } else {
             /* No room left so give up */
             ret = false;
+            ESP_LOGI(TAG, "%s: no room giving up", __func__);
         }
     } else if (needed < 0) {
         /* Need to remove space */
         needed = -needed;
+//ESP_LOGI(TAG, "%s: removing %d bytes\n", __func__, needed);
         remove_text(text_buffer, text_buffer->current, text_buffer->current + needed - 1);
 #if 0
         memcpy(text_buffer->current, text_buffer->current + needed, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
         /* Remove the returned space from used */
         text_buffer->used -= needed;
 #endif
-ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, needed);
+//ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, needed);
     } else {
         /* Just right; nothing to move */
     }
@@ -410,9 +453,12 @@ static include_stack_item_t *add_include_stack_item(session_context_t *session, 
     if (item != NULL) {
         strcpy(item->filename, filename);
         ADD_TO_LIST(session->include_stack, item);
-ESP_LOGI(TAG, "%s: added %s at %d", __func__, filename, NUM_IN_LIST(session->include_stack));
+//ESP_LOGI(TAG, "%s: added %s at %d", __func__, filename, NUM_IN_LIST(session->include_stack));
     }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     return item;
 }
 
@@ -420,9 +466,13 @@ static void remove_include_stack_item(session_context_t *session, include_stack_
 {
     assert(session != NULL);
 
-ESP_LOGI(TAG, "%s: removing %s at %d", __func__, item->filename, NUM_IN_LIST(session->include_stack));
+//ESP_LOGI(TAG, "%s: removing %s at %d", __func__, item->filename, NUM_IN_LIST(session->include_stack));
 
     REMOVE_FROM_LIST(session->include_stack, item);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 static bool is_include_in_use(session_context_t *session, const char *filename)
@@ -449,7 +499,7 @@ static void post_include_error(session_context_t *session, text_buffer_t *text_b
         current_file = ((include_stack_item_t*) LAST_LIST_ITEM(session->include_stack))->filename;
     }
 
-    ESP_LOGE(TAG, "%s: In %s (text_buffer.base %p text_buffer.len %d item_size %d, %s '%s'", func, current_file, text_buffer->base, text_buffer->len, item_size, msg, filename);
+    //ESP_LOGE(TAG, "%s: In %s (text_buffer.base %p text_buffer.len %d item_size %d, %s '%s'", func, current_file, text_buffer->base, text_buffer->len, item_size, msg, filename);
 
     char *text;
     asprintf(&text, "['%s': %s '%s']", current_file, msg, filename);
@@ -480,7 +530,7 @@ static bool do_commands(text_buffer_t *text_buffer, session_context_t *session)
         /* Look for start of a var name */
         text_buffer->current = find_string(text_buffer->current, "${");
         if (text_buffer->current != NULL) {
-ESP_LOGI(TAG, "%s: found macro header at position %d", __func__, text_buffer->current - text_buffer->base);
+//ESP_LOGI(TAG, "%s: found macro header at position %d", __func__, text_buffer->current - text_buffer->base);
 
             const char *p = text_buffer->current + 2;
 
@@ -500,24 +550,27 @@ ESP_LOGI(TAG, "%s: found macro header at position %d", __func__, text_buffer->cu
                 /* Compute size of var macro call */
                 size_t item_len = end_macro - text_buffer->current + 1;
 
-ESP_LOGI(TAG, "%s: looking for var '%s'", __func__, varname);
+//ESP_LOGI(TAG, "%s: looking for var '%s'", __func__, varname);
                 var_item_t *var = find_var(session->varlist, varname);
                 if (var != NULL) {
-ESP_LOGI(TAG, "%s: found '%s' replacing with '%s'", __func__, var->name, var->value);
+//ESP_LOGI(TAG, "%s: found '%s' replacing with '%s'", __func__, var->name, var->value);
                     replace_text(text_buffer, item_len, var->value);
                 } else {
-ESP_LOGI(TAG, "%s: did not find '%s'; removing %d characters", __func__, varname, item_len);
+//ESP_LOGI(TAG, "%s: did not find '%s'; removing %d characters", __func__, varname, item_len);
                     /* Replace with empty */
                     replace_text(text_buffer, item_len, "");
                 }
-                /* Leave current pointing to begininng of replaced text so we can rescan for additional macros (within the macros) */
+                /* Leave current pointing to begining of replaced text so we can rescan for additional macros (within the macros) */
             } else {
                 /* We didn't handle this one - skip over leading '{' so we don't create a forever loop */
-ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->current);
+//ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->current);
                 text_buffer->current++;
             }
         }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+        assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     } while (text_buffer->current != NULL);
 
     /* Go through text looking for {% xxx %} and parsing the xxx to call a command */
@@ -576,6 +629,9 @@ ESP_LOGI(TAG, "%s: skipping over current char '%c'", __func__, *text_buffer->cur
                 }
             }
         }
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+        assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     } while (text_buffer->current != NULL);
 
 
@@ -622,8 +678,14 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
                 local_text_buffer.used--;
             }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+            assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
             do_commands(&local_text_buffer, session);
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+            assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
             if (text_buffer->base == NULL) {
                 /* Uninitialized, so just replace it with the contents of local_text_buffer */
                 *text_buffer = local_text_buffer;
@@ -634,6 +696,9 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
                 }
             
                 free(local_text_buffer.base);
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+                assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
             }
 
             remove_include_stack_item(session, item);
@@ -734,13 +799,13 @@ static bool find_if_bounds(text_buffer_t *text_buffer, if_boundaries_t *if_bound
         }
     }
 
-ESP_LOGI(TAG, "%s: ok %s else_begin %d  else_end %d  else_if %s endif_begin %d endif_end %d", __func__,
-         ok ? "Yes" : "No",
-         if_boundaries->else_begin  ? if_boundaries->else_begin - text_buffer->base : -1,
-         if_boundaries->else_end    ? if_boundaries->else_end - text_buffer->base : -1,
-         if_boundaries->else_if     ? "Yes" : "No",
-         if_boundaries->endif_begin ? if_boundaries->endif_begin - text_buffer->base : -1,
-         if_boundaries->endif_end  ? if_boundaries->endif_end - text_buffer->base : -1);
+//ESP_LOGI(TAG, "%s: ok %s else_begin %d  else_end %d  else_if %s endif_begin %d endif_end %d", __func__,
+//         ok ? "Yes" : "No",
+//         if_boundaries->else_begin  ? if_boundaries->else_begin - text_buffer->base : -1,
+//         if_boundaries->else_end    ? if_boundaries->else_end - text_buffer->base : -1,
+//         if_boundaries->else_if     ? "Yes" : "No",
+//         if_boundaries->endif_begin ? if_boundaries->endif_begin - text_buffer->base : -1,
+//         if_boundaries->endif_end  ? if_boundaries->endif_end - text_buffer->base : -1);
 
     return ok;
 }
@@ -756,7 +821,7 @@ ESP_LOGI(TAG, "%s: ok %s else_begin %d  else_end %d  else_if %s endif_begin %d e
  */
 static bool command_setvar(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, const char *arg0, const char *args)
 {
-ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
+//ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
     char temp_buffer[HTTPD_MAX_KEYWORD_LEN+1];
     const char *var_name = fetch_symbol(&args, temp_buffer, sizeof(temp_buffer));
 
@@ -764,9 +829,10 @@ ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
     eval_value_t value;
     const char *argp = args;
     eval_error_t error = eval_expression(&value, eval_get_session_var, session, &argp);
+    replace_text(text_buffer, item_size, "");
+
     if (error == EVERR_NONE) {
         /* Remove the command from the text buffer */
-        replace_text(text_buffer, item_size, "");
         switch (value.type) {
             default:
             case VT_NONE: {
@@ -802,7 +868,7 @@ ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
  */
 static bool command_if(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, const char *arg0, const char *args)
 {
-ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
+//ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
 
     /* Remove the 'if' clause */
     replace_text(text_buffer, item_size, "");
@@ -831,8 +897,10 @@ ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
             /* Clause is false, so remove from beginning to end of else */
             if (if_boundaries.else_begin != NULL) {
                 /* Remove the "endif" */
+//ESP_LOGI(TAG, "%s: removing the endif", __func__);
                 remove_text(text_buffer, if_boundaries.endif_begin, if_boundaries.endif_end);
                 /* Remove the 'if' up to 'else' */
+//ESP_LOGI(TAG, "%s: remove the 'if' up to 'else'", __func__);
                 remove_text(text_buffer, text_buffer->current, if_boundaries.else_begin-1);
                 if (if_boundaries.else_if) {
                     /* An elseif - change to 'if' */
@@ -848,11 +916,19 @@ ESP_LOGI(TAG, "%s: argv0 '%s' args '%s'", __func__, arg0, args);
                 }
             } else {
                 /* plain "endif" - remove through "endif" */
+//ESP_LOGI(TAG, "%s: removing plain endif", __func__);
                 remove_text(text_buffer, text_buffer->current, if_boundaries.endif_end);
             }
         } else {
-            /* Clase is true - remove "else" through "endif" */
-            remove_text(text_buffer, if_boundaries.else_begin, if_boundaries.endif_end);
+            /* Clause is true.  If an else, remove from else through endif else just remove the endif */
+            if (if_boundaries.else_begin != NULL) {
+                /* Clause is true - remove "else" through "endif" */
+//ESP_LOGI(TAG, "%s: remove 'else' through 'endif'", __func__);
+                remove_text(text_buffer, if_boundaries.else_begin, if_boundaries.endif_end);
+            } else {
+//ESP_LOGI(TAG, "%s: remove 'endif'", __func__);
+                remove_text(text_buffer, if_boundaries.endif_begin, if_boundaries.endif_end);
+            }
         }
     } else {
         /* Replace with error message - mismatched if/endif */

@@ -6,7 +6,7 @@ config LASTLINK_RADIO_$(RADIO_NUM)_ENABLED
     depends on LASTLINK_RADIO_SX126x_ENABLED || LASTLINK_RADIO_SX127x_ENABLED
     default $(DEFAULT_RADIO_ENABLE)
  
-choice "LASTLINK_RADIO_$(RADIO_NUM)"
+choice
     depends on LASTLINK_RADIO_$(RADIO_NUM)_ENABLED
     depends on LASTLINK_RADIO_SX126x_ENABLED || LASTLINK_RADIO_SX127x_ENABLED
 
@@ -22,6 +22,26 @@ choice "LASTLINK_RADIO_$(RADIO_NUM)"
     config LASTLINK_RADIO_$(RADIO_NUM)_SX127x_SPI
         bool "Select SX127x Family (SPI)"
         depends on LASTLINK_RADIO_SX127x_ENABLED
+
+    choice
+        prompt "Radio configuration for radio $(RADIO_NUM)"
+        default LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        help
+            Select the base configuration for radio $(RADIO_NUM)
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+            bool "Custom GPIO configuration"
+       
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+            bool "TTGO"
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+            bool "HELTEC"
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+            bool "Sparkfun LORA Gateway"
+
+    endchoice    
 
 endchoice
 
@@ -40,57 +60,105 @@ menu "Radio $(RADIO_NUM) SPI configuration"
 
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO0
         int "DIO0 GPIO line"
-        default 26
-        range 1 36
+        default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the DIO0 line used to report transmit and receive interrupts.
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO1
         int "DIO1 GPIO line"
-        default 35
-        range 1 36
+        default 35  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 35  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 35 35 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the DIO1 line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_DIO2
         int "DIO2 GPIO line"
-        default 34
-        range 1 36
+        default 34  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 34  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 34  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 34 34 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the DIO2 line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_SCK
         int "SCK GPIO line"
-        default 5
-        range 1 36
+        default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the SPI Clock line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_MOSI
         int "MOSI GPIO line"
-        default 27
-        range 1 36
+        default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 13  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 13 13 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the MOSI line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_MISO
         int "MISO GPIO line"
-        default 19
-        range 1 36
+        default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 12  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 12 12 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the MISO line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_SS
         int "SS GPIO line"
-        default 18
-        range 1 36
+        default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 16  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 16 16 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the SS (Select) line
  
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_RESET
         int "RESET GPIO line"
-        default 14
-        range 1 36
+        default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the RESET line
 

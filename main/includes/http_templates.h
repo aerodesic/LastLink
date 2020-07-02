@@ -10,7 +10,7 @@
 #include "varlist.h"
 
 #define HTTPD_TEMP_URL_BUFFER_LEN  80
-#define HTTPD_ALLOC_CHUNK_SIZE     512
+#define HTTPD_ALLOC_CHUNK_SIZE     128
 #define HTTPD_MAX_COMMAND_ARGS     5
 #define HTTPD_MAX_KEYWORD_LEN      10
 
@@ -20,6 +20,7 @@ typedef struct sesssion_context {
     var_list_t         *varlist;
     include_stack_t    *include_stack;
     void               *private_context;
+    void               (*free_private_context)(void *context);
 } session_context_t;
 
 /* Defines an editable text buffer */
@@ -49,7 +50,7 @@ bool get_session_var(session_context_t *session, const char *name, const char **
 
 char *find_string(char *buffer, const char *string);
 char *fetch_symbol(const char **ptr, char *buffer, size_t bufsize);
-const char* get_pathname_from_uri(const char *uri, char *temp_buffer, size_t temp_buffer_len);
+const char* get_pathname_from_uri(const char *uri, const char *prefixdir, char *temp_buffer, size_t temp_buffer_len);
 const char *get_pathname_from_file(const char *filename, char *temp_buffer, size_t temp_buffer_len);
 
 typedef struct text_buffer text_buffer_t; // FWD decl

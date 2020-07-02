@@ -3,6 +3,7 @@
  */
 
 #include <ctype.h>
+#include <string.h>
 #include "tokenize.h"
 
 int tokenize(char *buffer, const char**args, int maxargs)
@@ -33,7 +34,9 @@ int tokenize(char *buffer, const char**args, int maxargs)
     }
 
     /* Put remainder in this arg */
-    args[argc++] = buffer;
+    if (strlen(buffer) != 0) {
+       args[argc++] = buffer;
+    }
 
     return argc;
 }

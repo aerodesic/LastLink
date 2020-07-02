@@ -98,5 +98,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
 
 uint64_t get_milliseconds(void);
 
+uint32_t os_urandom(void);
+
 #endif /* __os_freertos_h_included */
 

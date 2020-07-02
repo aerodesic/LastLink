@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-#include "esp_system.h"
+//#include "esp_system.h"
 #include "esp_log.h"
 
 #include "os_specific.h"
@@ -659,7 +659,7 @@ void packet_window_receive_random(void *param)
 #endif
         if (num_packets != 0) {
             /* Pick a random one to remove and 'process' */
-            int packet_num = esp_random() % num_packets;
+            int packet_num = os_urandom() % num_packets;
             int sequence = get_uint_field(packets[packet_num], STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
 
             printf("%s: processing packet %d window is %d to %d\n", __func__, sequence, window->sequence, window->sequence + window->length - 1);

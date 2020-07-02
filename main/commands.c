@@ -15,7 +15,9 @@
 #include "linklayer.h"
 #include "configdata.h"
 
+#ifdef CONFIG_SSD1306_I2C_ENABLED
 #include "display.h"
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 #include "listops.h"
 #include "tokenize.h"
 
@@ -117,9 +119,9 @@ static int memory_command(int argc, const char **argv)
     if (argc == 0) {
         show_help(argv[0], "", "Display memory usage");
     } else {
-        printf("Free Heap:     %08x (%d)\n", xPortGetFreeHeapSize(), xPortGetFreeHeapSize());
-        printf("Largest Free:  %08x (%d)\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-        printf("Minimum Free:  %08x (%d)\n", xPortGetMinimumEverFreeHeapSize(), xPortGetMinimumEverFreeHeapSize());
+        printf("Free Heap:     %08x (%d)\r\n", xPortGetFreeHeapSize(), xPortGetFreeHeapSize());
+        printf("Largest Free:  %08x (%d)\r\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        printf("Minimum Free:  %08x (%d)\r\n", xPortGetMinimumEverFreeHeapSize(), xPortGetMinimumEverFreeHeapSize());
     }
     return 0;
 }
@@ -221,6 +223,7 @@ static int config_command(int argc, const char **argv)
 }
 
 
+#ifdef CONFIG_SSD1306_I2C_ENABLED
 /**********************************************************************/
 /* contrast <val>                                                     */
 /**********************************************************************/
@@ -241,14 +244,12 @@ static int contrast_command(int argc, const char **argv)
 
     return 0;
 }
-
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
 /**********************************************************************/
 /* reboot                                                             */
 /**********************************************************************/
 static int reboot_command(int argc, const char **argv)
 {
-    extern display_t *display;
-
     if (argc == 0) {
         show_help(argv[0], "", "Reboot device");
     } else {
@@ -632,7 +633,9 @@ void init_commands(void)
     add_command("help",       help_command);
     add_command("?",          help_command);
     add_command("mem",        memory_command);
+#ifdef CONFIG_SSD1306_I2C_ENABLED
     add_command("contrast",   contrast_command);
+#endif /* CONFIG_SSD1306_I2C_ENABLED */
     add_command("echo",       echo_command);
     add_command("address",    address_command);
     add_command("loglevel",   loglevel_command);

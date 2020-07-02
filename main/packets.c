@@ -605,7 +605,7 @@ int print_packet_table(int argc, const char **argv)
                             table[index].last_referenced_filename ? table[index].last_referenced_filename : "<NONE>",
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-3d  %-4d  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
+                    printf("%-10p  %-3d  %-4d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
                             table[index].buffer,
                             table[index].ref,
                             table[index].transmitting,

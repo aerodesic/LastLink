@@ -268,7 +268,7 @@ bool linklayer_packet_is_for_this_node(const packet_t* p)
 }
 
 
-#ifdef CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
+#if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
 /*
  * Assign receive_only addresses.  If the first slot is non-zero, only permit incoming
  * packets from the addresses in the table.
@@ -955,25 +955,27 @@ static void reset_device(radio_t* radio)
 {
     int gpio = radio_config[radio->radio_num].reset;
 
-    gpio_config_t io;
-    io.intr_type = GPIO_PIN_INTR_DISABLE;
-    io.mode = GPIO_MODE_OUTPUT;
-    io.pin_bit_mask = 1ULL << gpio;
-    io.pull_down_en = 0;
-    io.pull_up_en = 0;
-    gpio_config(&io);
+    if (gpio != 0) {
+        gpio_config_t io;
+        io.intr_type = GPIO_PIN_INTR_DISABLE;
+        io.mode = GPIO_MODE_OUTPUT;
+        io.pin_bit_mask = 1ULL << gpio;
+        io.pull_down_en = 0;
+        io.pull_up_en = 0;
+        gpio_config(&io);
 
-    if (gpio_set_level(gpio, 0) != ESP_OK) {
-        ESP_LOGE(TAG, "%s: ******************************* error setting reset low", __func__);
+        if (gpio_set_level(gpio, 0) != ESP_OK) {
+            ESP_LOGE(TAG, "%s: ******************************* error setting reset low", __func__);
+        }
+
+        os_delay(100);
+
+        if (gpio_set_level(gpio, 1) != ESP_OK) {
+           ESP_LOGE(TAG, "%s: ******************************* error setting reset high", __func__);
+        }
+
+        /* Leave configured as output with pulled up */
     }
-
-    os_delay(100);
-
-    if (gpio_set_level(gpio, 1) != ESP_OK) {
-       ESP_LOGE(TAG, "%s: ******************************* error setting reset high", __func__);
-    }
-
-    /* Leave configured as output with pulled up */
 }
 
 static bool linklayer_deinit_radio(radio_t* radio)
