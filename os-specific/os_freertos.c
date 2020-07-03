@@ -41,7 +41,8 @@ os_semaphore_t* os_thread_sem_get(void)
 
 os_semaphore_t* os_thread_sem_init(void)
 {
-    os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t*));
+    //os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t*));
+    os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t));
     if (psem) {
         *psem = os_create_binary_semaphore();
         pthread_setspecific(sys_thread_sem_key, psem);

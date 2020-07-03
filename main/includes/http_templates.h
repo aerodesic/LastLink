@@ -32,6 +32,8 @@ typedef struct text_buffer {
     size_t used;             /* Number of bytes currently in use at base */
 } text_buffer_t;
 
+void release_text_buffer(text_buffer_t *text_buffer);
+
 typedef bool (*function_argv_t)(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, int argc, const char **argv);
 typedef bool (*function_rawargs_t)(text_buffer_t *text_buffer, size_t item_size, session_context_t *session, const char* argv0, const char *args);
 

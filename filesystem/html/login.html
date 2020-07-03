@@ -1,28 +1,20 @@
 {% include header.html %}
-  <link rel="stylesheet" type="text/css" href='/ldbtn.min.css' />
-  <link rel="stylesheet" type="text/css" href="/loading.min.css"/>
   <body>
     <form action="login" method="post">
       <div class="container">
-         <label for="uname"><b>Username</b></label>
-         <input type="text" placeholder="Enter Username" name="uname" required>
-         <p>
-         <label for="psw"><b>Password</b></label>
-         <input type="password" placeholder="Enter Password" name="psw" required>
-         <div class="btn btn-primary ld-ext-right">
-           <button type="submit" onclick="start_spinner('spin-button');">Login</button>
-           <div id="spin-button"></div>
-         </div>
-         <label>
-            <input type="checkbox" checked="checked" name="rem"> Remember me
-         </label>
-       </div>
-
-       <div class="container" style="background-color:#f1f1f1">
-         <span class="psw">Forgot <a href="#">Password?</a></span>
-       </div>
+        <label for="uname">Username:</label><br>
+        <input type="text" id="uname" name="uname" required><br>
+        <label for="pwd">Password:</label><br>
+        <input type="password" id="pwd" name="pwd" required><br><br>
+        <span><input type="submit" onclick="remove_class('auth', 'hidden');" value="Submit"><div id="auth" class="hidden">Authenticating...</div></span>
+      </div>
+      <div class="container" style="background-color:#f1f1f1">
+        <span class="psw">Forgot <a href="#">Password?</a></span>
+      </div>
     </form>
-    <h1>${error}</h1>
+    {% if defined(error) %}
+    <h1>Error: ${error}</h1>
+    {% endif %}
   </body>
 {% include footer.html %}
 

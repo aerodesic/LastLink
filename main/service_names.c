@@ -106,6 +106,11 @@ static void release_service(service_cache_t* service)
 {
     free((void*) service->name);
     free((void*) service);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
 }
 
 

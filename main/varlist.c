@@ -31,6 +31,11 @@ bool delete_var(var_list_t *varlist, const char *name)
     if (var != NULL) {
         REMOVE_FROM_LIST(varlist, var);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return var != NULL;
 }
 
@@ -47,6 +52,10 @@ var_item_t *create_var_item(const char* name, const char *value)
         item->value = p;
     }
 
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return item;
 }
 
@@ -58,6 +67,11 @@ bool set_var(var_list_t *varlist, const char *name, const char *value)
     if (var != NULL) {
         ADD_TO_LIST(varlist, var);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return var != NULL;
 }
 
@@ -73,6 +87,11 @@ void free_var_list(void *param)
     }
 
     free(varlist);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
 }
 
 var_list_t *create_var_list(void)
@@ -81,5 +100,10 @@ var_list_t *create_var_list(void)
     if (varlist != NULL) {
         INIT_LIST(varlist); 
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return varlist;
 }

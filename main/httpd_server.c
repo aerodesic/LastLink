@@ -146,7 +146,7 @@ static esp_err_t httpd_resp_send_file(httpd_req_t *req, const char *pathname)
             ret = httpd_resp_send(req, "<h1>Cannot edit file</h1>", -1);
         }
 
-        free((void*) text_buffer.base);
+        release_text_buffer(&text_buffer);
     }
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
@@ -442,16 +442,14 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
 
     content[recv_size] = '\0';
 
-    //ESP_LOGI(TAG, "%s: content '%s'", __func__, content);
+    ESP_LOGI(TAG, "%s: content '%s'", __func__, content);
 
     char *username = strstr(content, "uname=");
-    char *password = strstr(content, "psw=");
-    char *remember = strstr(content, "rem=");
+    char *password = strstr(content, "pwd=");
 
-    if (username != NULL && password != NULL && remember != NULL) {
+    if (username != NULL && password != NULL) {
         username += 6;
         password += 4;
-        remember += 4;
         char *p = strchr(username, '&');
         if (p != NULL) {
             *p = '\0';
@@ -460,12 +458,8 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
         if (p != NULL) {
             *p = '\0';
         }
-        p = strchr(remember, '&');
-        if (p != NULL) {
-            *p = '\0';
-        }
 
-        ESP_LOGI(TAG, "%s: username '%s' password '%s' remember '%s'", __func__, username, password, remember);
+        ESP_LOGI(TAG, "%s: username '%s' password '%s'", __func__, username, password);
 
         if (authenticate(username, password, user_token)) {
 

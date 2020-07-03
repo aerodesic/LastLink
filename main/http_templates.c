@@ -144,6 +144,7 @@ ESP_LOGI(TAG, "%s: called", __func__);
         } else {
             free((void*) session->private_context);
         }
+        session->private_context = NULL;
     }
 
     free((void*) session);
@@ -158,9 +159,11 @@ session_context_t *create_session_context(void)
         session->private_context = NULL;
         session->free_private_context = NULL;
     }
+
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
     return session;
 }
 
@@ -303,6 +306,19 @@ const char *get_pathname_from_file(const char *filename, char *temp_buffer, size
     return pathname; 
 }
 
+void release_text_buffer(text_buffer_t *text_buffer)
+{
+    free((void*) text_buffer->base);
+    text_buffer->base = NULL;
+    text_buffer->current = NULL;
+    text_buffer->used = 0;
+    text_buffer->len = 0;
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+}
+
 /*
  * Read a file relative to the HTML base directory
  */
@@ -334,11 +350,7 @@ ESP_LOGI(TAG, "%s: read %d bytes wanted %ld", __func__, read_len, sb.st_size);
             }
 
             if (! ok) {
-                free(text_buffer->base);
-                text_buffer->base = NULL;
-                text_buffer->current = NULL;
-                text_buffer->used = 0;
-                text_buffer->len = 0;
+                release_text_buffer(text_buffer);
             }
         }
     }
@@ -429,11 +441,6 @@ ESP_LOGI(TAG, "%s: resize failed", __func__);
         needed = -needed;
 //ESP_LOGI(TAG, "%s: removing %d bytes\n", __func__, needed);
         remove_text(text_buffer, text_buffer->current, text_buffer->current + needed - 1);
-#if 0
-        memcpy(text_buffer->current, text_buffer->current + needed, text_buffer->used - (text_buffer->current - text_buffer->base) + 1);
-        /* Remove the returned space from used */
-        text_buffer->used -= needed;
-#endif
 //ESP_LOGI(TAG, "%s: removed %d bytes from text", __func__, needed);
     } else {
         /* Just right; nothing to move */
@@ -516,6 +523,10 @@ static void post_include_error(session_context_t *session, text_buffer_t *text_b
         replace_text(text_buffer, item_size, text);
         free((void*) text);
     }
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
 
@@ -622,6 +633,10 @@ static bool do_commands(text_buffer_t *text_buffer, session_context_t *session)
                         asprintf(&text, "[ Invalid command: %s ]", argv0);
                         replace_text(text_buffer, text_item_len, text);
                         free((void*) text);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
                     }
                 }
 
@@ -631,6 +646,7 @@ static bool do_commands(text_buffer_t *text_buffer, session_context_t *session)
                 }
             }
         }
+
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
         assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
@@ -657,7 +673,7 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
     } else {
 
         /* Read in include file */
-        text_buffer_t  local_text_buffer;
+        text_buffer_t  local_text_buffer = {0};
 
         const char *pathname;
 
@@ -683,6 +699,7 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
             assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
             do_commands(&local_text_buffer, session);
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
@@ -697,9 +714,10 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
                     ESP_LOGI(TAG, "%s: replace failed", __func__);
                 }
             
-               free(local_text_buffer.base);
+               release_text_buffer(&local_text_buffer);
+
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
-                assert(heap_caps_check_integrity_all(true));
+               assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
             }
 
@@ -984,6 +1002,10 @@ void release_httpd_templates(void)
         command_item_t *command = (command_item_t *) FIRST_LIST_ITEM(&command_list);
         REMOVE_FROM_LIST(&command_list, command);
         free((void*) command);
+
+#ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
+    assert(heap_caps_check_integrity_all(true));
+#endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
     }
 }
 

@@ -32,11 +32,11 @@ void start_mdns_service()
     };
 
     //set txt data for service (will free and replace current data)
-#ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
+  #ifdef CONFIG_LASTLINK_HTTPS_SERVER_ENABLED
     mdns_service_txt_set("_https", "_tcp", serviceTxtData, 3);
-#else
+  #else
     mdns_service_txt_set("_http", "_tcp", serviceTxtData, 3);
-#endif
+  #endif
 #endif
 }
 
