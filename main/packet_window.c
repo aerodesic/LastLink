@@ -6,6 +6,10 @@
  *
  */
 
+#include <sdkconfig.h>
+
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
+
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -807,4 +811,6 @@ void packet_window_deinit(void)
     remove_command("pwt");
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 }
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 

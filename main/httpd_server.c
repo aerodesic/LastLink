@@ -207,7 +207,7 @@ static bool authenticate(const char *username, const char *password, authtoken_v
         os_release_recursive_mutex(authtoken_lock);
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
-    assert(heap_caps_check_integrity_all(true));
+        assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
         return true;
@@ -527,7 +527,7 @@ static httpd_handle_t start_https_webserver(void)
 
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.httpd.uri_match_fn = httpd_uri_match_wildcard;
-    // config.httpd.stack_size   = 30000;  /* Increased from default of 10240 */
+    config.httpd.stack_size   = 20000;  /* Increased from default of 10240 */
 
     extern const unsigned char cacert_pem_start[] asm("_binary_cacert_pem_start");
     extern const unsigned char cacert_pem_end[]   asm("_binary_cacert_pem_end");

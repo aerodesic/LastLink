@@ -3,7 +3,7 @@
  */
 #include "sdkconfig.h"
 
-#undef ENABLE_LASTLINK_NETWORK
+#define ENABLE_LASTLINK_NETWORK
 
 #define VERSION "1.0"
 
@@ -139,7 +139,7 @@ void app_main(void)
     // linklayer_set_debug(true);
     bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
 
-    linklayer_set_listen_only(get_config_int("lastlink.listen_only", 0));
+    linklayer_set_listen_only(listen_only);
 
     //linklayer_set_channel_and_datarate(-1, get_config_int("lastlink.channel", 0), get_config_int("lastlink.datarate", 0));
 

@@ -4,6 +4,11 @@
  * Implement the vfs support for the lastlink socket layer.
  */
 
+#include "sdkconfig.h"
+
+#ifdef NOTUSED
+#if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
+
 #include <string.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -19,7 +24,6 @@
 #include "esp_attr.h"
 #include "lsocket_internal.h"
 #include "linklayer.h"
-#include "sdkconfig.h"
 
 _Static_assert(MAX_FDS >= LAST_LASTLINK_FD, "MAX_FDS < LAST_LASTLINK_FD");
 
@@ -69,3 +73,6 @@ void esp_vfs_ls_sockets_register(void)
 
     ESP_ERROR_CHECK(esp_vfs_register_fd_range(&vfs, NULL, FIRST_LASTLINK_FD, LAST_LASTLINK_FD));
 }
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
+#endif/* NOTUSED */

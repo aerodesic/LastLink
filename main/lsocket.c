@@ -78,7 +78,7 @@
 
 #include "sdkconfig.h"
 
-#ifdef CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
+#if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
 #include <stdarg.h>
 #include <sys/fcntl.h>
 #include <sys/types.h>
@@ -101,7 +101,7 @@
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
-#endif
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
 #define TAG "lsocket"
 
@@ -117,6 +117,7 @@ static int find_ping_table_entry(int sequence);
 static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor);
 static ls_socket_t * validate_socket(int s);
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 static void stream_shutdown_windows(ls_socket_t *socket);
 
 /* Statemachine and methods */
@@ -140,11 +141,14 @@ static void       state_machine_results_shutdown_socket(ls_socket_t *socket, ls_
 
 #if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE
 static void stream_send_keepalive(ls_socket_t *socket);
-#endif
+#endif /* CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE */
+
 static void stream_send_connect_ack(ls_socket_t *socket);
+
 #ifdef NOTUSED
 static void stream_send_disconnect(ls_socket_t *socket);
-#endif
+#endif /* NOTUSED */
+
 static void stream_send_disconnected(ls_socket_t *socket);
 
 static bool stream_packet_process(packet_t *packet);
@@ -153,21 +157,8 @@ static const char* stream_packet_format(const packet_t *packet);
 static packet_t *add_data_ack(packet_window_t *window, packet_t *packet);
 static int ls_ioctl_r_wrapper(int fd, int cmd, va_list args);
 
-static const char* socket_type_of(const ls_socket_t *socket);
-static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket);
-
-static bool datagram_packet_process(packet_t *packet);
-static const char* datagram_packet_format(const packet_t *packet);
-
-static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket);
-
 static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_t flags, int sequence);
 static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uint8_t flags, int sequence);
-
-static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type);
-static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet);
-
-static ssize_t release_socket(ls_socket_t* socket);
 
 #define SOCKET_SCANNER_STACK_SIZE          6000
 #define SOCKET_SCANNER_DEFAULT_INTERVAL    100
@@ -178,6 +169,21 @@ static void socket_scanner_thread(void*);
 static void ack_output_window(ls_socket_t *socket, int ack_sequence, uint32_t ack_mask);
 static bool send_output_window(ls_socket_t *socket, bool disconect_on_error);
 static bool socket_flush_current_packet(ls_socket_t *socket, bool wait);
+
+static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet);
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+static const char* socket_type_of(const ls_socket_t *socket);
+static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket);
+
+static bool datagram_packet_process(packet_t *packet);
+static const char* datagram_packet_format(const packet_t *packet);
+
+static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket);
+
+static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type);
+
+static ssize_t release_socket(ls_socket_t* socket);
 
 static ls_error_t ls_close_ptr(ls_socket_t *socket);
 
@@ -254,7 +260,7 @@ static inline void unlock_socket_debug(ls_socket_t *socket, const char *file, in
 }
 #define UNLOCK_SOCKET(socket)    unlock_socket_debug(socket, __FILE__, __LINE__)
 
-#else /* NO SOCKET LOCKING DEBUG */
+#else /* !SOCKET_LOCKING_DEBUG */
 
 #define GLOBAL_SOCKET_LOCK()     os_acquire_recursive_mutex(global_socket_lock)
 #define GLOBAL_SOCKET_UNLOCK()   os_release_recursive_mutex(global_socket_lock)
@@ -286,34 +292,22 @@ static const char* socket_state_of(const ls_socket_t *socket)
         case LS_STATE_INUSE:                        return "INUSE";
         case LS_STATE_SOCKET:                       return "SOCKET";
         case LS_STATE_BOUND:                        return "BOUND";
+        case LS_STATE_CONNECTED:                    return "CONNECTED";
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         case LS_STATE_LISTENING:                    return "LISTENING";
         case LS_STATE_INBOUND_CONNECT:              return "INBOUND_CONNECT";
         case LS_STATE_OUTBOUND_CONNECT:             return "OUTBOUND_CONNECT";
-        case LS_STATE_CONNECTED:                    return "CONNECTED";
         case LS_STATE_DISCONNECTING_FLUSH_START:    return "DISCONNECTING_FLUSH_START";
         case LS_STATE_DISCONNECTING_FLUSHING:       return "DISCONNECTING_FLUSHING";
         case LS_STATE_INBOUND_DISCONNECTING:        return "INBOUND_DISCONNECTING";
         case LS_STATE_OUTBOUND_DISCONNECTING:       return "OUTBOUND_DISCONNECTING";
-        case LS_STATE_DISCONNECTED:                 return "DISCONNECTED";
         case LS_STATE_LINGER:                       return "LINGER";
+        case LS_STATE_DISCONNECTED:                 return "DISCONNECTED";
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
         case LS_STATE_CLOSING:                      return "CLOSING";
         case LS_STATE_CLOSED:                       return "CLOSED";
         default:                                    return "UNKNOWN";
     }
-}
-
-/*
- * Look up the metric to the node and calculate an appropriate delay before retry.
- */
-static int calculate_retry_time(ls_socket_t *socket, int message_time)
-{
-    int metric      = route_metric(socket->dest_addr);
-    int retry_time  = (CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_FACTOR * message_time * (metric * 4 - 2)) / 100 +
-                      CONFIG_LASTLINK_STREAM_TRANSMIT_OVERHEAD_TIME;
-
-//printf("%s: packets message_time %d adjusted by metric %d is %d\n", __func__, message_time, metric, retry_time);
-
-    return retry_time;
 }
 
 /*
@@ -773,7 +767,11 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
         if (socket_table[index].socket_type == type) {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             if ( !(socket_table[index].state == LS_STATE_LISTENING) &&
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+            if (
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
                 (socket_table[index].dest_addr == 0 || socket_table[index].dest_addr == BROADCAST_ADDRESS || socket_table[index].dest_addr == dest_addr) &&
                 socket_table[index].local_port == dest_port &&
                 (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port)) {
@@ -788,6 +786,7 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
     return socket;
 }
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
 {
     ls_socket_t *socket = NULL;
@@ -804,6 +803,7 @@ static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
     /* Return socket if we found it */
     return socket;
 }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 #ifdef NOTUSED
 static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
@@ -818,7 +818,7 @@ static packet_t *datagram_packet_create_from_packet(const packet_t *packet)
 
     return new_packet;
 }
-#endif
+#endif /* NOTUSED */
 
 static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
 {
@@ -876,6 +876,7 @@ static const char* datagram_packet_format(const packet_t *packet)
      return info;
 }
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 static packet_t *stream_packet_create_from_packet(const packet_t *packet, uint8_t flags, int sequence)
 {
     packet_t *new_packet = linklayer_create_generic_packet(get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
@@ -1016,7 +1017,7 @@ static void stream_send_keepalive(ls_socket_t *socket)
 
     packet_unlock(packet);
 }
-#endif
+#endif /* CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLE */
 
 static void stream_send_connect_ack(ls_socket_t *socket)
 {
@@ -1032,7 +1033,7 @@ static void stream_send_disconnect(ls_socket_t *socket)
     linklayer_route_packet(packet); 
     packet_unlock(packet);
 }
-#endif
+#endif /* NOTUSED */
 
 static void stream_send_disconnected(ls_socket_t *socket)
 {
@@ -1347,7 +1348,7 @@ static const char* stream_packet_format(const packet_t *packet)
 
      return info;
 }
-
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 
 static ssize_t release_socket(ls_socket_t* socket)
@@ -1380,6 +1381,7 @@ static ssize_t release_socket(ls_socket_t* socket)
         }
 
         case LS_STREAM: {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             if (socket->state == LS_STATE_LISTENING) {
                 /* Go through all sockets and bust the parent link to this listener */
                 for (int socknum = 0; socknum < ELEMENTS_OF(socket_table); ++socknum) {
@@ -1403,9 +1405,9 @@ static ssize_t release_socket(ls_socket_t* socket)
                 simpletimer_stop(&socket->output_window_timer);
                 simpletimer_stop(&socket->ack_delay_timer);
                 simpletimer_stop(&socket->input_window_timer);
-#if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABELD
+#if CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLED
                 simpletimer_stop(&socket->keepalive_timer);
-#endif
+#endif /* CONFIG_LASTLINK_STREAM_KEEP_ALIVE_ENABLED */
 
                 /* Otherwise forcibly shut everything down */
                 if (socket->input_window != NULL) {
@@ -1434,6 +1436,12 @@ static ssize_t release_socket(ls_socket_t* socket)
             }
 
             socket->socket_type = LS_UNUSED;
+
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+            err = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
             break;
         }
     }
@@ -1459,7 +1467,13 @@ int ls_socket(ls_socket_type_t socket_type)
     ls_error_t  ret;
 
     /* Validate parameters */
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     if (socket_type == LS_DATAGRAM || socket_type == LS_STREAM) {
+#else /* ! CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+    if (socket_type == LS_STREAM) {
+        ret = LSE_NOT_IMPLEMENTED;
+    } else if (socket_type == LS_DATAGRAM) {
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
         ls_socket_t *socket = find_free_socket();
 
@@ -1529,6 +1543,7 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
 {
     ls_error_t err;
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     ls_socket_t *socket = validate_socket(s);
 
     /* Validate paramters */
@@ -1592,12 +1607,19 @@ ls_error_t ls_listen(int s, int max_queue, int timeout)
         err = LSE_INVALID_SOCKET;
     }
 
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+    err = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
     return err;
 }
 
 /*********************************************************************************************************
  * State machine functions.
  *********************************************************************************************************/
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 
 /*
  * state_machine_start
@@ -1825,6 +1847,20 @@ static bool state_machine_packet_route_complete(bool success, packet_t *packet, 
 }
 
 /*
+ * Look up the metric to the node and calculate an appropriate delay before retry.
+ */
+static int calculate_retry_time(ls_socket_t *socket, int message_time)
+{
+    int metric      = route_metric(socket->dest_addr);
+    int retry_time  = (CONFIG_LASTLINK_STREAM_TRANSMIT_RETRY_FACTOR * message_time * (metric * 4 - 2)) / 100 +
+                      CONFIG_LASTLINK_STREAM_TRANSMIT_OVERHEAD_TIME;
+
+//printf("%s: packets message_time %d adjusted by metric %d is %d\n", __func__, message_time, metric, retry_time);
+
+    return retry_time;
+}
+
+/*
  * state_machine_packet_transmit_complete
  *
  * Packet has been sent.  This callback sets the state machine timeout for
@@ -1998,6 +2034,7 @@ static void state_machine_results_shutdown_socket(ls_socket_t *socket, ls_error_
     }
 }
 
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 /*********************************************************************************************************
  * End of state machine functions.
  *********************************************************************************************************/
@@ -2044,6 +2081,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                 socket->rename_dest = address == NULL_ADDRESS;
 
             } else if (socket->socket_type == LS_STREAM) {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
                 /* Start sending connect packet and wait for complete */
                 state_machine_start("outbound connect",
                                     socket,
@@ -2069,7 +2107,11 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                     simpletimer_start(&socket->keepalive_timer, CONFIG_LASTLINK_STREAM_KEEP_ALIVE_TIME * 1000);
                 }
 #endif
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
+                ret = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
             } else {
                 ret = LSE_INVALID_SOCKET;
@@ -2091,6 +2133,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
     return ret;
 }
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 /*
  * Flush the current output packet if one exists.
  *
@@ -2354,6 +2397,7 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
 
     return num_packets == 0;
 }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 /*
  * Write to a datagram or stream socket.
@@ -2412,6 +2456,7 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
              }
 
              case LS_STREAM: {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
                  if (socket->state == LS_STATE_CONNECTED) {
                      int written = 0;
 
@@ -2468,6 +2513,11 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
                      /* Must be disconnecting - give error */
                      ret = LSE_DISCONNECTING;
                  }
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+                 ret = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
                  break;
              }
 
@@ -2548,12 +2598,16 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
     } else if (socket->busy != 0) {
         ret = LSE_SOCKET_BUSY;
     /* Allow any connected or post connected state where data might still be available */
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     } else if (socket->state != LS_STATE_CONNECTED
                && socket->state != LS_STATE_INBOUND_DISCONNECTING
                && socket->state != LS_STATE_OUTBOUND_DISCONNECTING
                && socket->state != LS_STATE_DISCONNECTING_FLUSH_START
                && socket->state != LS_STATE_DISCONNECTING_FLUSHING
                && socket->state != LS_STATE_DISCONNECTED) {
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+    } else if (socket->state != LS_STATE_CONNECTED) {
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
         ret = LSE_NOT_CONNECTED;
     } else {
@@ -2610,6 +2664,7 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
             }
 
             case LS_STREAM: {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAM
                 /* STREAM packets arrive on the socket stream_packet_queue after being sorted and acked as necessary */
                 bool eor = false;
                 int total_len = 0;
@@ -2681,6 +2736,11 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
                 }
                 /* Return amount of data read */
                 ret = total_len;
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+                ret = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
                 break;
             }
 
@@ -2742,6 +2802,7 @@ static ls_error_t ls_close_ptr(ls_socket_t *socket)
             }
 
             case LS_STREAM: {
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
                 if (socket->state == LS_STATE_LISTENING) {
                     /* In case it's another thread doing the listening, give it a shutdown notice */
                     if (already_busy) {
@@ -2815,6 +2876,12 @@ printf("%s: ********************************************************************
                                         CONFIG_LASTLINK_SOCKET_LINGER_TIME / 5,
                                         5);
                 }
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
+                err = LSE_NOT_IMPLEMENTED;
+
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+
                 break;
             }
         }
@@ -2853,7 +2920,11 @@ static ls_socket_t *validate_socket(int s)
 
             LOCK_SOCKET(socket);
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             if (socket->socket_type == LS_DATAGRAM || socket->socket_type == LS_STREAM) {
+#else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
+            if (socket->socket_type == LS_DATAGRAM) {
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
                 ret = socket;
             } else {
                 UNLOCK_SOCKET(socket);
@@ -3079,6 +3150,7 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                        socket->dest_addr);
                 break;
             }
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             case LS_STREAM: {
                 if (socket->state == LS_STATE_LISTENING) {
                     printf("%s%s %d (%p) state %s type %s local port %d dest port %d dest addr %d\n",
@@ -3136,6 +3208,7 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                 }
                 break;
             }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
         }
 #ifdef SOCKET_LOCKING_DEBUG
         if (socket->lock_count != 0) {
@@ -3159,6 +3232,8 @@ ls_error_t ls_dump_socket(const char* msg, int s)
 
     return err;
 }
+
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 
 /* Called by timer to work on the sockets.
  * Rechedules itself when new time interval is needed.
@@ -3235,6 +3310,7 @@ else printf("%s: socket %d locked by %s:%d\n", __func__, socket - socket_table, 
         os_delay(next_time);
     }
 }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 /*
  * User interface commands.
@@ -3420,6 +3496,7 @@ static int dgsend_command(int argc, const char **argv)
     return 0;
 }
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 /**********************************************************************/
 /* stconsumer <port>                                                  */
 /**********************************************************************/
@@ -3702,6 +3779,7 @@ static int stconcycle_command(int argc, const char **argv)
     }
     return 0;
 }
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 /**********************************************************************/
 /* ping <node address>                                                */
@@ -3770,7 +3848,9 @@ int print_sockets(int argc, const char **argv)
             }
             //UNLOCK_SOCKET(socket);
         }
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         printf("socket_scanner_running %d\n", socket_scanner_running);
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
     }
     return 0;
 }
@@ -3784,7 +3864,9 @@ ls_error_t ls_socket_init(void)
 {
     ls_error_t err = 0;
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     packet_window_init();
+#endif
 
     /* Initialize socket_table */
     memset(&socket_table, 0, sizeof(socket_table));
@@ -3792,13 +3874,17 @@ ls_error_t ls_socket_init(void)
     /* Register stream and datagram protocols */
     if (linklayer_register_protocol(PING_PROTOCOL,           ping_packet_process,          ping_packet_format)        &&
         linklayer_register_protocol(PINGREPLY_PROTOCOL,      pingreply_packet_process,     pingreply_packet_format)   &&
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         linklayer_register_protocol(STREAM_PROTOCOL,         stream_packet_process,        stream_packet_format)      &&
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
         linklayer_register_protocol(DATAGRAM_PROTOCOL,       datagram_packet_process,      datagram_packet_format)) {
 
         global_socket_lock = os_create_recursive_mutex();
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         /* Create the socket_scanner thread */
         socket_scanner_thread_id = os_create_thread(socket_scanner_thread, "socket_scanner", SOCKET_SCANNER_STACK_SIZE, 0, NULL);
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
         esp_vfs_t vfs = {
             .flags    = ESP_VFS_FLAG_DEFAULT,
@@ -3826,36 +3912,43 @@ ls_error_t ls_socket_init(void)
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("dglisten",   dglisten_command);
     add_command("dgsend",     dgsend_command);
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     add_command("stconsumer", stconsumer_command);
     add_command("stproducer", stproducer_command);
     add_command("stwrite",    stwrite_command);
     add_command("stread",     stread_command);
     add_command("stconcycle", stconcycle_command);
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
     add_command("ping",       ping_command);
     add_command("pt",         print_ping_table);
     add_command("s",          print_sockets);
-#endif
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return err;
 }
+
 ls_error_t ls_socket_deinit(void)
 {
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     remove_command("dglisten");
     remove_command("dgsend");
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     remove_command("stconsumer");
     remove_command("stproducer");
     remove_command("stwrite");
     remove_command("stread");
     remove_command("stconcycle");
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
     remove_command("ping");
     remove_command("pt");
     remove_command("s");
-#endif
+#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     /* Kill socket scanner */
     os_delete_thread(socket_scanner_thread_id);
     socket_scanner_thread_id = NULL;
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
     /* Purge all waiting pings */
     for (int ping = 0; ping < ELEMENTS_OF(ping_table); ++ping) {
@@ -3879,7 +3972,9 @@ ls_error_t ls_socket_deinit(void)
     /* Register stream and datagram protocols */
     if (linklayer_unregister_protocol(PING_PROTOCOL)        &&
         linklayer_unregister_protocol(PINGREPLY_PROTOCOL)   &&
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         linklayer_unregister_protocol(STREAM_PROTOCOL)      &&
+#endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
         linklayer_unregister_protocol(DATAGRAM_PROTOCOL)) {
 
         /* OK */

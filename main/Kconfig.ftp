@@ -1,6 +1,7 @@
 menu "FTP client and server"
     config LASTLINK_SERVICE_FTP_ENABLE
         bool "Enable ftp client and server"
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         default true
         help
             Enable a radio-based FTP client and server.

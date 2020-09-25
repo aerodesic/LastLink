@@ -1,6 +1,7 @@
 menu "Service Name Manager"
     config LASTLINK_SERVICE_NAMES_ENABLE
         bool "Enable service names"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
         default true
         help
             Enable service names.  These are names published by

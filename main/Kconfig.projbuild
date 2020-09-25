@@ -335,7 +335,15 @@ menu "LastLink Configuration"
         bool "Select to enable socket manager"
         default true
         help
-             Enables datagram and streaming sockets between nodes.
+             Enables datagram (and optionally) streaming sockets between nodes.
+
+
+        config LASTLINK_ENABLE_SOCKET_STREAMS
+        bool "Also allow streaming sockets"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        default true
+        help
+             Additionally enables streaming sockets between nodes
 
         config LASTLINK_NUMBER_OF_SOCKETS
         int "Number of sockets"
@@ -369,7 +377,7 @@ menu "LastLink Configuration"
             has been routed.
 
         config LASTLINK_STREAM_WINDOW_SIZE
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Number of packets in input/output windows"
         default 3
         range 1 15
@@ -382,7 +390,7 @@ menu "LastLink Configuration"
             assembly buffer on input.
 
         config LASTLINK_STREAM_ACK_DELAY
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Delay (in mS) between receiving a packet and the automatic ack"
         default 500
         range 50 5000
@@ -393,7 +401,7 @@ menu "LastLink Configuration"
             a bi-directional data path will be active.
 
         config LASTLINK_STREAM_TRANSMIT_RETRIES
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Number of stream packet retries"
         default 10
         range 2 50
@@ -401,7 +409,7 @@ menu "LastLink Configuration"
             The number of times to retry sending the output queue before giving up.
 
         config LASTLINK_STREAM_TRANSMIT_OVERHEAD_TIME
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Base packet overhead time"
         default 300
         range 0 5000
@@ -410,7 +418,7 @@ menu "LastLink Configuration"
             of packet transmission time estimates.
 
         config LASTLINK_STREAM_TRANSMIT_RETRY_FACTOR
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Packet retransmit factor"
         default 100
         range 50 1000
@@ -427,7 +435,7 @@ menu "LastLink Configuration"
             must travel back the same path.
 
         config LASTLINK_STREAM_TRANSMIT_MAXIMUM_RETRY_TIME
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Maximum retry interval"
         default 5000
         range 1000 20000
@@ -436,7 +444,7 @@ menu "LastLink Configuration"
 
 
         config LASTLINK_STREAM_TRANSMIT_DELAY
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "How long (in mS) to hold a packet with data before it is sent"
         default 500
         range 50 5000
@@ -446,7 +454,7 @@ menu "LastLink Configuration"
 
 
         config LASTLINK_STREAM_KEEP_ALIVE_ENABLE
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         bool "Enable keep-alive packets for socket"
         default false
         help
@@ -455,7 +463,7 @@ menu "LastLink Configuration"
 
 
         config LASTLINK_STREAM_KEEP_ALIVE_TIME
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         depends on LASTLINK_STREAM_KEEP_ALIVE_ENABLE
         int "Seconds between keep-alive packets"
         default 10
@@ -463,7 +471,7 @@ menu "LastLink Configuration"
 
 
         config LASTLINK_STREAM_UPDATE_TIME
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "milliseconds to ACK input on outstanding read"
         default 1000
         range 50 30000
@@ -475,7 +483,7 @@ menu "LastLink Configuration"
             faster than should be able to propagate through the network.
 
         config LASTLINK_SOCKET_LINGER_TIME
-        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        depends on LASTLINK_ENABLE_SOCKET_STREAMS
         int "Time to 'linger' socket after closing"
         default 5000
         range 1000 60000

@@ -55,9 +55,19 @@ typedef struct service_cache {
 
     simpletimer_t     timer;
 
+    uint16_t          lifetime;
+
     /* Name of service */
     const char        *name;
 } service_cache_t;
+
+/* Service announcement */
+typedef struct service_announce {
+    uint16_t port;                /* Port for service; address is address of sender of packet */
+    uint8_t  socket_type;         /* LS_DATAGRAM or LS_STREAM */
+    char     name[SERVICE_NAMES_MAX_LEN+1];
+    uint16_t lifetime;            /* Lifetime in seconds before renewal; auto renewed in lifetime/2 seconds */
+} service_announce_t;
 
 /* Cache table */
 static list_head_t           service_cache;
@@ -151,6 +161,7 @@ static service_cache_t *create_service_by_name(const char* name)
             service->address = NULL_ADDRESS;
             service->socket_type = LS_UNUSED;
             service->port = 0;
+            simpletimer_stop(&service->timer);
 
             add_service(service);
         }
@@ -161,6 +172,9 @@ static service_cache_t *create_service_by_name(const char* name)
     return service;
 }
 
+/*
+ * Thread the periodically publishes service names to the network and receives published service names from the network.
+ */
 static void service_thread(void* param)
 {
     service_running = 1;
@@ -174,42 +188,71 @@ ESP_LOGI(TAG, "%s: running", __func__);
             ret = ls_connect(socket, NULL_ADDRESS, 0);
             if (ret == LSE_NO_ERROR) {
                 while (service_running) {
-                    char service_name[SERVICE_NAMES_MAX_LEN + 1];
-                    int address;
-                    int port;
+                    service_announce_t service_announce;
+                    int service_address;
+                    int sender_port;
 
-                    /* Wait for a service request (and acts as timer) */
-                    int len = ls_read_with_address(socket, service_name, SERVICE_NAMES_MAX_LEN, &address, &port, SERVICE_NAMES_WAIT_TIMEOUT);
+                    /* Wait for a service announcement (and acts as timer) */
+                    int len = ls_read_with_address(socket, (char*) &service_announce, SERVICE_NAMES_MAX_LEN, &service_address, &sender_port, SERVICE_NAMES_WAIT_TIMEOUT);
                     if (len >= 0) {
-                        service_name[len] = '\0';
-//ESP_LOGI(TAG, "%s: service request '%s' from %d/%d", __func__, service_name, address, port);
-
                         os_acquire_recursive_mutex(service_lock);
 
-                        service_cache_t *service = lookup_service_by_name(service_name);
+                        service_cache_t *service = lookup_service_by_name(service_announce.name);
+
+                        /* Ignore announced services with broadcast address */
+                        /* Announce of service availability */
+                        if (service == NULL) {
+                            service = create_service_by_name(service_announce.name);
+                        }
+
                         if (service != NULL) {
-                            service_answer_t service_answer;
+                            service->socket_type = service_announce.socket_type;
+                            service->port = service_announce.port;
+                            service->address = service_address;
+                            service->lifetime = service_announce.lifetime;
 
-                            service_answer.port = service->port;
-                            service_answer.socket_type = service->socket_type;
-                            strncpy(service_answer.name, service->name, SERVICE_NAMES_MAX_LEN);
-
-                            /* This returns data to caller since our dest addresses have been renamed */
-                            ls_write(socket, &service_answer, sizeof(service_answer));
-//ESP_LOGI(TAG, "%s: sending answer '%s' type %d port %d to %d/%d", __func__, service_answer.name, service_answer.socket_type, service_answer.port, address, port);
+                            /* Set service lifetime timer - goes away when this timer expires */
+                            simpletimer_start(&service->timer, service_announce.lifetime * 1000);
                         }
 
                         os_release_recursive_mutex(service_lock);
                     }
 
-                    /* Do a scan and expire entries */
+                    /* Do a scan and expire entries and renew service announcements for local services */
                     os_acquire_recursive_mutex(service_lock);
 
                     service_cache_t *service = (service_cache_t*) FIRST_LIST_ITEM(&service_cache);
 
                     while (service != NULL) {
                         if (simpletimer_is_expired(&service->timer)) {
-                            release_service(remove_service(service));
+                            /* If local service - re-announce */
+                            if (service->address == BROADCAST_ADDRESS) {
+                                int announce_socket = ls_socket(LS_DATAGRAM);
+                                if (announce_socket >= 0) {
+                                    int ret = ls_bind(announce_socket, SERVICE_NAMES_PORT);
+                                    if (ret == LSE_NO_ERROR) {
+                                        ret = ls_connect(announce_socket, NULL_ADDRESS, 0);
+                                        if (ret == LSE_NO_ERROR) {
+                                            /* Announce the service */
+                                            service_announce_t service_announce;
+
+                                            service_announce.port = service->port;
+                                            service_announce.socket_type = service->socket_type;
+                                            service_announce.lifetime = service->lifetime;
+                                            strncpy(service_announce.name, service->name, SERVICE_NAMES_MAX_LEN);
+
+                                            ls_write(announce_socket, &service_announce, sizeof(service_announce));
+                                        }
+                                    }
+                                    ls_close(announce_socket);
+                                }
+
+                                /* Start the timer for 1/2 the lifetime */
+                                simpletimer_start(&service->timer, service->lifetime * 1000 / 2);
+                            } else {
+                                /* Service has expired */
+                                release_service(remove_service(service));
+                            }
                             /* Only do one per scan */
                             service = NULL;
                         }
@@ -224,7 +267,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
         }
     }
 
-    ESP_LOGE(TAG, "%s: scanner stopped", __func__);
+    ESP_LOGE(TAG, "%s: scanner stopped: service_running %d socket %d", __func__, service_running, socket);
 
     service_running = 0;
 }
@@ -234,62 +277,21 @@ ESP_LOGI(TAG, "%s: running", __func__);
  ************************************************************************************/
 
 /*
- * User-callable function to locate a service, sending packets and necessary.
+ * User-callable function to locate a service.
  *
+ * Entry:
+ *    name                 Name of service
+ *    address              pointer to return node address of service
+ *    socket_type          pointer to return socket_type of service
+ *    port                 pointer to return port number of service
+ *                        
  * Returns LSE_NO_ERROR if found and values returned otherwise ls_error_t.
  */
 ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t *socket_type, ls_port_t* port)
 {
-    ls_error_t  ret = LSE_NO_ERROR;
+    ls_error_t  ret = LSE_FAILED;
 
     service_cache_t *service = lookup_service_by_name(name);
-
-    if (service == NULL) {
-        int socket = ls_socket(LS_DATAGRAM);
-        if (socket >= 0) {
-            ret = ls_bind(socket, 0);
-            if (ret == LSE_NO_ERROR) {
-                ret = ls_connect(socket, BROADCAST_ADDRESS, SERVICE_NAMES_PORT);
-                if (ret == LSE_NO_ERROR) {
-                    int tries = SERVICE_NAMES_REPLY_RETRIES;
-                    do {
-                        /* Send request for service info */
-                        ret = ls_write(socket, name, strlen(name));
-                        if (ret >= 0) {
-                            service_answer_t answer;
-                            int address;
-                            int port;
-
-                            ret = ls_read_with_address(socket, (void*) &answer, sizeof(answer), &address, &port, SERVICE_NAMES_REPLY_TIMEOUT);
-//printf("%s: service read returned %d\n", __func__, ret);
-
-//ESP_LOGI(TAG, "%s: ls_read_with_address returned %d", __func__, ret);
-                            if (ret == sizeof(answer)) {
-                                ret = LSE_NO_ERROR;
-
-                                /* Create a cache entry locally */
-                                service = create_service_by_name(answer.name);
-                                if (service != NULL) {
-                                    service->socket_type = answer.socket_type;
-                                    service->port = answer.port;
-                                    service->address = address;
-                                    service->name = strdup(answer.name);
-                                    simpletimer_start(&service->timer, SERVICE_NAMES_LIFETIME*1000);
-                                } else {
-                                    ret = LSE_NO_MEM;
-                                }
-                            }
-                        // } else {
-                            //printf("service 'write' returned %d\n", ret);
-                        }
-                    } while (ret != LSE_NO_ERROR && --tries != 0);
-                }
-            }
-            ls_close(socket);
-        } else {
-            ret = socket;
-        }
-    }
 
     if (service != NULL) {
         /* Found it so return the values */
@@ -306,8 +308,15 @@ ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t
 
 /*
  * Register a new service
+ *
+ * Entry:
+ *     name             Name of service
+ *     socket_type      Socket type of service
+ *     port             port where service is found
+ *     lifetime         lifetime of service announcement (0 is default)
+ *                      Republishes service each lifetime / 2 seconds.
  */
-bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_port_t port)
+bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime)
 {
     bool success = false;
 
@@ -317,9 +326,15 @@ bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_po
 
             service->socket_type = socket_type;
             service->port = port;
-            service->address = linklayer_node_address;
+            service->address = 0;        /* Locally defined service */
+
             /* Leave timer stopped for permanent (until deregistered) service entries */
-            simpletimer_stop(&service->timer);
+            if (lifetime == 0) {
+                lifetime = SERVICE_NAMES_DEFAULT_LIFETIME;
+            }
+
+            /* Expire the timer so it gets published immediately */
+            simpletimer_set_expired(&service->timer);
 
             add_service(service);
 
@@ -405,12 +420,13 @@ static int service_table_commands(int argc, const char **argv)
             }
         }
     } else if (strcmp(argv[1], "add") == 0) {
-        if (argc == 5) {
+        if (argc >= 5) {
             const char*       name = argv[2];
             ls_socket_type_t  type = toupper(argv[3][0]) == 'D' ? LS_DATAGRAM : LS_STREAM;
             int               port = strtol(argv[4], NULL, 0);
+            int               lifetime = argc > 5 ? strtol(argv[5], NULL, 0) : SERVICE_NAMES_DEFAULT_LIFETIME;
 
-            if (! register_service_name(name, type, port)) {
+            if (! register_service_name(name, type, port, lifetime)) {
                 printf("Failed to register service %s on type %d port %d\n", name, type, port);
             }
         } else {
