@@ -85,6 +85,11 @@ ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port);
 ssize_t ls_write(int s, const void* buf, size_t len);
 
 /*
+ * Write to a specific address (datagram only)
+ */
+ssize_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port);
+
+/*
  * Same as ls_write, but delivers an 'end of record' mark at end of data.
  * End of record write does nothing special for datagram sockets.
  */

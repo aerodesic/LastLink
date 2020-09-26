@@ -193,8 +193,15 @@ ESP_LOGI(TAG, "%s: running", __func__);
                     int sender_port;
 
                     /* Wait for a service announcement (and acts as timer) */
-                    int len = ls_read_with_address(socket, (char*) &service_announce, SERVICE_NAMES_MAX_LEN, &service_address, &sender_port, SERVICE_NAMES_WAIT_TIMEOUT);
-                    if (len >= 0) {
+                    int len = ls_read_with_address(socket, (char*) &service_announce, sizeof(service_announce), &service_address, &sender_port, SERVICE_NAMES_WAIT_TIMEOUT);
+if (len >= 0) {
+  ESP_LOGD(TAG, "%s: packet %d bytes from %d/%d", __func__, len, service_address, sender_port);
+}
+
+                    if (len == sizeof(service_announce)) {
+
+ESP_LOGD(TAG, "%s: announce: from %d: '%s' %s port %d lifetime %d", __func__, service_address, service_announce.name, service_announce.socket_type == LS_DATAGRAM ? "Datagram" : "Stream", service_announce.port, service_announce.lifetime);
+
                         os_acquire_recursive_mutex(service_lock);
 
                         service_cache_t *service = lookup_service_by_name(service_announce.name);
@@ -226,12 +233,12 @@ ESP_LOGI(TAG, "%s: running", __func__);
                     while (service != NULL) {
                         if (simpletimer_is_expired(&service->timer)) {
                             /* If local service - re-announce */
-                            if (service->address == BROADCAST_ADDRESS) {
+                            if (service->address == NULL_ADDRESS) {
                                 int announce_socket = ls_socket(LS_DATAGRAM);
                                 if (announce_socket >= 0) {
-                                    int ret = ls_bind(announce_socket, SERVICE_NAMES_PORT);
+                                    int ret = ls_bind(announce_socket, 0);
                                     if (ret == LSE_NO_ERROR) {
-                                        ret = ls_connect(announce_socket, NULL_ADDRESS, 0);
+                                        ret = ls_connect(announce_socket, BROADCAST_ADDRESS, SERVICE_NAMES_PORT);
                                         if (ret == LSE_NO_ERROR) {
                                             /* Announce the service */
                                             service_announce_t service_announce;
@@ -318,30 +325,33 @@ ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t
  */
 bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime)
 {
-    bool success = false;
+    os_acquire_recursive_mutex(service_lock);
 
-    if (! lookup_service_by_name(name)) {
-        service_cache_t *service = create_service(name);
-        if (service != NULL) {
+    service_cache_t *service = create_service_by_name(name);
 
-            service->socket_type = socket_type;
-            service->port = port;
-            service->address = 0;        /* Locally defined service */
+    if (service != NULL) {
 
-            /* Leave timer stopped for permanent (until deregistered) service entries */
-            if (lifetime == 0) {
-                lifetime = SERVICE_NAMES_DEFAULT_LIFETIME;
-            }
+        service->socket_type = socket_type;
+        service->port = port;
+        service->address = 0;        /* Locally defined service */
 
-            /* Expire the timer so it gets published immediately */
-            simpletimer_set_expired(&service->timer);
-
-            add_service(service);
-
-            success = true;
+        /* Leave timer stopped for permanent (until deregistered) service entries */
+        if (lifetime == 0) {
+            service->lifetime = SERVICE_NAMES_DEFAULT_LIFETIME;
+        } else {
+            service->lifetime = lifetime;
         }
+
+        /* Expire the timer so it gets published immediately */
+        simpletimer_set_expired(&service->timer);
+
+        add_service(service);
     }
-    return success;
+
+    os_release_recursive_mutex(service_lock);
+
+
+    return service != NULL;
 }
 
 
@@ -374,7 +384,7 @@ static int service_table_commands(int argc, const char **argv)
 
     if (argc == 0) {
         show_help(argv[0], "list or <empty>", "List service cache");
-        show_help(argv[0], "add <service name> <type> <port>", "Add service");
+        show_help(argv[0], "add <service name> <type> <port> <lifetime seconds>", "Add service");
         show_help(argv[0], "del <service name>", "Remove service");
         show_help(argv[0], "<name>", "Lookup service");
 

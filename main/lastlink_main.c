@@ -136,7 +136,7 @@ void app_main(void)
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
 
-    // linklayer_set_debug(true);
+    linklayer_set_debug(true);
     bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
 
     linklayer_set_listen_only(listen_only);

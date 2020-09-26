@@ -149,8 +149,10 @@ typedef struct ls_socket {
     ls_socket_state_t       state;               /* Current state */
     ls_port_t               local_port;          /* Local port number of the connection */
     ls_port_t               dest_port;           /* Destination port of the connection */
+#ifdef NOTUSED
     bool                    rename_dest;         /* If datagram and true, dest_address gets value of last packet read */
                                                  /* This allows us to ls_write() back to return data */
+#endif
     ls_address_t            dest_addr;           /* Destination address of the connection */
 
     union {

@@ -114,7 +114,7 @@ static bool ping_packet_process(packet_t *packet);
 static bool pingreply_packet_process(packet_t *packet);
 static int find_ping_table_entry(int sequence);
 
-static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor);
+static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor, ls_address_t address, ls_port_t port);
 static ls_socket_t * validate_socket(int s);
 
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
@@ -2077,8 +2077,10 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                     socket->datagram_packets = os_create_queue(5, sizeof(packet_t*));
                 }
 
+#ifdef NOTUSED
                 /* Special case: our dest address changes to the last destination of the packet we receive.  */
                 socket->rename_dest = address == NULL_ADDRESS;
+#endif
 
             } else if (socket->socket_type == LS_STREAM) {
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
@@ -2410,12 +2412,14 @@ static bool send_output_window(ls_socket_t *socket, bool disconnect_on_error)
  *      buf                 buffer to write
  *      len                 length to write
  *      eor                 Write END OF RECORD if true
+ *      address             Address to use if port >= 0
+ #      port                Port to use of port >= 0
  *
  * Returns:
  *      ls_error_t          If >0, number of bytes written (might be less than len if error)
  *                          Otherwise is error code (< 0)
  */
-static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor) {
+static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor, ls_address_t address, ls_port_t port) {
     ls_error_t ret;
 
     if (socket == NULL) {
@@ -2431,6 +2435,11 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
              case LS_DATAGRAM: {
                  packet_t *packet = datagram_packet_create_from_socket(socket);
                  if (packet != NULL) {
+                     /* If overriding the destination, change it now */
+                     if (port >= 0) {
+                         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, port);
+                         set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, address);
+                     }
                      int tomove = len;
                      if (tomove > DATAGRAM_MAX_DATA) {
                          tomove = DATAGRAM_MAX_DATA;
@@ -2438,11 +2447,13 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
                      memcpy(packet->buffer + DATAGRAM_PAYLOAD, buf, tomove);
                      packet->length += tomove;
 //linklayer_print_packet("DG OUT", packet);
+#ifdef NOTUSED
                      /* Go back to "anything goes" for next inbound packet */
                      if (socket->rename_dest) {
                          socket->dest_addr = NULL_ADDRESS;
                          socket->dest_port = 0;
                      }
+#endif
 
                      UNLOCK_SOCKET(socket);
                      linklayer_route_packet(packet);
@@ -2540,7 +2551,7 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
 
 ssize_t ls_write(int s, const void* buf, size_t len)
 {
-    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, false);
+    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, false, 0, -1);
 }
 
 /*
@@ -2549,7 +2560,12 @@ ssize_t ls_write(int s, const void* buf, size_t len)
  */
 ssize_t ls_write_eor(int s, const void* buf, size_t len)
 {
-    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, true);
+    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, true, 0, -1);
+}
+
+ssize_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port)
+{
+    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, true, address, port);
 }
 
 /*
@@ -2648,11 +2664,13 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
                             *port = origin_port;
                         }
 
+#ifdef NOTUSED
                         /* Switch destination origin of packet so a write goes to correct location */
                         if (socket->rename_dest) {
                             socket->dest_addr = origin_address;
                             socket->dest_port = origin_port;
                         }
+#endif
 
                         ret = packet_data_length;
                         release_packet(packet);
