@@ -262,12 +262,17 @@ int os_items_in_queue_from_isr(os_queue_t queue)
 
 bool os_peek_queue(os_queue_t queue, os_queue_item_t item)
 {
-    return xQueuePeek(queue, (void**) item, 0) == pdTRUE;
+    return xQueuePeek(queue, item, 0) == pdTRUE;
 }
 
 bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t item)
 {
-    return xQueuePeekFromISR(queue, (void**) item) == pdTRUE;
+    return xQueuePeekFromISR(queue, item) == pdTRUE;
+}
+
+void os_reset_queue(os_queue_t queue)
+{
+    xQueueReset(queue);
 }
 
 os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer))
@@ -428,7 +433,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
             if (ok) {
                 esp_err_t err = gpio_isr_handler_add(gpio, handler, param);
                 if (err != ESP_OK) {
-                    // ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
+                    ESP_LOGE(TAG, "%s: gpio_isr_handler_add failed with %s", __func__, esp_err_to_name(err));
                     ok = false;
                 }
             }

@@ -191,7 +191,7 @@ typedef struct ping_table_entry {
     os_queue_t       queue;
     int              sequence;
     packet_t         *packet;
-    os_thread_t      thread;
+    os_thread_t      thread_id;
     bool             waiting;
     int              retries;
     bool             routed;
@@ -428,9 +428,11 @@ static bool pingreply_packet_process(packet_t *packet)
             /* Look for ping request and deliver packet to process queue */
             int slot = find_ping_table_entry(get_uint_field(packet, PING_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN));
             if (slot >= 0 && ping_table[slot].queue != NULL && ping_table[slot].waiting) {
-                os_delete_thread(ping_table[slot].thread);
+                if (ping_table[slot].thread_id != NULL) {
+                    os_delete_thread(ping_table[slot].thread_id);
+                    ping_table[slot].thread_id = NULL;
+                }
                 ping_table[slot].waiting = false;
-                ping_table[slot].thread = NULL;
                 ref_packet(packet);
                 if (!os_put_queue(ping_table[slot].queue, (os_queue_item_t) &packet)) {
                     ESP_LOGE(TAG, "%s: No room for ping reply", __func__);
@@ -502,9 +504,9 @@ static void release_ping_table_entry(int slot)
 {
     linklayer_lock();
 
-    if (ping_table[slot].thread != NULL) {
-        os_delete_thread(ping_table[slot].thread);
-        ping_table[slot].thread = NULL;
+    if (ping_table[slot].thread_id != NULL) {
+        os_delete_thread(ping_table[slot].thread_id);
+        ping_table[slot].thread_id = NULL;
     }
 
     if (ping_table[slot].packet != NULL) {
@@ -589,7 +591,7 @@ static bool ping_has_been_routed(bool success, packet_t* packet, void* data, rad
         /* Create a timer to retry trasmission for a while */
         ping_table[slot].retries = CONFIG_LASTLINK_PING_RETRIES;
         ping_table[slot].waiting = true;
-        ping_table[slot].thread = os_create_thread(ping_retry_thread, "ping_retry", PING_RETRY_STACK_SIZE, 0, (void*) slot);
+        ping_table[slot].thread_id = os_create_thread(ping_retry_thread, "ping_retry", PING_RETRY_STACK_SIZE, 0, (void*) slot);
         ping_table[slot].routed = true;
         simpletimer_start(&ping_table[slot].pingtime, CONFIG_LASTLINK_PING_RETRY_TIMER * 2);
 
@@ -3358,7 +3360,7 @@ static int print_ping_table(int argc, const char **argv)
                 pings[num_pings].queue = (ping_table[num_pings].queue != NULL) ? os_items_in_queue(ping_table[num_pings].queue) : -1;
                 pings[num_pings].sequence = ping_table[num_pings].sequence;
                 pings[num_pings].to = ping_table[num_pings].packet ? get_uint_field(ping_table[num_pings].packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) : 0;
-                pings[num_pings].thread = ping_table[num_pings].thread != NULL;
+                pings[num_pings].thread = ping_table[num_pings].thread_id != NULL;
                 pings[num_pings].retries = ping_table[num_pings].retries;
                 pings[num_pings].routed = ping_table[num_pings].routed;
                 pings[num_pings].error = ping_table[num_pings].error;

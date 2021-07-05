@@ -54,6 +54,7 @@ static bool set_sleep_mode(radio_t* radio);                          /* Set slee
 static bool set_standby_mode(radio_t* radio);                        /* Set standby mode */
 static bool set_receive_mode(radio_t* radio);                        /* Set "real" receive mode */
 static bool set_cad_detect_mode(radio_t* radio);                     /* Set cad detect mode */
+static bool set_inactive(radio_t* radio, bool inactive);             /* Set inactive/active mode */
 
 static bool set_txpower(radio_t* radio, int power);                  /* Set transmitter power level */
 static int get_txpower(radio_t* radio);                              /* Get current transmit power */
@@ -233,37 +234,53 @@ static void handler_wakeup_timer(os_timer_t timer_id)
     radio_t *radio = (radio_t*) os_get_timer_data(timer_id);
     sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
 
-    if (data->cad_last_interrupts == data->cad_interrupts) {
-        /* No CAD interrupts detected in the past few cycles, so reset state via event */
-    
-        handler_queue_event_t event = {
-            .type = HQI_RESET,
-            .radio = radio,
-            .state = data->handler_state,
-        };
+    if (radio->inactive) {
+        /* inactive initiated */
+        ESP_LOGD(TAG, "%s: inactive detected", __func__);
 
-printf("%s: radio %d timeout\n", __func__, radio->radio_num);
-
-        os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
-
+        /* Stop the periodic wakeup timer */
+        os_stop_timer(data->handler_wakeup_timer_id);
     } else {
-        data->cad_last_interrupts = data->cad_interrupts;
+        if (data->cad_last_interrupts == data->cad_interrupts) {
+            /* No CAD interrupts detected in the past few cycles, so reset state via event */
+    
+            handler_queue_event_t event = {
+                .type = HQI_RESET,
+                .radio = radio,
+                .state = data->handler_state,
+            };
+
+    printf("%s: radio %d timeout\n", __func__, radio->radio_num);
+
+            os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
+
+        } else {
+            data->cad_last_interrupts = data->cad_interrupts;
+        }
+
+        data->wakeup_ticks++;
+
+        /* Restart the software timer that is used to indicate system timer status, which we cannot read. */
+        simpletimer_start(&data->handler_wakeup_timer_status, HANDLER_WAKEUP_TIMER_PERIOD);
     }
-
-    data->wakeup_ticks++;
-
-    /* Restart the software timer that is used to indicate system timer status, which we cannot read. */
-    simpletimer_start(&data->handler_wakeup_timer_status, HANDLER_WAKEUP_TIMER_PERIOD);
 }
 
 inline static int calculate_window_number(radio_t *radio, packet_t *packet)
 {
-    sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+    int window;
 
-    return (get_uint_field(data->current_packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) *
+    if (radio->transmit_windows != 1) {
+        sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+
+        window = (get_uint_field(data->current_packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN) *
             get_uint_field(data->current_packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) *
             get_uint_field(data->current_packet, HEADER_SENDER_ADDRESS, ADDRESS_LEN) +
             2 * get_uint_field(data->current_packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN)) % radio->transmit_windows;
+    } else {
+        window = 0;
+    }
+
+    return window;
 }
 
 /*
@@ -329,6 +346,7 @@ bool sx127x_create(radio_t* radio)
         radio->get_datarate     = get_datarate;
         radio->transmit_start   = transmit_start;
         radio->get_message_time = get_message_time;
+        radio->set_inactive     = set_inactive;
 
         /* Allocate a data block for local data */
         radio->driver_private_data = malloc(sizeof(sx127x_private_data_t));
@@ -692,7 +710,6 @@ static void global_interrupt_handler(void* param)
         if (os_get_queue(global_interrupt_handler_queue, (os_queue_item_t) &event)) {
 
             radio_t *radio = event.radio;
-
 
             if (radio != NULL) {
                 sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
@@ -1132,6 +1149,8 @@ static bool set_standby_mode(radio_t* radio)
 {
     bool ok = false;
 
+// ESP_LOGD(TAG, "%s: radio %d", __func__, radio->radio_num);
+
     if (acquire_lock(radio)) {
         ok =  disable_irq(radio, 0xFF)
            && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_STANDBY)
@@ -1146,6 +1165,8 @@ static bool set_standby_mode(radio_t* radio)
 static bool set_sleep_mode(radio_t* radio)
 {
     bool ok = false;
+
+// ESP_LOGD(TAG, "%s: radio %d", __func__, radio->radio_num);
 
     if (acquire_lock(radio)) {
         ok =  disable_irq(radio, 0xFF)
@@ -1164,14 +1185,19 @@ static bool set_receive_mode(radio_t* radio)
 {
     bool ok = false;
 
-//ESP_LOGI(TAG, "%s: set_receive_mode, __func__);
+// ESP_LOGI(TAG, "%s: radio %d", __func__, radio->radio_num);
 
     if (acquire_lock(radio)) {
-        ok =  disable_irq(radio, SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED | SX127x_IRQ_TX_DONE)
-           && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, RX_DIO_MAPPING)
-           && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_SINGLE)
-           && enable_irq(radio, SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT)
-           ;
+        if (radio->inactive) {
+            /* Leave in sleep mode */
+            ok = radio->set_sleep_mode(radio);
+        } else {
+            ok =  disable_irq(radio, SX127x_IRQ_CAD_DONE | SX127x_IRQ_CAD_DETECTED | SX127x_IRQ_TX_DONE)
+               && radio->write_register(radio, SX127x_REG_DIO_MAPPING_1, RX_DIO_MAPPING)
+               && radio->write_register(radio, SX127x_REG_OP_MODE, SX127x_MODE_LONG_RANGE | SX127x_MODE_RX_SINGLE)
+               && enable_irq(radio, SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT)
+               ;
+        }
 
 if (!ok) ESP_LOGE(TAG, "%s: failed", __func__);
         release_lock(radio);
@@ -1223,6 +1249,31 @@ static bool set_transmit_mode(radio_t* radio)
     return ok;
 }
 
+
+/* Used to power down radio to standy mode */
+static bool set_inactive(radio_t* radio, bool inactive)
+{
+    bool ok = true;
+
+    ESP_LOGD(TAG, "%s: radio %d %sactive", __func__, radio->radio_num, inactive ? "in" : "");
+
+    if (acquire_lock(radio)) {
+        if (inactive != radio->inactive) {
+            radio->inactive = inactive;
+
+            /* Do the work to change active mode */
+            if (inactive == 0) {
+                radio->set_receive_mode(radio);
+                sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
+                /* Restart wakeup timer */
+                os_start_timer(data->handler_wakeup_timer_id);
+            }
+            release_lock(radio);
+        }
+    }
+
+    return ok;
+}
 
 /*
  * Set power from -15 to +17 dbm.  Chose PA mode as apprpriate

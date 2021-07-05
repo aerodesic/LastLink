@@ -1,0 +1,16 @@
+#
+# Define stuff for DHT 11/22 (temp/humidity) sensor.
+#
+menu "DHT Configuration"
+
+    config DHT_ENABLED
+        bool "Enable DHT 11/22 (temp/humidity) sensor)"
+        default n
+
+    config DHT_PIN
+        depends on DHT_ENABLED
+        int "I/O pin"
+        default 0
+ 
+endmenu
+

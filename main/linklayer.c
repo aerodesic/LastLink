@@ -1666,6 +1666,27 @@ bool linklayer_init(int address, int flags, int announce)
 }
 
 
+// Put radios into or out of idle mode.
+// This does not remove the radio - just pauses or resumes operation.
+bool linklayer_set_inactive(bool inactive)
+{
+    bool ok = true;
+
+    linklayer_lock();
+    /* Deinitialize and remove all radios */
+    for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+        radio_t *radio = radio_table[radio_num];
+
+        if (radio != NULL) {
+            radio->set_inactive(radio, inactive);
+        }
+    }
+
+    linklayer_unlock();
+
+    return ok;
+}
+
 bool linklayer_deinit(void)
 {
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS

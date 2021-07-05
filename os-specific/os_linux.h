@@ -217,11 +217,11 @@ bool os_put_queue_with_timeout(os_queue_t queue, os_queue_item_t item, int timeo
     return xQueueSend(queue, &item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE;
 }
 
-bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* item, bool *awakened)
+bool os_get_queue_from_isr(os_queue_t queue, os_queue_item_t* pitem, bool *awakened)
 {
     BaseType_t task_awakened = pdFALSE;
 
-    bool results =  xQueueSendFromISR(queue, item, &task_awakened) == pdTRUE;
+    bool results =  xQueueSendFromISR(queue, pitem, &task_awakened) == pdTRUE;
 
     if (awakened != NULL) {
         *awakened = task_awakened == pdTRUE;
@@ -247,14 +247,14 @@ bool os_put_queue_from_isr(os_queue_t queue, os_queue_item_t item, bool* awakene
     return results;
 }
 
-bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* item, int timeout)
+bool os_get_queue_with_timeout(os_queue_t queue, os_queue_item_t* pitem, int timeout)
 {
-    return (xQueueReceive(queue, item, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE);
+    return (xQueueReceive(queue, pitem, timeout == -1 ? portMAX_DELAY : pdMS_TO_TICKS(timeout)) == pdTRUE);
 }
 
-bool os_get_queue(os_queue_t queue, os_queue_item_t* item)
+bool os_get_queue(os_queue_t queue, os_queue_item_t* pitem)
 {
-    return os_get_queue_with_timeout(queue, item, -1);
+    return os_get_queue_with_timeout(queue, pitem, -1);
 }
 
 int os_items_in_queue(os_queue_t queue)

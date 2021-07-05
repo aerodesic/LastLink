@@ -157,7 +157,8 @@ static esp_netif_t* wifi_start(void)
             .ssid_len = strlen(CONFIG_LASTLINK_WIFI_SSID),
             .password = CONFIG_LASTLINK_WIFI_PASSWORD,
             .max_connection = CONFIG_LASTLINK_MAX_STA_CONN,
-            .authmode = WIFI_AUTH_WPA_WPA2_PSK
+            .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+            .beacon_interval = 5000,   /* Slow down for power save */
         },
     };
 

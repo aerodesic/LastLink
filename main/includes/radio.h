@@ -48,6 +48,9 @@ typedef struct radio {
     /* Radio number */
     int radio_num;
 
+    /* TRUE if inactive mode */
+    bool inactive;
+
     /* number of transmit windows */
     int transmit_windows;;
 
@@ -62,7 +65,7 @@ typedef struct radio {
     /* Deinit the bus; calls into linklayer_io */
     bool (*bus_deinit)(radio_t* radio);
 
-    os_queue_t* transmit_queue;
+    os_queue_t transmit_queue;
 
     /*
      * This for any private data owned by the <driver>;
@@ -134,6 +137,8 @@ typedef struct radio {
     void (*transmit_start)(radio_t* radio);
 
     int (*get_message_time)(radio_t* radio, int bytes);
+
+    bool (*set_inactive)(radio_t* radio, bool inactive);
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     void (*print_status)(radio_t* radio);

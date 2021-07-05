@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include "esp_heap_caps.h"
+
 #include "varlist.h"
 
 var_item_t *find_var(var_list_t *varlist, const char *name)

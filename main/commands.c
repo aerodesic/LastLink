@@ -18,6 +18,7 @@
 #ifdef CONFIG_SSD1306_I2C_ENABLED
 #include "display.h"
 #endif /* CONFIG_SSD1306_I2C_ENABLED */
+
 #include "listops.h"
 #include "tokenize.h"
 
@@ -519,6 +520,37 @@ int test_command(int argc, const char **argv)
     return 0;
 }
 
+#ifdef CONFIG_DHT_ENABLED
+#include "dht.h"
+
+int dht_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "Read RH and Temp for DHT sensor");
+    } else {
+        int count = 1;
+        if (argc > 1) {
+            count = strtol(argv[1], NULL, 10);
+        }
+        while (count > 0) {
+            dht_value_t rh;
+            dht_value_t temp;
+            dht_ret_t rc = dht_read(&rh, &temp);
+            if (rc == 0) {
+                printf("rc %d: rh %.1f%% temp %.1f deg\n", rc, rh, temp);
+            } else {
+                printf("dht error %d\n", rc);
+            }
+            if (--count > 0) {
+                os_delay(2000);
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
+
 void CommandProcessor(void* params)
 {
     if (params != NULL) {
@@ -624,28 +656,47 @@ bool remove_command(const char *name)
     return command_entry != NULL;
 }
 
+static int linklayer_set_inactive_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<mode>", "set linklayer inactive (1) or active(0)");
+    } else if (argc > 1) {
+        int inactive = strtol(argv[1], NULL, 10);
+        bool rc = linklayer_set_inactive(inactive);
+        if (! rc) {
+            ESP_LOGE(TAG, "linklayer_set_inactive returned false");
+        }
+    }
+
+    return 0;
+} 
+   
 void init_commands(void)
 {
     command_lock = os_create_recursive_mutex();
 
     os_acquire_recursive_mutex(command_lock);
 
-    add_command("help",       help_command);
-    add_command("?",          help_command);
-    add_command("mem",        memory_command);
+    add_command("help",        help_command);
+    add_command("?",           help_command);
+    add_command("mem",         memory_command);
 #ifdef CONFIG_SSD1306_I2C_ENABLED
-    add_command("contrast",   contrast_command);
+    add_command("contrast",    contrast_command);
 #endif /* CONFIG_SSD1306_I2C_ENABLED */
-    add_command("echo",       echo_command);
-    add_command("address",    address_command);
-    add_command("loglevel",   loglevel_command);
-    add_command("config",     config_command);
-    add_command("reboot",     reboot_command);
-    add_command("ps",         ps_command);
-    add_command("kill",       kill_command);
-    add_command("time",       time_command);
-    add_command("spawn",      spawn_command);
-    add_command("test",       test_command);
+    add_command("echo",        echo_command);
+    add_command("address",     address_command);
+    add_command("loglevel",    loglevel_command);
+    add_command("config",      config_command);
+    add_command("reboot",      reboot_command);
+    add_command("ps",          ps_command);
+    add_command("kill",        kill_command);
+    add_command("time",        time_command);
+    add_command("spawn",       spawn_command);
+    add_command("test",        test_command);
+#ifdef CONFIG_DHT_ENABLED
+    add_command("dht",         dht_command);
+#endif
+    add_command("setinactive", linklayer_set_inactive_command);
 
     os_release_recursive_mutex(command_lock);
 }

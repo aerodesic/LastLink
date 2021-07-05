@@ -73,6 +73,7 @@ bool os_peek_queue(os_queue_t queue, os_queue_item_t item);
 bool os_peek_queue_from_isr(os_queue_t queue, os_queue_item_t item);
 int os_items_in_queue_from_isr(os_queue_t queue);
 int os_items_in_queue(os_queue_t queue);
+void os_reset_queue(os_queue_t queue);
 
 /* Timers */
 os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer));

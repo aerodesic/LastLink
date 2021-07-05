@@ -24,6 +24,17 @@ choice
         depends on LASTLINK_RADIO_SX127x_ENABLED
 
     choice
+        prompt "Select power control for radio $(RADIO_NUM)"
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_NONE
+            bool "Radio power control not available"
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_LDO2
+            bool "Radio power controlled by LDO2"
+
+    endchoice
+
+    choice
         prompt "Radio configuration for radio $(RADIO_NUM)"
         default LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
         help
@@ -34,6 +45,9 @@ choice
        
         config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
             bool "TTGO"
+
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+            bool "TTGO T-Beam V1.0"
 
         config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
             bool "HELTEC"
@@ -66,6 +80,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -79,6 +95,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 35 35 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -92,6 +110,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 34 34 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -105,6 +125,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -118,6 +140,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 13  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 13 13 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -131,6 +155,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 12  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 12 12 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -144,6 +170,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 16  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 16 16 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -157,6 +185,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
         default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 23  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 23 23 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help

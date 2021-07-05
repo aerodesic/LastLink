@@ -23,6 +23,8 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_pm.h"
+#include "esp_heap_caps.h"
 #include "bootloader_random.h"
 
 #include "lwip/err.h"
@@ -49,6 +51,15 @@
 #include "mdns_config.h"
 #endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
+#if CONFIG_LASTLINK_POWER_SAVE_MIN_MODEM
+#define DEFAULT_PS_MODE WIFI_PS_MIN_MODEM
+#elif CONFIG_LASTLINK_POWER_SAVE_MAX_MODEM
+#define DEFAULT_PS_MODE WIFI_PS_MAX_MODEM
+#elif CONFIG_LASTLINK_POWER_SAVE_NONE
+#define DEFAULT_PS_MODE WIFI_PS_NONE
+#else
+#define DEFAULT_PS_MODE WIFI_PS_NONE
+#endif /*CONFIG_POWER_SAVE_MODEM*/
 #include "uuid.h"
 
 const char* TAG = "lastlink";
@@ -91,6 +102,28 @@ void app_main(void)
     }
 
 
+#if CONFIG_PM_ENABLE
+    // Configure dynamic frequency scaling:
+    // maximum and minimum frequencies are set in sdkconfig,
+    // automatic light sleep is enabled if tickless idle support is enabled.
+  #if CONFIG_IDF_TARGET_ESP32
+    esp_pm_config_esp32_t pm_config = {
+  #elif CONFIG_IDF_TARGET_ESP32S2
+    esp_pm_config_esp32s2_t pm_config = {
+  #elif CONFIG_IDF_TARGET_ESP32C3
+    esp_pm_config_esp32c3_t pm_config = {
+  #endif
+            .max_freq_mhz = CONFIG_LASTLINK_MAX_CPU_FREQ_MHZ,
+            .min_freq_mhz = CONFIG_LASTLINK_MIN_CPU_FREQ_MHZ,
+  #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+            .light_sleep_enable = true
+  #endif
+    };
+    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
+#endif // CONFIG_PM_ENABLE
+
+    ESP_LOGI(TAG, "esp_wifi_set_ps: %x", DEFAULT_PS_MODE);
+    esp_wifi_set_ps(DEFAULT_PS_MODE);
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
@@ -136,7 +169,7 @@ void app_main(void)
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
 
-    linklayer_set_debug(true);
+    // linklayer_set_debug(true);
     bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
 
     linklayer_set_listen_only(listen_only);

@@ -89,18 +89,6 @@ static service_cache_t* create_service(const char* name)
     return service;
 }
 
-/*
- * Add a service entry to the table.
- */
-static void add_service(service_cache_t *service)
-{
-    os_acquire_recursive_mutex(service_lock);
-
-    ADD_TO_LIST(&service_cache, service);
-
-    os_release_recursive_mutex(service_lock);
-}
-
 static service_cache_t *remove_service(service_cache_t *service)
 {
     os_acquire_recursive_mutex(service_lock);
@@ -163,7 +151,7 @@ static service_cache_t *create_service_by_name(const char* name)
             service->port = 0;
             simpletimer_stop(&service->timer);
 
-            add_service(service);
+            ADD_TO_LIST(&service_cache, service);
         }
     }
 
@@ -231,6 +219,8 @@ ESP_LOGD(TAG, "%s: announce: from %d: '%s' %s port %d lifetime %d", __func__, se
                     service_cache_t *service = (service_cache_t*) FIRST_LIST_ITEM(&service_cache);
 
                     while (service != NULL) {
+                        // ESP_LOGD(TAG, "%s: looking at service %p: '%s' address %d port %d", __func__, service, service->name, service->address, service->port);
+
                         if (simpletimer_is_expired(&service->timer)) {
                             /* If local service - re-announce */
                             if (service->address == NULL_ADDRESS) {
@@ -344,8 +334,6 @@ bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_po
 
         /* Expire the timer so it gets published immediately */
         simpletimer_set_expired(&service->timer);
-
-        add_service(service);
     }
 
     os_release_recursive_mutex(service_lock);
