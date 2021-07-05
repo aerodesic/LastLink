@@ -9,6 +9,7 @@
 #ifndef __linklayer_h_included
 #define __linklayer_h_included
 
+#include <time.h>
 #include "packets.h"
 #include "radio.h"
 #include "esp_vfs.h"
@@ -78,7 +79,7 @@ packet_t* generic_packet_create(int address, int protocol, int length);
 #define BEACON_LEN                     (BEACON_NAME + BEACON_NAME_LEN - HEADER_LEN)
 #define BEACON_PROTOCOL                0
 
-packet_t* beacon_packet_create(const char*name);
+packet_t* beacon_packet_create(const char*name, bool reset_sequence);
 
 
 /*******************************************************************************************

@@ -374,8 +374,12 @@ packet_t* linklayer_create_generic_packet(int dest, int protocol, int length)
 /*
  * Create a Beacon packet
  */
-packet_t* beacon_packet_create(const char* name)
+packet_t* beacon_packet_create(const char* name, bool reset_sequence)
 {
+    if (name == NULL) {
+        name = CONFIG_LASTLINK_DEFAULT_BEACON_NAME;
+    }
+
     int length = strlen(name);
     if (length > BEACON_NAME_LEN) {
         length = BEACON_NAME_LEN;
@@ -385,6 +389,9 @@ packet_t* beacon_packet_create(const char* name)
     if (packet != NULL) {
         set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); /* Large metric so it doesn't get retransmitted */
+        if (reset_sequence) {
+            set_bits_field(packet, HEADER_FLAGS, FLAGS_LEN, HEADER_FLAGS_RESET_SEQUENCE);
+        }
         int moved = set_str_field(packet, BEACON_NAME, length, name);
         /* Update packet length */
         packet->length = HEADER_LEN + moved;
@@ -401,7 +408,6 @@ static bool beacon_packet_process(packet_t* packet)
 
     if (packet != NULL) {
         const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
-
         ESP_LOGD(TAG, "Beacon: dest %d origin %d routeto %d sender %d metric %d name '%s'",
                  get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),
                  get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
@@ -486,7 +492,7 @@ static const char* routeannounce_packet_format(const packet_t* packet)
 {
     char* info;
 
-    int flags = get_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN);
+    unsigned int flags = get_uint_field(packet, ROUTEANNOUNCE_FLAGS, FLAGS_LEN);
 
     asprintf(&info, "Route Announce: flags %02x", flags);
 
@@ -1597,7 +1603,7 @@ bool linklayer_init(int address, int flags, int announce)
     if (ok) {
 #if DEBUG
         /* Get a free packet */
-        packet_t* packet = allocate_packet();
+        packet_t *packet = allocate_packet();
         ESP_LOGD(TAG, "allocate_packet returned %p (ref %d, length %d)", packet, packet->ref, packet->length);
 
         /* Show packets available */
@@ -1656,6 +1662,10 @@ bool linklayer_init(int address, int flags, int announce)
     }
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
 
+#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+    /* Send a sequence number reset beacon */
+    linklayer_route_packet(beacon_packet_create(NULL, true));
+#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("ll", linklayer_print_status);

@@ -391,12 +391,29 @@ menu "LastLink Configuration"
             help
                 The maximum METRIC value (distance from origin)
 
+        config LASTLINK_DEFAULT_BEACON_NAME
+           string "Default name for beacon"
+           default "LastLink"
+           help
+               Use this name for the beacon if none given in API.
+           
         config LASTLINK_BEACON_NAME_LENGTH
            int "Length of name in beacon packet"
            default 16
            range 10 128
            help
                The number of bytes available for a node name in the beacon.
+
+        config LASTLINK_SEND_INITIAL_RESET_BEACON
+           bool "Send initial RESET SEQUENCE NUMBERS beacon"
+           default true
+           help
+               On boot, send a BEACON packet with the 'reset sequence' flag
+               set so to cause all receivers to reset the sequence numbers
+               for the originator.  Note this is 'advisory' in that the
+               ignored 'in sequence' sequence numbers will eventually be
+               detected as 'out of sequence' and an internal reset on the
+               receiving node will be performed. 
 
         config LASTLINK_REASON_LENGTH
            int "Length of reason field in RouteError"

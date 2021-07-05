@@ -2,6 +2,9 @@
  * httpd_templates.c
  */
 
+#include "sdkconfig.h"
+#ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
+
 #include <esp_log.h>
 
 #include <stdio.h>
@@ -1009,3 +1012,4 @@ void release_httpd_templates(void)
     }
 }
 
+#endif  /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
