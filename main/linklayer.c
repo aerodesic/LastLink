@@ -385,16 +385,17 @@ packet_t* beacon_packet_create(const char* name, bool reset_sequence)
         length = BEACON_NAME_LEN;
     }
 
-    packet_t* packet = linklayer_create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length);
+    packet_t* packet = linklayer_create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length + 1);
     if (packet != NULL) {
         set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
         set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); /* Large metric so it doesn't get retransmitted */
         if (reset_sequence) {
             set_bits_field(packet, HEADER_FLAGS, FLAGS_LEN, HEADER_FLAGS_RESET_SEQUENCE);
         }
-        int moved = set_str_field(packet, BEACON_NAME, length, name);
-        /* Update packet length */
-        packet->length = HEADER_LEN + moved;
+        set_str_field(packet, BEACON_NAME, length, name);
+        //int moved = set_str_field(packet, BEACON_NAME, length, name);
+        ///* Update packet length */
+        //packet->length = HEADER_LEN + moved;
     }
     return packet;
 }
@@ -407,7 +408,12 @@ static bool beacon_packet_process(packet_t* packet)
     bool handled = false;
 
     if (packet != NULL) {
-        const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
+        /* Beacon name is last field.  If the available data is shorter than the max, truncate boundary */
+        int beacon_len = BEACON_NAME_LEN;
+        if (beacon_len > packet->length - BEACON_NAME) {
+            beacon_len = packet->length - BEACON_NAME;
+        }
+        const char* name = get_str_field(packet, BEACON_NAME, beacon_len);
         ESP_LOGD(TAG, "Beacon: dest %d origin %d routeto %d sender %d metric %d name '%s'",
                  get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN),
                  get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN),
@@ -430,7 +436,12 @@ static const char* beacon_packet_format(const packet_t* packet)
 {
     char* info;
 
-    const char* name = get_str_field(packet, BEACON_NAME, BEACON_NAME_LEN);
+    /* Beacon name is last field.  If the available data is shorter than the max, truncate boundary */
+    int beacon_len = BEACON_NAME_LEN;
+    if (beacon_len > packet->length - BEACON_NAME) {
+        beacon_len = packet->length - BEACON_NAME;
+    }
+    const char* name = get_str_field(packet, BEACON_NAME, beacon_len);
 
     asprintf(&info, "Beacon: %s", name);
 
@@ -1368,10 +1379,12 @@ static void linklayer_process_received_packets(void *param)
                         reset_duplicate(&duplicate_sequence_numbers, origin);
                     }
 
+                    /* If invalid, ignore it */
                     if (!is_valid_address(sender)) {
                         /* Ignored */
-                    } else if (is_duplicate(&duplicate_sequence_numbers, origin, sequence)) {
-                        /* Duplicate */
+                    } else /*if duplicate and RESET_SEQUECE is not set*/
+                    if (is_duplicate(&duplicate_sequence_numbers, origin, sequence) && ! (get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_RESET_SEQUENCE)) {
+                        /* Duplicate if */
 if (debug_flag) {
   linklayer_print_packet("duplicate", packet);
 }
@@ -1586,6 +1599,23 @@ static int linklayer_debug_flag(int argc, const char **argv)
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
+#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+static int send_reset_beacon(int argc, const char** argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "Send Reset Sequence Beacon");
+    } else {
+        /* Send a sequence number reset beacon */
+        //packet_t *beacon = beacon_packet_create(NULL, false);
+        packet_t *beacon = beacon_packet_create(NULL, true);
+        linklayer_print_packet("send_reset_beacon", beacon);
+        //dump_buffer("send_reset_beacon", beacon->buffer, beacon->length);
+        linklayer_route_packet(beacon);
+    }
+    return 0;
+}
+#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
+
 /* Creates the linklayer */
 bool linklayer_init(int address, int flags, int announce)
 {
@@ -1662,14 +1692,16 @@ bool linklayer_init(int address, int flags, int announce)
     }
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
 
-#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
-    /* Send a sequence number reset beacon */
-    linklayer_route_packet(beacon_packet_create(NULL, true));
-#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
+//#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+//    /* Send a sequence number reset beacon */
+//    //linklayer_route_packet(beacon_packet_create(NULL, true));
+//    linklayer_route_packet(beacon_packet_create(NULL, false));
+//#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("ll", linklayer_print_status);
     add_command("ldb", linklayer_debug_flag);
+    add_command("srb", send_reset_beacon);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;
@@ -1700,6 +1732,9 @@ bool linklayer_set_inactive(bool inactive)
 bool linklayer_deinit(void)
 {
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+  #if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+    remove_command("srb");
+  #endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
     remove_command("ll");
     remove_command("ldb");
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */

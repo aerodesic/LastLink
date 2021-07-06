@@ -162,17 +162,18 @@ void app_main(void)
 
     /* load config file */
     init_configuration(CONFIG_LASTLINK_CONFIG_FILE);
+
+    linklayer_set_debug(get_config_int("lastlink.debug_flag", 0) != 0);
+    bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
+
+    linklayer_set_listen_only(listen_only);
+
     /* initialize the lastlink network */
     #if CONFIG_LASTLINK_ADDRESS_OVERRIDE
         linklayer_init(CONFIG_LASTLINK_ADDRESS_OVERRIDE, get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #else
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
-
-    // linklayer_set_debug(true);
-    bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
-
-    linklayer_set_listen_only(listen_only);
 
     //linklayer_set_channel_and_datarate(-1, get_config_int("lastlink.channel", 0), get_config_int("lastlink.datarate", 0));
 

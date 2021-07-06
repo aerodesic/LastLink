@@ -360,15 +360,14 @@ menu "LastLink Configuration"
             help
                 The number of bytes in a SEQUENCE_NUMBER field.
 
-#        config LASTLINK_SEQUENCE_NUMBER_DUPLICATE_RANGE
-#            int "Sequence number duplicate range"
-#            default 32
-#            range 16 32768
-#            help
-#                Sequence numbers closer than this to last sequence
-#                number are considered duplicate and discarded.  This
-#                number needs be large than the window size and should
-#                be several times larger.
+        config LASTLINK_MAX_SEQUENCE_DUPLICATE_COUNT
+            int "Max number of out-of-sequence packets before we reset sequence."
+            default 5
+            range 5 64
+            help
+                This is a maximum number of out-of-sequence packages that will be
+                rejected before we reset the duplicate packet detector and start
+                accepting packages again.
 
         config LASTLINK_INTERVAL_LENGTH
             int "Length of a interval number"

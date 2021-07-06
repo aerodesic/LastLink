@@ -21,6 +21,7 @@ typedef struct duplicate_sequence {
     duplicate_sequence_t *prev;
     int                  address;
     int                  sequence;
+    int                  count;
 } duplicate_sequence_t;
 
 void reset_duplicate(duplicate_sequence_list_t *duplist, int address);

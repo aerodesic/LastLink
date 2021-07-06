@@ -1,0 +1,21 @@
+#
+# Define stuff for AXP192 power controller.
+#
+menu "AXP192 Configuration"
+
+    config AXP192_ENABLED
+        bool "Enable AXP192 support"
+        default n
+
+    config AXP192_BATTERY_PIN
+        depends on AXP192_ENABLED
+        int "Pin for ADC to read battery"
+        default 0
+
+    config AXP192_SLAVE_ADDRESS
+        int "Slave address for AXP192"
+        depends on AXP192_ENABLED
+
+ 
+endmenu
+
