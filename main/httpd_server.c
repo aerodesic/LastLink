@@ -18,6 +18,7 @@
 #include <esp_https_server.h>
 #endif
 
+#include "esp_pm.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
 #include "network_connect.h"
@@ -31,6 +32,10 @@
 #define TEMP_URL_BUFFER_LEN     200
 
 static const char *TAG = "LastLinkWeb";
+
+#ifdef CONFIG_PM_ENABLE
+static DRAM_ATTR esp_pm_lock_handle_t s_light_sleep_pm_lock;
+#endif
 
 typedef uuid_text_trimmed_t    authtoken_value_t;
 
@@ -522,6 +527,11 @@ static httpd_handle_t start_https_webserver(void)
 {
     httpd_handle_t server = NULL;
 
+#ifdef CONFIG_PM_ENABLE
+    /* Lock out light sleep */
+    esp_pm_lock_acquire(s_light_sleep_pm_lock);
+#endif
+
     // Start the httpd server
     ESP_LOGI(TAG, "Starting https server");
 
@@ -570,6 +580,11 @@ static void stop_https_webserver(httpd_handle_t server)
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
+
+#ifdef CONFIG_PM_ENABLE
+    /* Allow light sleep */
+    esp_pm_lock_release(s_light_sleep_pm_lock);
+#endif
 }
 
 static void disconnect_https_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -620,6 +635,11 @@ static httpd_handle_t start_http_webserver(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
 
+#ifdef CONFIG_PM_ENABLE
+    /* Lock out light sleep */
+    esp_pm_lock_acquire(s_light_sleep_pm_lock);
+#endif
+
     // Start the httpd server
     ESP_LOGI(TAG, "Starting http server");
 
@@ -653,6 +673,11 @@ static void stop_http_webserver(httpd_handle_t server)
 {
     // Stop the httpd server
     httpd_stop(server);
+
+#ifdef CONFIG_PM_ENABLE
+    /* Allow out light sleep */
+    esp_pm_lock_release(s_light_sleep_pm_lock);
+#endif
 }
 
 static void disconnect_http_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
@@ -690,6 +715,10 @@ void httpd_server_start(void)
 {
     authtoken_lock = os_create_recursive_mutex();
 
+#ifdef CONFIG_PM_ENABLE
+    ESP_ERROR_CHECK(esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "httpLS", &s_light_sleep_pm_lock));
+#endif
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -719,8 +748,13 @@ void httpd_server_start(void)
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 }
 
-void http_server_stop(void)
+void httpd_server_stop(void)
 {
+#ifdef CONFIG_PM_ENABLE
+    ESP_ERROR_CHECK(esp_pm_lock_delete(s_light_sleep_pm_lock));
+    s_light_sleep_pm_lock = NULL;
+#endif
+
     ESP_ERROR_CHECK(network_disconnect());
     ESP_ERROR_CHECK(esp_event_loop_delete_default());
 

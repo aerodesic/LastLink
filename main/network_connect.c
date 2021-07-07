@@ -112,7 +112,7 @@ esp_err_t network_connect(void)
 #ifdef CONFIG_LASTLINK_CONNECT_IPV6
             esp_ip6_addr_t ip6[MAX_IP6_ADDRS_PER_NETIF];
             int ip6_addrs = esp_netif_get_all_ip6(netif, ip6);
-            for (int j=0; j< ip6_addrs; ++j) {
+            for (int j = 0; j < ip6_addrs; ++j) {
                 esp_ip6_addr_type_t ipv6_type = esp_netif_ip6_get_addr_type(&(ip6[j]));
                 ESP_LOGI(TAG, "- IPv6 address: " IPV6STR ", type: %s", IPV62STR(ip6[j]), s_ipv6_addr_types[ipv6_type]);
             }
