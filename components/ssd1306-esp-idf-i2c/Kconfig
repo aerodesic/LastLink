@@ -1,0 +1,80 @@
+#
+# Define stuff for SSD1306 radio if needed
+#
+menu "SSD1306 Configuration"
+
+    config SSD1306_I2C_ENABLED
+        bool "Enable SSD1306 display"
+        default y
+ 
+    config SSD1306_I2C_WIDTH
+        depends on SSD1306_I2C_ENABLED
+        int "Width in pixels"
+        default 128
+
+    config SSD1306_I2C_HEIGHT
+        depends on SSD1306_I2C_ENABLED
+        int "Height in pixels"
+        default 64
+
+    config SSD1306_I2C_CHANNEL_NUMBER
+        depends on SSD1306_I2C_ENABLED
+        int "I2C channel number (0 or 1)"
+        range 0 1
+        default 0
+
+    config SSD1306_I2C_SCL_GPIO
+        depends on SSD1306_I2C_ENABLED
+        int "GPIO for SCL pin"
+        default 15
+
+    config SSD1306_I2C_SDA_GPIO
+        depends on SSD1306_I2C_ENABLED
+        int "GPIO for SDA pin"
+        default 4
+
+    config SSD1306_I2C_RESET_GPIO
+        depends on SSD1306_I2C_ENABLED
+        int "GPIO for RESET pin"
+        default 16
+
+    config SSD1306_I2C_CLK_SPEED
+        depends on SSD1306_I2C_ENABLED
+        int "I2C Clock speed"
+        default 100000
+
+    config SSD1306_I2C_ADDR
+        depends on SSD1306_I2C_ENABLED
+        hex "SSD1306 address"
+        default 0x3C
+
+    config DISPLAY_EXTRA_FEATURES
+        bool "Enable extra features"
+        depends on SSD1306_I2C_ENABLED
+        default y
+
+    config DISPLAY_RECTANGLE_ENABLED
+        bool "Enable draw_rectangle"
+        depends on DISPLAY_EXTRA_FEATURES
+        select DISPLAY_LINE_ENABLED
+        default y
+
+    config DISPLAY_LINE_ENABLED
+        bool "Enable draw_line"
+        depends on DISPLAY_EXTRA_FEATURES
+        select DISPLAY_PIXEL_ENABLED
+        default y
+
+    config DISPLAY_PIXEL_ENABLED
+        bool "Enable draw_pixel"
+        depends on DISPLAY_EXTRA_FEATURES
+        default y
+
+    config DISPLAY_PROGRESS_BAR_ENABLED
+        bool "Enable draw_progress_bar"
+        depends on DISPLAY_EXTRA_FEATURES
+        select DISPLAY_LINE_ENABLED
+        select DISPLAY_RECTANGLE_ENABLED
+        default y
+endmenu
+

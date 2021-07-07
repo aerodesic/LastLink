@@ -6,17 +6,22 @@
 PROJECT_NAME := LastLink
 
 COMPONENTS := main
+
+# Local components
+COMPONENTS += dht
+COMPONENTS += ssd1306-esp-idf-i2c
+
+# sdk components
 COMPONENTS += app_trace
 COMPONENTS += app_update
 COMPONENTS += bootloader
 COMPONENTS += console
-COMPONENTS += dht
 COMPONENTS += driver
 COMPONENTS += efuse
 COMPONENTS += esp32
 # COMPONENTS += espcoredump
 COMPONENTS += esptool_py
-COMPONENTS += esp_adc_cal
+# COMPONENTS += esp_adc_cal
 COMPONENTS += esp_common
 COMPONENTS += esp_eth
 COMPONENTS += esp_event
@@ -36,7 +41,7 @@ COMPONENTS += esp_wifi
 COMPONENTS += freertos
 COMPONENTS += hal
 COMPONENTS += heap
-COMPONENTS += idf_test
+# COMPONENTS += idf_test
 COMPONENTS += json
 COMPONENTS += log
 COMPONENTS += lwip
@@ -48,7 +53,6 @@ COMPONENTS += nghttp
 COMPONENTS += nvs_flash
 COMPONENTS += partition_table
 COMPONENTS += pthread
-COMPONENTS += ssd1306-esp-idf-i2c
 COMPONENTS += soc
 COMPONENTS += spiffs
 COMPONENTS += spi_flash
