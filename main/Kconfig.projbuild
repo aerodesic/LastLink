@@ -185,9 +185,11 @@ menu "LastLink Configuration"
         help
             Max number of the STA connects to AP.
 
-    config LASTLINK_LED_ACTIVITY_GPIO
+    config LASTLINK_GLOBAL_LED_ACTIVITY_GPIO
         int "Activity (TRANSMIT) led GPIO"
-        default 0
+        default -1
+        help
+            A global activity indicator that comes on for any traffic in progress.
 
     menu "Radio configuration"
         config LASTLINK_RADIO_SX126x_ENABLED
@@ -396,6 +398,19 @@ menu "LastLink Configuration"
            help
                Use this name for the beacon if none given in API.
            
+        config LASTLINK_DEFAULT_BEACON_INTERVAL
+           int "Beacon transmit interval (0 to disable)"
+           default 0
+           help
+               Transmit beacon every N seconds.
+           
+        config LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER
+           int "Randomizer for beacon interval"
+           depends on LASTLINK_DEFAULT_BEACON_INTERVAL != 0
+           default 3
+           help
+               A number between -N and N is added to each beacon interval
+           
         config LASTLINK_BEACON_NAME_LENGTH
            int "Length of name in beacon packet"
            default 16
@@ -412,7 +427,9 @@ menu "LastLink Configuration"
                for the originator.  Note this is 'advisory' in that the
                ignored 'in sequence' sequence numbers will eventually be
                detected as 'out of sequence' and an internal reset on the
-               receiving node will be performed. 
+               receiving node will be performed.   Note this beacon will
+               be routed out as it's sent with the metric of 0.  Other
+               automatic beacons are never routed.
 
         config LASTLINK_REASON_LENGTH
            int "Length of reason field in RouteError"

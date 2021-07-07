@@ -41,7 +41,6 @@ os_semaphore_t* os_thread_sem_get(void)
 
 os_semaphore_t* os_thread_sem_init(void)
 {
-    //os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t*));
     os_semaphore_t *psem = (os_semaphore_t*) malloc(sizeof(os_semaphore_t));
     if (psem) {
         *psem = os_create_binary_semaphore();
@@ -275,14 +274,14 @@ void os_reset_queue(os_queue_t queue)
     xQueueReset(queue);
 }
 
-os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer))
+os_timer_t os_create_timer(const char* name, int period, void* param, void (*function)(os_timer_t xTimer))
 {
     int ticks = pdMS_TO_TICKS(period);
 
     return xTimerCreate(name, ticks ? ticks : 1, pdFALSE, param, function);
 }
 
-os_timer_t os_create_repeating_timer(const char* name, int period, void* param, void (*function)(TimerHandle_t xTimer))
+os_timer_t os_create_repeating_timer(const char* name, int period, void* param, void (*function)(os_timer_t xTimer))
 {
     int ticks = pdMS_TO_TICKS(period);
 

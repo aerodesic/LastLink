@@ -75,6 +75,7 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
 static void linklayer_receive_packet(packet_t* packet);
+
 static void linklayer_activity_indicator(radio_t* radio, bool active);
 
 static void reset_device(radio_t* radio);
@@ -104,6 +105,9 @@ static int                        receive_only_from[CONFIG_LASTLINK_RECEIVE_ONLY
 static radio_t**                  radio_table;
 static int                        activity_count = -1;
 static os_mutex_t                 transmit_lock;       /* Shared with all transmitters through route_t structure.  lock_transmit_queue(radio, true/false) */
+#if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL != 0
+static os_timer_t                 beacon_timer;
+#endif
 
 typedef struct protocol_entry {
     bool        (*process)(packet_t*);                 /* Process function; return true if processed */
@@ -118,17 +122,18 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
 /*
  * Configuration
  */
-#define SPI_GPIO_DIO0      0
-#define SPI_GPIO_DIO1      1
-#define SPI_GPIO_DIO2      2
-#define SPI_GPIO_SCK       3
-#define SPI_GPIO_MOSI      4
-#define SPI_GPIO_MISO      5
-#define SPI_GPIO_SS        6
-#define SPI_GPIO_RESET     7
-#define SPI_NUM_GPIO       8
-
-#define MAX_RADIO_GPIO     SPI_NUM_GPIO
+// #define SPI_GPIO_DIO0      0
+// #define SPI_GPIO_DIO1      1
+// #define SPI_GPIO_DIO2      2
+// #define SPI_GPIO_SCK       3
+// #define SPI_GPIO_MOSI      4
+// #define SPI_GPIO_MISO      5
+// #define SPI_GPIO_SS        6
+// #define SPI_GPIO_RESET     7
+// #define SPI_GPIO_ACTIVITY  8
+// #define SPI_NUM_GPIO       9
+// 
+// #define MAX_RADIO_GPIO     SPI_NUM_GPIO
 
 #define RADIO_CONFIG_EXPAND(name_begin, radio, name_end) name_begin##_##radio##_##name_end
 
@@ -144,6 +149,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),                     \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),                     \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),                     \
+    .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_ACTIVITY),                 \
     .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET),                    \
     .spi_sck                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),                      \
     .spi_mosi                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),                     \
@@ -168,6 +174,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),                      \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),                      \
+    .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_ACTIVITY),                  \
     .i2c_blah1                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),                     \
     .i2c_blah2                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),                     \
    },
@@ -184,6 +191,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),                      \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),                      \
+    .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_ACTIVITY),                  \
     .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),                     \
     .dev                             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),                       \
    },
@@ -388,9 +396,13 @@ packet_t* beacon_packet_create(const char* name, bool reset_sequence)
     packet_t* packet = linklayer_create_generic_packet(BROADCAST_ADDRESS, BEACON_PROTOCOL, length + 1);
     if (packet != NULL) {
         set_uint_field(packet, HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, BROADCAST_ADDRESS);
-        set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); /* Large metric so it doesn't get retransmitted */
         if (reset_sequence) {
+            /* Leave metric as is so it gets retransmitted */
+            /* Set the header flag to reset the sequence field cache */
             set_bits_field(packet, HEADER_FLAGS, FLAGS_LEN, HEADER_FLAGS_RESET_SEQUENCE);
+        } else {
+            /* Large metric so it doesn't get retransmitted */
+            set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); 
         }
         set_str_field(packet, BEACON_NAME, length, name);
         //int moved = set_str_field(packet, BEACON_NAME, length, name);
@@ -958,6 +970,20 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->reset_device = reset_device;
     radio->lock_transmit_queue = linklayer_lock_transmit_queue;
 
+    /* Initialize some gpios needed */
+    if (radio_config[radio->radio_num].activity >= 0) {
+        /* Configure per-radio activity indicator */
+        gpio_config_t io = {
+            .intr_type = GPIO_PIN_INTR_DISABLE,
+            .mode = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << radio_config[radio->radio_num].activity,
+            .pull_down_en = 0,
+            .pull_up_en = 0,
+        };
+
+        gpio_config(&io);
+    }
+
     return true;
 }
 
@@ -1456,22 +1482,22 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
 {
 //ESP_LOGI(TAG, "%s: active %s", __func__, active ? "TRUE" : "FALSE");
 
+
     if (activity_count < 0) {
+#if defined(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO) && CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO >= 0
 //ESP_LOGI(TAG, "%s: initialize activity GPIO %d", __func__, CONFIG_LASTLINK_LED_ACTIVITY_GPIO);
 
+        /* Configure per-radio activity indicator */
         gpio_config_t io = {
             .intr_type = GPIO_PIN_INTR_DISABLE,
             .mode = GPIO_MODE_OUTPUT,
-            .pin_bit_mask = 1ULL << CONFIG_LASTLINK_LED_ACTIVITY_GPIO,
+            .pin_bit_mask = 1ULL << CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO,
             .pull_down_en = 0,
             .pull_up_en = 0,
         };
 
         gpio_config(&io);
-
-        io.pin_bit_mask = 1ULL << 2; /* Do second port */
-        gpio_config(&io);
-
+#endif
         activity_count = 0;
     }
 
@@ -1483,8 +1509,14 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
         ESP_LOGE(TAG, "%s: trying to set activity_count < 0", __func__);
     }
 
-    gpio_set_level(CONFIG_LASTLINK_LED_ACTIVITY_GPIO, activity_count != 0);
-    gpio_set_level(2, activity_count != 0);
+#if defined(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO) && CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO >= 0
+    gpio_set_level(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO, activity_count != 0);
+#endif
+
+    /* Turn on individual radio activity is present */
+    if (radio_config[radio->radio_num].activity >= 0) {
+        gpio_set_level(radio_config[radio->radio_num].activity, active);
+    }
 }
 
 void linklayer_print_packet(const char* reason, packet_t* packet)
@@ -1599,22 +1631,34 @@ static int linklayer_debug_flag(int argc, const char **argv)
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
-#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
-static int send_reset_beacon(int argc, const char** argv)
+#if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL != 0
+static void send_beacon(os_timer_t timer_id)
 {
-    if (argc == 0) {
-        show_help(argv[0], "", "Send Reset Sequence Beacon");
-    } else {
-        /* Send a sequence number reset beacon */
-        //packet_t *beacon = beacon_packet_create(NULL, false);
-        packet_t *beacon = beacon_packet_create(NULL, true);
-        linklayer_print_packet("send_reset_beacon", beacon);
-        //dump_buffer("send_reset_beacon", beacon->buffer, beacon->length);
-        linklayer_route_packet(beacon);
-    }
-    return 0;
+    linklayer_route_packet(beacon_packet_create(NULL, (bool) (os_get_timer_data(timer_id))));
+
+  #if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER != 0
+    /* Reset timer to next random interval */
+    os_set_timer(timer_id, (CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL + os_urandom() % (2*CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER) - CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER) * 1000);
+  #endif
 }
-#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
+#endif
+
+// #if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+// static int send_reset_beacon(int argc, const char** argv)
+// {
+//     if (argc == 0) {
+//         show_help(argv[0], "", "Send Reset Sequence Beacon");
+//     } else {
+//         /* Send a sequence number reset beacon */
+//         //packet_t *beacon = beacon_packet_create(NULL, false);
+//         packet_t *beacon = beacon_packet_create(NULL, true);
+//         linklayer_print_packet("send_reset_beacon", beacon);
+//         //dump_buffer("send_reset_beacon", beacon->buffer, beacon->length);
+//         linklayer_route_packet(beacon);
+//     }
+//     return 0;
+// }
+// #endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 /* Creates the linklayer */
 bool linklayer_init(int address, int flags, int announce)
@@ -1692,16 +1736,26 @@ bool linklayer_init(int address, int flags, int announce)
     }
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_LAYER */
 
-//#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
-//    /* Send a sequence number reset beacon */
-//    //linklayer_route_packet(beacon_packet_create(NULL, true));
-//    linklayer_route_packet(beacon_packet_create(NULL, false));
-//#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
+#if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL != 0
+  #if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER == 0
+    beacon_timer = os_create_repeating_timer("beacon", CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL * 1000, (void*) false, send_beacon);
+  #else
+    beacon_timer = os_create_timer("beacon",
+                                   (CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL + os_urandom() % (2*CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER) - CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER) * 1000,
+                                   (void*) false, send_beacon);
+  #endif
+  os_start_timer(beacon_timer);
+#endif
+
+#if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
+    /* Send a sequence number reset beacon */
+    linklayer_route_packet(beacon_packet_create(NULL, true));
+#endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("ll", linklayer_print_status);
     add_command("ldb", linklayer_debug_flag);
-    add_command("srb", send_reset_beacon);
+//  add_command("srb", send_reset_beacon);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;
@@ -1740,6 +1794,12 @@ bool linklayer_deinit(void)
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     if (linklayer_lock()) {
+
+#if CONFIG_LASTLINK_DEFAULT_BEACON_INTERVAL != 0
+        os_stop_timer(beacon_timer);
+        os_delete_timer(beacon_timer);
+        beacon_timer = 0;
+#endif
 
 #if CONFIG_LASTLINK_ENABLE_SOCKET_LAYER
         ls_socket_deinit();

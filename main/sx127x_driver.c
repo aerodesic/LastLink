@@ -575,7 +575,9 @@ static bool tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
     data->irq_flags &= ~SX127x_IRQ_TX_DONE;
 
     data->tx_interrupts++;
-    radio->activity_indicator(radio, false);
+    if (radio->activity_indicator != NULL) {
+        radio->activity_indicator(radio, false);
+    }
 
     bool priority = false;
 
@@ -643,10 +645,12 @@ static void tx_recycle_packet(radio_t *radio, sx127x_private_data_t *data)
 
 static void tx_start_packet(radio_t *radio, sx127x_private_data_t *data)
 {
-   start_packet(radio);
-   write_packet(radio, data->current_packet);
-   set_transmit_mode(radio);
-   radio->activity_indicator(radio, true);
+    start_packet(radio);
+    write_packet(radio, data->current_packet);
+    set_transmit_mode(radio);
+    if (radio->activity_indicator != NULL) {
+        radio->activity_indicator(radio, true);
+    }
 }
 
 

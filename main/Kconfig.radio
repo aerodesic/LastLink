@@ -192,6 +192,21 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         help
             Connection for the RESET line
 
+    config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_ACTIVITY
+        int "Activity LED"
+        default -1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        range 1 36  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
+        default 25  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        range 25 25 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
+        default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
+        default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default -1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        range -1 -1 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
+        help
+            Connection for the ACTIVITY LED indicator
+
     config LASTLINK_RADIO_$(RADIO_NUM)_SPI_CLOCK_HZ
         int "SPI Clock speed"
         default 10000000

@@ -556,7 +556,7 @@ void CommandProcessor(void* params)
     if (params != NULL) {
         command_param_t *io = (command_param_t*) params;
 
-        ESP_LOGE(TAG, "CommandProcess in %d out %d", fileno(io->in), fileno(io->out));
+        ESP_LOGD(TAG, "CommandProcess in %d out %d", fileno(io->in), fileno(io->out));
 
         stdin = io->in;
         stdout = io->out;
@@ -567,7 +567,7 @@ void CommandProcessor(void* params)
 
     bool running = true;
 
-    ESP_LOGE(TAG, "stdin is %p fd %d  stdout is %p fd %d", stdin, fileno(stdin), stdout, fileno(stdout));
+    ESP_LOGD(TAG, "stdin is %p fd %d  stdout is %p fd %d", stdin, fileno(stdin), stdout, fileno(stdout));
 
     printf("********************************************************\n");
     printf("CommandProcessor running\n");
