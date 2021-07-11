@@ -256,5 +256,14 @@ menu "Radio $(RADIO_NUM) SPI configuration"
             It is expressed as a percentage of calculated maximum message
             length at the selected bandwidth / coding_rate / spread_factor.
 
+    config LASTLINK_RADIO_$(RADIO_NUM)_CAD_RESTART_DELAY
+        int "mS to wait for CAD state restart"
+        default 0
+        range 0 1000
+        help
+            This slows down re-entry into and detection of packets with
+            the benefit of reducing power requirements and allowing the
+            radio to sleep.
+
 endmenu
 

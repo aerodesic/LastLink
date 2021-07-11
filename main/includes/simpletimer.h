@@ -146,7 +146,8 @@ static inline bool simpletimer_is_expired_or_remaining(simpletimer_t *timer, uin
 
 static inline void simpletimer_restart(simpletimer_t *timer)
 {
-    timer->target = get_milliseconds() + timer->interval;
+    //timer->target = get_milliseconds() + timer->interval;
+    timer->target += timer->interval;
     timer->state = ST_RUNNING;
 }
 

@@ -96,7 +96,7 @@ void show_help(const char* name, const char *params, const char *description)
 }
 
 /**********************************************************************/
-/* test <blah> <blah> <blah>                                          */
+/* echo <blah> <blah> <blah>                                          */
 /**********************************************************************/
 static int echo_command(int argc, const char **argv)
 {
@@ -511,15 +511,6 @@ int spawn_command(int argc, const char **argv)
     return results;
 }
 
-int test_command(int argc, const char **argv)
-{
-    printf("%d args:\n", argc);
-    for (int arg = 0; arg < argc; ++arg) {
-        printf("   %d: '%s'\n", arg, argv[arg]);
-    }
-    return 0;
-}
-
 #ifdef CONFIG_DHT_ENABLED
 #include "dht.h"
 
@@ -692,7 +683,6 @@ void init_commands(void)
     add_command("kill",        kill_command);
     add_command("time",        time_command);
     add_command("spawn",       spawn_command);
-    add_command("test",        test_command);
 #ifdef CONFIG_DHT_ENABLED
     add_command("dht",         dht_command);
 #endif

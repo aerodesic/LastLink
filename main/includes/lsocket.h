@@ -82,18 +82,18 @@ ls_error_t ls_connect(int socket, ls_address_t address, ls_port_t port);
  *
  * Returns number of bytes written otherwise an error code (<0 values)
  */
-ssize_t ls_write(int s, const void* buf, size_t len);
+ls_error_t ls_write(int s, const void* buf, size_t len);
 
 /*
  * Write to a specific address (datagram only)
  */
-ssize_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port);
+ls_error_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port);
 
 /*
  * Same as ls_write, but delivers an 'end of record' mark at end of data.
  * End of record write does nothing special for datagram sockets.
  */
-ssize_t ls_write_eor(int s, const void* buf, size_t len);
+ls_error_t ls_write_eor(int s, const void* buf, size_t len);
 
 /*
  * Read a datagram or stream socket.
@@ -107,12 +107,12 @@ ssize_t ls_write_eor(int s, const void* buf, size_t len);
  *
  * Zero bytes delivered means socket has been closed either remotely or locally.
  */
-ssize_t ls_read(int s, void* buf, size_t maxlen);
+ls_error_t ls_read(int s, void* buf, size_t maxlen);
 
-ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout);
+ls_error_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout);
 
 /* Add params to return address, port and provide timeout. */
-ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout);
+ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout);
 
 /*
  * Close a socket.  All internal information is deleted.
@@ -139,6 +139,12 @@ int ls_fstat(int fd, struct stat *st);
  * ls_select
  */
 int ls_select(int maxdfp1, fd_set *readset, fd_set *writeset, fd_set *exceptset, struct timeval *timeout);
+
+/*
+ * Get local port of socket
+ */
+
+ls_error_t ls_get_local_port(int s);
 
 /*
  * Get last error code.

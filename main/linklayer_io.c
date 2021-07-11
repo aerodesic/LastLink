@@ -72,6 +72,7 @@ bool io_init(radio_t* radio, const radio_config_t* config)
     /* Copy fields to be accessable by radio */
     radio->transmit_windows = config->transmit_windows;
     radio->window_width_percent = config->window_width_percent;
+    radio->cad_restart_delay = config->cad_restart_delay;
 
     /* Do specific I/O initialization */
     if (strcmp(config->type, "spi") == 0) {

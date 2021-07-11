@@ -186,7 +186,7 @@ menu "LastLink Configuration"
             Max number of the STA connects to AP.
 
     config LASTLINK_GLOBAL_LED_ACTIVITY_GPIO
-        int "Activity (TRANSMIT) led GPIO"
+        int "Activity (TRANSMIT) led GPIO (-1 to disable)"
         default -1
         help
             A global activity indicator that comes on for any traffic in progress.
@@ -284,6 +284,7 @@ menu "LastLink Configuration"
     menu "Additional Applications"
         source "main/Kconfig.service_names"
         source "main/Kconfig.ftp"
+        source "main/Kconfig.sensors"
     endmenu
 
     menu "Packet Configuration"

@@ -111,6 +111,7 @@ static void update_data_rate(radio_t* radio);
 typedef enum {
     HS_STARTUP,
     HS_WAITING,                   /* Handler is waiting (default state) */
+    HS_WAITING_TIMER,             /* Handler is waiting for cad_restart timer */
     HS_CAD_RESTART,               /* CAD timeout so restart */
     HS_RECEIVING,                 /* Handler is receiving */
     HS_RECEIVE_DONE,              /* Handler is finished receiving */
@@ -125,6 +126,7 @@ inline const char *handler_state_of(handler_state_t state)
     switch (state) {
         case HS_STARTUP:                return "HS_STARTUP";
         case HS_WAITING:                return "HS_WAITING";
+        case HS_WAITING_TIMER:          return "HS_WAITING_TIMER";
         case HS_CAD_RESTART:            return "HS_CAD_RESTART";
         case HS_RECEIVING:              return "HS_RECEIVING";
         case HS_RECEIVE_DONE:           return "HS_RECEIVE_DONE";
@@ -175,9 +177,10 @@ typedef struct sx127x_private_data {
     int               tx_timeouts;
     int               rx_timeouts;
     int               wakeup_ticks;
-#define CAD_TIMEOUT_TIME  100
+//#define CAD_TIMEOUT_TIME  100
     int               handler_cycles;
     os_timer_t        handler_wakeup_timer_id;        /* ID of radio wakeup timer in case things hang */
+    os_timer_t        cad_restart_timer_id;           /* If used, is timer id of cad restart timer */
 #define HANDLER_WAKEUP_TIMER_PERIOD 1000              /* Once a second */
     simpletimer_t     handler_wakeup_timer_status;    /* So we can check status of non-readble timer */
     uint8_t           irq_flags;                      /* Flags acquired at irq scan time */
@@ -668,6 +671,13 @@ static void transmit_start(radio_t *radio)
 #endif
 }
 
+static void cad_restart(os_timer_t timer_id)
+{
+ESP_LOGD(TAG, "%s", __func__);
+    radio_t *radio = (radio_t*) os_get_timer_data(timer_id);
+    set_cad_detect_mode(radio);
+}
+
 /*
  * Need to pass in a 'code' for the reason.
  *
@@ -883,11 +893,28 @@ static void global_interrupt_handler(void* param)
                         case HS_STARTUP:
                         case HS_CAD_RESTART: {
                             set_cad_detect_mode(radio);
+                            data->handler_state = HS_WAITING;
                             break;
                         }
 
                         case HS_WAITING: {
-                            set_cad_detect_mode(radio);
+                            if (radio->cad_restart_delay != 0) {
+                                // Fire a timer in <cad_restart_delay> ms to check start cad waiting again
+                                if (data->cad_restart_timer_id == NULL) {
+                                    ESP_LOGD(TAG, "%s: creating cad_restart_timer_id", __func__);
+                                    data->cad_restart_timer_id = os_create_timer("cad_restart", radio->cad_restart_delay, radio, cad_restart);
+                                }
+                                os_start_timer(data->cad_restart_timer_id);
+                                data->handler_state = HS_WAITING_TIMER;
+                            } else {
+                                set_cad_detect_mode(radio);
+                                data->handler_state = HS_WAITING;
+                            }
+                            break;
+                        }
+
+                        case HS_WAITING_TIMER: {
+                            // Stall
                             break;
                         }
 
@@ -919,7 +946,6 @@ static void global_interrupt_handler(void* param)
                         case HS_TRANSMIT_DONE: {
                             set_standby_mode(radio);
                             set_cad_detect_mode(radio);
-
 
                             /* And go back to waiting */
                             data->handler_state = HS_WAITING;
@@ -1216,10 +1242,6 @@ static bool set_cad_detect_mode(radio_t* radio)
 
     /* Just put the unit into continuous receive */
     if (acquire_lock(radio)) {
-        sx127x_private_data_t* data = (sx127x_private_data_t*) radio->driver_private_data;
-
-        data->handler_state = HS_WAITING;
-
         set_standby_mode(radio);
 
         ok =  disable_irq(radio, SX127x_IRQ_TX_DONE | SX127x_IRQ_RX_DONE | SX127x_IRQ_RX_TIMEOUT)

@@ -59,6 +59,7 @@ ESP_LOGI(TAG, "%s: i2c_num %d  sda_pin %d  scl_pin %d  reset_pin %d  clk_speed %
         .scl_io_num = scl_pin,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master.clk_speed = clk_speed,
+        .clk_flags = I2C_SCLK_SRC_FLAG_LIGHT_SLEEP,
     };
 
     ESP_ERROR_CHECK(i2c_param_config(i2c_num, &i2c_config));

@@ -183,7 +183,7 @@ static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket);
 
 static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_type_t type);
 
-static ssize_t release_socket(ls_socket_t* socket);
+static ls_error_t release_socket(ls_socket_t* socket);
 
 static ls_error_t ls_close_ptr(ls_socket_t *socket);
 
@@ -1353,9 +1353,9 @@ static const char* stream_packet_format(const packet_t *packet)
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
 
-static ssize_t release_socket(ls_socket_t* socket)
+static ls_error_t release_socket(ls_socket_t* socket)
 {
-    ssize_t err = LSE_NO_ERROR;
+    ls_error_t err = LSE_NO_ERROR;
 
     LOCK_SOCKET(socket);
 
@@ -2551,23 +2551,23 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
     return ret;
 }
 
-ssize_t ls_write(int s, const void* buf, size_t len)
+ls_error_t ls_write(int s, const void* buf, size_t len)
 {
-    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, false, 0, -1);
+    return ls_write_helper(validate_socket(s), buf, len, false, 0, -1);
 }
 
 /*
  * Same as ls_write, but delivers an 'end of record' mark at end of data.
  * End of record write does nothing special for datagram sockets.
  */
-ssize_t ls_write_eor(int s, const void* buf, size_t len)
+ls_error_t ls_write_eor(int s, const void* buf, size_t len)
 {
-    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, true, 0, -1);
+    return ls_write_helper(validate_socket(s), buf, len, true, 0, -1);
 }
 
-ssize_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port)
+ls_error_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls_port_t port)
 {
-    return (ssize_t) ls_write_helper(validate_socket(s), buf, len, true, address, port);
+    return ls_write_helper(validate_socket(s), buf, len, true, address, port);
 }
 
 /*
@@ -2604,7 +2604,7 @@ ssize_t ls_write_to(int s, const void* buf, size_t len, ls_address_t address, ls
  *
  * If timeout == -1, wait forever.
  */
-ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout)
+ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int* port, int timeout)
 {
     ls_error_t ret = LSE_NO_ERROR;
 
@@ -2781,14 +2781,14 @@ ssize_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, int*
     return ret;
 }
 
-ssize_t ls_read(int s, void* buf, size_t maxlen)
+ls_error_t ls_read(int s, void* buf, size_t maxlen)
 {
-    return (int) ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, -1);
+    return ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, -1);
 }
 
-ssize_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout)
+ls_error_t ls_read_with_timeout(int s, void* buf, size_t maxlen, int timeout)
 {
-    return (int) ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, timeout);
+    return ls_read_with_address(s, (char*) buf, maxlen, NULL, NULL, timeout);
 }
 
 
@@ -3151,6 +3151,23 @@ ls_error_t ls_get_last_error(int s)
     return err;
 }
 
+/*
+ * Get local port of socket
+ */
+ls_error_t ls_get_local_port(int s)
+{
+    ls_socket_t *socket = validate_socket(s);
+
+    ls_error_t err;
+
+    if (socket != NULL) {
+        err = socket->local_port;
+    } else {
+        err = LSE_INVALID_SOCKET;
+    }
+
+    return err; 
+}
 
 static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
 {
@@ -3846,9 +3863,11 @@ static int ping_command(int argc, const char **argv)
                 printf("\n");
             }
 
-            os_delay(1000);
-
             count--;
+
+            if (count != 0) {
+                os_delay(1000);
+            }
         }
         printf("%d fail  %d good  %d total\n", fail, good, total);
     }

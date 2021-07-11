@@ -51,6 +51,10 @@
 #include "mdns_config.h"
 #endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
+#ifdef CONFIG_LASTLINK_SENSORS_ENABLE
+#include "sensors.h"
+#endif
+
 #if CONFIG_LASTLINK_POWER_SAVE_MIN_MODEM
 #define DEFAULT_PS_MODE WIFI_PS_MIN_MODEM
 #elif CONFIG_LASTLINK_POWER_SAVE_MAX_MODEM
@@ -189,6 +193,11 @@ void app_main(void)
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
 #endif
+
+#ifdef CONFIG_LASTLINK_SENSORS_ENABLE
+    init_sensors();
+#endif
+
 #endif /* DISABLED_WHILE_LOOKING_FOR_CRASH */
 
     start_commands(stdin, stdout);

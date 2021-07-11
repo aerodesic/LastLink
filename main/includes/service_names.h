@@ -20,8 +20,8 @@
 #define SERVICE_NAMES_MAX_LEN          CONFIG_LASTLINK_SERVICE_NAMES_MAX_LEN        /* Max length of a name */
 #define SERVICE_NAMES_PORT             CONFIG_LASTLINK_SERVICE_NAMES_PORT           /* Port for service name request */
 
-bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime);
-bool deregister_service_name(const char* name);
+bool register_service(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime);
+bool deregister_service(const char* name);
 
 ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t* socket_type, ls_port_t *port);
 

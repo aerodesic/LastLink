@@ -154,6 +154,7 @@ typedef struct radio_config {
     uint8_t reset;
     int transmit_windows;
     int window_width_percent;
+    int cad_restart_delay;
     union {
        struct {
          uint8_t spi_host;

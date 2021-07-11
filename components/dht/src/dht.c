@@ -28,6 +28,8 @@
 #define BIT_WIDTH_0        70   // Nominal uS in a '0' bit
 #define BIT_WIDTH_ACK      160  // Nominal uS in ack bit
 
+#define MIN_READ_INTERVAL  2000 /* Wait at least 2 seconds between actual readings */
+
 static int                 dht_int_count;
 static os_queue_t          dht_queue;
 // static esp_timer_handle_t  dht_timer;
@@ -75,6 +77,12 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 {
     dht_ret_t rc = DHT_OK;
 
+    static dht_value_t old_rh;
+    static dht_value_t old_temp;
+    static dht_ret_t   old_rc;
+
+    static uint64_t last_read_time;
+
     dht_int_count = 0;
 
     if (! dht_initialized) {
@@ -88,84 +96,94 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
         dht_initialized = true;
     }
 
-    // dht_running = false;
+    uint64_t now = get_milliseconds();
 
-    unsigned char message[5] = { 0 };
+    if (now - last_read_time < MIN_READ_INTERVAL) {
+        /* Too soon -return old values */
+        *rh = old_rh;
+        *temperature = old_temp;
+        rc = old_rc;
+    } else {
+        last_read_time = now;
+        unsigned char message[5] = { 0 };
 
-    if (rc == DHT_OK) {
+        if (rc == DHT_OK) {
 
-        // Configure pin as output to generate pulse
-        gpio_set_direction(CONFIG_DHT_PIN, GPIO_MODE_OUTPUT);
+            // Configure pin as output to generate pulse
+            gpio_set_direction(CONFIG_DHT_PIN, GPIO_MODE_OUTPUT);
 
-        // Pull low
-        gpio_set_level(CONFIG_DHT_PIN, 0);
+            // Pull low
+            gpio_set_level(CONFIG_DHT_PIN, 0);
 
-        // Wait 20 millseconds
-        os_delay(20);
+            // Wait 20 millseconds
+            os_delay(20);
 
-        // Reset queue
-        os_reset_queue(dht_queue);
+            // Reset queue
+            os_reset_queue(dht_queue);
 
-        // Return to input and interruptable
-        gpio_set_intr_type(CONFIG_DHT_PIN, GPIO_INTR_NEGEDGE);
-        gpio_set_direction(CONFIG_DHT_PIN, GPIO_MODE_INPUT);
+            // Return to input and interruptable
+            gpio_set_intr_type(CONFIG_DHT_PIN, GPIO_INTR_NEGEDGE);
+            gpio_set_direction(CONFIG_DHT_PIN, GPIO_MODE_INPUT);
 
-        uint32_t count = 0;
+            uint32_t count = 0;
 
-        // Skip first to bits.  #1 is due to leading edge of first 'ack' bit.
-        // #2 is end of ack bit
-        // 3..42 will be the 40 data bits.
-        if (! os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE) ||
-            ! os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE)) {
-            ESP_LOGD(TAG, "Timeout1");
-            rc = DHT_TIMEOUT;
-        } else {
-            // ESP_LOGD(TAG, "count %u", count);
+            // Skip first to bits.  #1 is due to leading edge of first 'ack' bit.
+            // #2 is end of ack bit
+            // 3..42 will be the 40 data bits.
+            if (! os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE) ||
+                ! os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE)) {
+                ESP_LOGD(TAG, "Timeout1");
+                rc = DHT_TIMEOUT;
+            } else {
+                // ESP_LOGD(TAG, "count %u", count);
 
-            // Compute slicing point ratiometrically.  
-            // uint32_t slice = (uint32_t) (0.000100 / (1.0 / (double) esp_clk_cpu_freq()));
-            uint32_t slice = count * ((BIT_WIDTH_1 + BIT_WIDTH_0) / 2) / BIT_WIDTH_ACK;
+                // Compute slicing point ratiometrically.  
+                // uint32_t slice = (uint32_t) (0.000100 / (1.0 / (double) esp_clk_cpu_freq()));
+                uint32_t slice = count * ((BIT_WIDTH_1 + BIT_WIDTH_0) / 2) / BIT_WIDTH_ACK;
 
-            //ESP_LOGD(TAG, "slice %u", slice);
+                //ESP_LOGD(TAG, "slice %u", slice);
     
 //rc = DHT_OK;  // Force scan
 
-            for (int bit = 0; rc == DHT_OK && bit < 40; ++bit) {
-                if (os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE)) {
-                    // ESP_LOGD(TAG, "Bit: %d: %d (%u)", bit, (count > slice) ? 1 : 0, count);
+                for (int bit = 0; rc == DHT_OK && bit < 40; ++bit) {
+                    if (os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE)) {
+                        // ESP_LOGD(TAG, "Bit: %d: %d (%u)", bit, (count > slice) ? 1 : 0, count);
 
-                    // Add to message if a 1
-                    if (count > slice) {
-                        message [ bit / 8 ] |= 0x80 >> (bit % 8);
+                        // Add to message if a 1
+                        if (count > slice) {
+                            message [ bit / 8 ] |= 0x80 >> (bit % 8);
+                        }
+                    } else {
+                        rc = DHT_TIMEOUT;
                     }
-                } else {
-                    rc = DHT_TIMEOUT;
                 }
+
+                // Disable interrupt
+                gpio_set_intr_type(CONFIG_DHT_PIN, GPIO_INTR_DISABLE);
             }
-
-            // Disable interrupt
-            gpio_set_intr_type(CONFIG_DHT_PIN, GPIO_INTR_DISABLE);
         }
-    }
 
-    // ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x (%d)", message[0], message[1], message[2], message[3], message[4], rc);
+        // ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x (%d)", message[0], message[1], message[2], message[3], message[4], rc);
 
-    if (rc == DHT_OK) {
-        /* Check checksum in final byte */
-        if (((message[0] + message[1] + message[2] + message[3]) & 0xFF) != message[4]) {
-            rc = DHT_CHECKSUM;
-            ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x (%d)", message[0], message[1], message[2], message[3], message[4], rc);
+        if (rc == DHT_OK) {
+            /* Check checksum in final byte */
+            if (((message[0] + message[1] + message[2] + message[3]) & 0xFF) != message[4]) {
+                rc = DHT_CHECKSUM;
+                ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x (%d)", message[0], message[1], message[2], message[3], message[4], rc);
+            }
         }
-    }
 
-    if (rc == DHT_OK) {
-        /* Compute and return rh */
-        *rh = (dht_ret_t) (message[0]) + (dht_ret_t) (message[1]) / 10.0;
+        if (rc == DHT_OK) {
+            /* Compute and return rh */
+            old_rh = *rh = (dht_ret_t) (message[0]) + (dht_ret_t) (message[1]) / 10.0;
 
-        /* Compute and retur temp */
-        *temperature = (dht_ret_t) (message[2]) + (dht_ret_t) (message[3]) / 10.0;
+            /* Compute and retur temp */
+            old_temp = *temperature = (dht_ret_t) (message[2]) + (dht_ret_t) (message[3]) / 10.0;
 
-        //ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x", message[0], message[1], message[2], message[3], message[4]);
+            //ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x", message[0], message[1], message[2], message[3], message[4]);
+        }
+
+        old_rc = rc;
     }
 
     // ESP_LOGD(TAG, "dht_int_count %d", dht_int_count);

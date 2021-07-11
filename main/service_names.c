@@ -175,20 +175,20 @@ ESP_LOGI(TAG, "%s: running", __func__);
         if (ret == LSE_NO_ERROR) {
             ret = ls_connect(socket, NULL_ADDRESS, 0);
             if (ret == LSE_NO_ERROR) {
-                while (service_running) {
+                while (service_running > 0) {
                     service_announce_t service_announce;
                     int service_address;
                     int sender_port;
 
                     /* Wait for a service announcement (and acts as timer) */
                     int len = ls_read_with_address(socket, (char*) &service_announce, sizeof(service_announce), &service_address, &sender_port, SERVICE_NAMES_WAIT_TIMEOUT);
-if (len >= 0) {
-  ESP_LOGD(TAG, "%s: packet %d bytes from %d/%d", __func__, len, service_address, sender_port);
-}
+//  if (len >= 0) {
+//  ESP_LOGD(TAG, "%s: packet %d bytes from %d/%d", __func__, len, service_address, sender_port);
+//}
 
                     if (len == sizeof(service_announce)) {
 
-ESP_LOGD(TAG, "%s: announce: from %d: '%s' %s port %d lifetime %d", __func__, service_address, service_announce.name, service_announce.socket_type == LS_DATAGRAM ? "Datagram" : "Stream", service_announce.port, service_announce.lifetime);
+// ESP_LOGD(TAG, "%s: announce: from %d: '%s' %s port %d lifetime %d", __func__, service_address, service_announce.name, service_announce.socket_type == LS_DATAGRAM ? "Datagram" : "Stream", service_announce.port, service_announce.lifetime);
 
                         os_acquire_recursive_mutex(service_lock);
 
@@ -238,10 +238,21 @@ ESP_LOGD(TAG, "%s: announce: from %d: '%s' %s port %d lifetime %d", __func__, se
                                             service_announce.lifetime = service->lifetime;
                                             strncpy(service_announce.name, service->name, SERVICE_NAMES_MAX_LEN);
 
-                                            ls_write(announce_socket, &service_announce, sizeof(service_announce));
+                                            ret = ls_write(announce_socket, &service_announce, sizeof(service_announce));
+                                            if (ret < 0) {
+                                                ESP_LOGE(TAG, "%s: write failed %d", __func__, ret);
+                                            } else {
+//                                                ESP_LOGI(TAG, "%s: service %s type %s on port %d posted", __func__, service->name, (service->socket_type == LS_STREAM ? "S" : "D"), service->port);
+                                            }
+                                        } else {
+                                            ESP_LOGE(TAG, "%s: connect to %d failed %d", __func__, announce_socket, ret);
                                         }
+                                    } else {
+                                        ESP_LOGE(TAG, "%s: bind failed %d", __func__, ret);
                                     }
                                     ls_close(announce_socket);
+                                } else {
+                                    ESP_LOGE(TAG, "%s: announce_socket create failed %d", __func__, announce_socket);
                                 }
 
                                 /* Start the timer for 1/2 the lifetime */
@@ -312,8 +323,10 @@ ls_error_t find_service_by_name(const char* name, int *address, ls_socket_type_t
  *     port             port where service is found
  *     lifetime         lifetime of service announcement (0 is default)
  *                      Republishes service each lifetime / 2 seconds.
+ *
+ * Returns true if successful.
  */
-bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime)
+bool register_service(const char* name, ls_socket_type_t socket_type, ls_port_t port, uint16_t lifetime)
 {
     os_acquire_recursive_mutex(service_lock);
 
@@ -343,13 +356,17 @@ bool register_service_name(const char* name, ls_socket_type_t socket_type, ls_po
 }
 
 
-bool deregister_service_name(const char* name)
+bool deregister_service(const char* name)
 {
+    os_acquire_recursive_mutex(service_lock);
+
     service_cache_t* service = lookup_service_by_name(name);
 
     if (service != NULL) {
         release_service(remove_service(service));
     }
+
+    os_release_recursive_mutex(service_lock);
 
     return service != NULL;
 }
@@ -424,7 +441,7 @@ static int service_table_commands(int argc, const char **argv)
             int               port = strtol(argv[4], NULL, 0);
             int               lifetime = argc > 5 ? strtol(argv[5], NULL, 0) : SERVICE_NAMES_DEFAULT_LIFETIME;
 
-            if (! register_service_name(name, type, port, lifetime)) {
+            if (! register_service(name, type, port, lifetime)) {
                 printf("Failed to register service %s on type %d port %d\n", name, type, port);
             }
         } else {
@@ -432,7 +449,7 @@ static int service_table_commands(int argc, const char **argv)
         }
     } else if (strcmp(argv[1], "del") == 0) {
         if (argc == 3) {
-            if (!deregister_service_name(argv[2])) {
+            if (!deregister_service(argv[2])) {
                 printf("Failed to deregister service %s\n", argv[2]);
             }
         } else {
@@ -480,11 +497,13 @@ bool deinit_service_names(void)
     ok = remove_command("service");
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
-    service_running = -1;
+    if (service_running != 0) {
+        service_running = -1;
 
-    /* Wait for service scanner to terminate */
-    while (service_running != 0) {
-        os_delay(100);
+        /* Wait for service scanner to terminate */
+        while (service_running != 0) {
+            os_delay(100);
+        }
     }
 
     os_delete_thread(service_thread_id);

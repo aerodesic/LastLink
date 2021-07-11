@@ -52,10 +52,13 @@ typedef struct radio {
     bool inactive;
 
     /* number of transmit windows */
-    int transmit_windows;;
+    int transmit_windows;
 
     /* Width of window in percentage of max message length */
     int window_width_percent;
+
+    /* CAD restart delay */
+    int cad_restart_delay;
 
 #if 0
     /* Deinit specific radio type (call into the radio module)  */

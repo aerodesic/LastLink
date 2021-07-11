@@ -146,6 +146,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
     .transmit_windows                = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_WINDOWS),              \
     .window_width_percent            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, WINDOW_WIDTH_PERCENT),          \
+    .cad_restart_delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CAD_RESTART_DELAY),             \
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),                     \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),                     \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),                     \
@@ -171,6 +172,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .transmit_windows                = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_WINDOWS),              \
     .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_RESET),                     \
     .window_width_percent            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, WINDOW_WIDTH_PERCENT),          \
+    .cad_restart_delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CAD_RESTART_DELAY),             \
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),                      \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),                      \
@@ -188,6 +190,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
     .transmit_windows                = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, TRANSMIT_WINDOWS),              \
     .window_width_percent            = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, WINDOW_WIDTH_PERCENT),          \
+    .cad_restart_delay               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CAD_RESTART_DELAY),             \
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO0),                      \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),                      \
