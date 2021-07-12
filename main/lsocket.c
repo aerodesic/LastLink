@@ -2471,7 +2471,7 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
                      /* If overriding the destination, change it now */
                      if (port >= 0) {
                          set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, port);
-                         set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, address);
+                         set_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN, address);
                      }
                      int tomove = len;
                      if (tomove > DATAGRAM_MAX_DATA) {
@@ -2670,11 +2670,15 @@ ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, i
                 /* Pend on a packet in the queue */
                 packet_t *packet;
 
+                socket->busy--;
+
                 UNLOCK_SOCKET(socket);
 
                 bool success = os_get_queue_with_timeout(socket->datagram_packets, (os_queue_item_t) &packet, timeout);
 
                 LOCK_SOCKET(socket);
+
+                socket->busy++;
 
                 if (success) {
                     if (packet == NULL) {
