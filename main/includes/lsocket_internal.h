@@ -107,7 +107,6 @@
 #define STREAM_PROTOCOL                (FIRST_DATA_PROTOCOL+3)
 
 /* Set to add debugging logic to socket and global socket locking */
-#define SOCKET_LOCKING_DEBUG
 
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
@@ -138,22 +137,20 @@ typedef struct packet_window packet_window_t;    /* Forward declaration for exte
 
 typedef struct ls_socket {
     os_mutex_t              lock;                /* MUTEX for user level access control - does not block I/O */
-#ifdef SOCKET_LOCKING_DEBUG
+#ifdef CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG
     const char              *last_lock_file;
     int                     last_lock_line;
     int                     lock_count;
-#endif /* SOCKET_LOCKING_DEBUG */
+#endif /* CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG */
     int                     busy;                /* Busy when non-zero */
     ls_socket_type_t        socket_type;         /* Socket type (DATAGRAM or STREAM) */
 
     ls_socket_state_t       state;               /* Current state */
-    ls_port_t               local_port;          /* Local port number of the connection */
-    ls_port_t               dest_port;           /* Destination port of the connection */
-#ifdef NOTUSED
-    bool                    rename_dest;         /* If datagram and true, dest_address gets value of last packet read */
-                                                 /* This allows us to ls_write() back to return data */
-#endif
+
+    /* src_addr is implied as this node's address */
+    ls_port_t               src_port;            /* Local port number of the connection */
     ls_address_t            dest_addr;           /* Destination address of the connection */
+    ls_port_t               dest_port;           /* Destination port of the connection */
 
     union {
         /* LISTEN SOCKET INFO */
@@ -219,6 +216,12 @@ typedef struct ls_socket {
 
     ls_error_t              last_error;         /* Error code if something goes wrong. */
 } ls_socket_t;
+
+/* Convert socket number to socket structure */
+ls_socket_t *validate_socket(int s);
+
+bool lock_socket(ls_socket_t* socket);
+void unlock_socket(ls_socket_t* socket);
 
 #endif /* __lsocket_internal_h_included */
 

@@ -55,6 +55,10 @@
 #include "sensors.h"
 #endif
 
+#ifdef CONFIG_DHT_ENABLE
+#include "dht.h"
+#endif
+
 #if CONFIG_LASTLINK_POWER_SAVE_MIN_MODEM
 #define DEFAULT_PS_MODE WIFI_PS_MIN_MODEM
 #elif CONFIG_LASTLINK_POWER_SAVE_MAX_MODEM

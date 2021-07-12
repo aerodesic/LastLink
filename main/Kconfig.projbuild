@@ -450,6 +450,14 @@ menu "LastLink Configuration"
              Enables datagram (and optionally) streaming sockets between nodes.
 
 
+        config LASTLINK_SOCKET_LOCKING_DEBUG
+        bool "Enable debug of socket locks"
+        depends on LASTLINK_ENABLE_SOCKET_LAYER
+        default false
+        help
+            When true, enables additional debug of socket locks and notifies
+            when locks are being held and by whom.
+
         config LASTLINK_ENABLE_SOCKET_STREAMS
         bool "Also allow streaming sockets"
         depends on LASTLINK_ENABLE_SOCKET_LAYER

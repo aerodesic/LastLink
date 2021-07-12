@@ -3,14 +3,14 @@
 #
 menu "DHT Configuration"
 
-    config DHT_ENABLED
+    config DHT_ENABLE
         bool "Enable DHT 11/22 (temp/humidity) sensor)"
         default n
 
     config DHT_PIN
-        depends on DHT_ENABLED
+        depends on DHT_ENABLE
         int "I/O pin"
-        default 0
+        default 17
  
 endmenu
 

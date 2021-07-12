@@ -79,9 +79,8 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 
     static dht_value_t old_rh;
     static dht_value_t old_temp;
-    static dht_ret_t   old_rc;
-
-    static uint64_t last_read_time;
+    static dht_ret_t   old_rc = DHT_ERROR;
+    static uint64_t    old_read_time;
 
     dht_int_count = 0;
 
@@ -98,13 +97,10 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 
     uint64_t now = get_milliseconds();
 
-    if (now - last_read_time < MIN_READ_INTERVAL) {
-        /* Too soon -return old values */
-        *rh = old_rh;
-        *temperature = old_temp;
-        rc = old_rc;
-    } else {
-        last_read_time = now;
+    /* Don't do an actual read unless it's been long enough */ 
+    if (now - old_read_time >= MIN_READ_INTERVAL) {
+        old_read_time = now;
+
         unsigned char message[5] = { 0 };
 
         if (rc == DHT_OK) {
@@ -147,7 +143,7 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 
                 for (int bit = 0; rc == DHT_OK && bit < 40; ++bit) {
                     if (os_get_queue_with_timeout(dht_queue, (os_queue_item_t) &count, DHT_TIMEOUT_VALUE)) {
-                        // ESP_LOGD(TAG, "Bit: %d: %d (%u)", bit, (count > slice) ? 1 : 0, count);
+                        // ESP_LOGI(TAG, "Bit: %d: %d (%u)", bit, (count > slice) ? 1 : 0, count);
 
                         // Add to message if a 1
                         if (count > slice) {
@@ -175,10 +171,10 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 
         if (rc == DHT_OK) {
             /* Compute and return rh */
-            old_rh = *rh = (dht_ret_t) (message[0]) + (dht_ret_t) (message[1]) / 10.0;
+            old_rh = (dht_ret_t) (message[0]) + (dht_ret_t) (message[1]) / 10.0;
 
             /* Compute and retur temp */
-            old_temp = *temperature = (dht_ret_t) (message[2]) + (dht_ret_t) (message[3]) / 10.0;
+            old_temp = (dht_ret_t) (message[2]) + (dht_ret_t) (message[3]) / 10.0;
 
             //ESP_LOGD(TAG, "DHT: msg: %02x %02x %02x %02x %02x", message[0], message[1], message[2], message[3], message[4]);
         }
@@ -186,6 +182,14 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
         old_rc = rc;
     }
 
+    if (rh != NULL) {
+        *rh = old_rh;
+    }
+    if (temperature != NULL) {
+        *temperature = old_temp;
+    }
+
+    rc = old_rc;
     // ESP_LOGD(TAG, "dht_int_count %d", dht_int_count);
 
     return rc;

@@ -146,6 +146,58 @@ static sensor_cache_t *lookup_sensor(const char* name)
     return found;
 }
 
+#ifdef CONFIG_LASTLINK_SENSORS_DHT_ENABLE
+/* Initialize sensor scanner */
+bool process_dht(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
+{
+    bool success = true;
+
+    if (transaction == SENSOR_READ) {
+        dht_value_t temperature;
+        dht_value_t humidity;
+        dht_ret_t rc = dht_read(&humidity, &temperature);
+        if (rc != DHT_OK) {
+            strncpy(reply_buffer, "Read Error", reply_len);
+            reply_buffer[reply_len - 1] = '\0';
+            success = false;
+        } else {
+            snprintf(reply_buffer, reply_len, "%.1f", param == 0 ? humidity : temperature);
+        }
+    } else {
+        snprintf(reply_buffer, reply_len, "Invalid transaction");
+        success = false;
+    }
+
+    return success;
+}
+#endif
+
+static void initialize_all_sensors(void)
+{
+#ifdef CONFIG_LASTLINK_SENSORS_DHT_ENABLE
+    dht_ret_t read_rc;
+
+    /* Only enable the sensor if we can read it */
+    int count = 0;
+    dht_value_t dummy;
+    while (count < 5 && (read_rc = dht_read(&dummy, &dummy)) != DHT_OK) { 
+        ESP_LOGE(TAG, "%s: error %d reading dht", __func__, read_rc);
+        count++;
+        os_delay(2500);
+    }
+ 
+    if (read_rc == DHT_OK) {
+        ESP_LOGI(TAG, "read dht successful - creating sensors");
+        /* Add a couple of sensors for testing */
+        register_sensor("rh",   SENSOR_TYPE_INPUT, "%rh",  30, process_dht, (void*) 0);
+        register_sensor("temp", SENSOR_TYPE_INPUT, "degC", 30, process_dht, (void*) 1);
+    } else {
+        ESP_LOGE(TAG, "unable to read dht sensor - not adding to sensors");
+    }
+#endif
+}
+
+
 /*
  * This thread scans the sensors and receives requests for setting/getting sensor values.
  */
@@ -155,15 +207,17 @@ static void sensor_scanner_thread(void* param)
 
 ESP_LOGI(TAG, "%s: running", __func__);
 
+    initialize_all_sensors();
+
     /* Register a socket for receiving sensor read/write messages */
     int socket = ls_socket(LS_DATAGRAM);
     if (socket >= 0) {
         int ret = ls_bind(socket, 0);
         if (ret == LSE_NO_ERROR) {
-            ret = ls_connect(socket, BROADCAST_ADDRESS, 0);
+            ret = ls_connect(socket, BROADCAST_ADDRESS, CONFIG_LASTLINK_SENSORS_WELL_KNOWN_PORT);
             if (ret == LSE_NO_ERROR) {
                 // Publish the sensor service
-                if (!register_service(CONFIG_LASTLINK_SENSORS_PLATFORM_NAME, LS_DATAGRAM, ls_get_local_port(socket), CONFIG_LASTLINK_SENSORS_SERVICE_LIFETIME)) {
+                if (!register_service(CONFIG_LASTLINK_SENSORS_PLATFORM_NAME, socket, CONFIG_LASTLINK_SENSORS_SERVICE_LIFETIME)) {
                     /*   Failed */
                     ESP_LOGE(TAG, "%s: Unable to register sensor service '%s'", __func__, CONFIG_LASTLINK_SENSORS_PLATFORM_NAME);
                 } else {
@@ -177,9 +231,9 @@ ESP_LOGI(TAG, "%s: running", __func__);
     
                         /* Wait for a sensor data request */
                         int len = ls_read_with_address(socket, sensor_commands_buf, sizeof(sensor_commands_buf)-1, &sender_address, &sender_port, CONFIG_LASTLINK_SENSORS_SCAN_INTERVAL);
-    //  if (len >= 0) {
-    //  ESP_LOGD(TAG, "%s: packet %d bytes from %d/%d", __func__, len, service_address, sender_port);
-    //}
+    if (len >= 0) {
+        ESP_LOGI(TAG, "%s: packet %d bytes from %d/%d", __func__, len, sender_address, sender_port);
+    }
     
                         if (len > 0) {
                             /************************************************************************
@@ -197,6 +251,8 @@ ESP_LOGI(TAG, "%s: running", __func__);
                              * detected, no response will be given.
                              ************************************************************************/
                             sensor_commands_buf[len] = '\0';
+                            ESP_LOGI(TAG, "%s: sensor commands: %s", __func__, sensor_commands_buf);
+
                             /* Parse list of:
                              *   <name>[=<value>],...
                              * <name> requests the value
@@ -223,6 +279,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                     value = NULL;
                                 }
 
+                                ESP_LOGI(TAG, "%s: sensor request %s: %s", __func__, item, value?value : "NULL");
                                 sensor_cache_t *sensor = lookup_sensor(item);
                                 int moved = 0;
 
@@ -348,11 +405,16 @@ bool register_sensor(const char* name, sensor_type_t type, const char* units, in
              */ 
              
             if (notify_time != 0) {
+                int abs_notify = notify_time > 0 ? notify_time : -notify_time;
+
                 /* Period of reporting sensor automatically is abs(notify_time) */
-                simpletimer_start(&sensor->timer, (notify_time > 0 ? notify_time : -notify_time) * 1000);
-                /* Expire to force immediate notification */
-                simpletimer_set_expired(&sensor->timer);
-                sensor->notify = notify_time < 0;
+                simpletimer_start(&sensor->timer, abs_notify * 1000);
+
+                /* Randomize the time by extending for a 0..<notify_time> milliseconds with a minimum of 1 seconds */
+                simpletimer_set_expire_in(&sensor->timer, (os_urandom() % abs_notify) * 1000);
+
+                /* Notify every <notify_time> seconds when set; otherwise only notify every <notify_time> seconds when changed. */
+                sensor->notify = notify_time > 0;
             } else {
                 simpletimer_stop(&sensor->timer);
             }
@@ -516,30 +578,6 @@ int sensor_commands(int argc, const char **argv)
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
-/* Initialize sensor scanner */
-bool process_dht(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
-{
-    bool success = true;
-
-    if (transaction == SENSOR_READ) {
-        dht_value_t temperature;
-        dht_value_t humidity;
-        dht_ret_t rc = dht_read(&humidity, &temperature);
-        if (rc != DHT_OK) {
-            strncpy(reply_buffer, "Read Error", reply_len);
-            reply_buffer[reply_len - 1] = '\0';
-            success = false;
-        } else {
-            snprintf(reply_buffer, reply_len, "%.1f", param == 0 ? humidity : temperature);
-        }
-    } else {
-        snprintf(reply_buffer, reply_len, "Invalid transaction");
-        success = false;
-    }
-
-    return success;
-}
-
 bool init_sensors(void)
 {
     sensor_lock = os_create_recursive_mutex();
@@ -548,10 +586,6 @@ bool init_sensors(void)
 
 #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("sensors", sensor_commands);
-
-    /* Add a couple of sensors for testing */
-    register_sensor("rh",   SENSOR_TYPE_INPUT, "%",    30, process_dht, (void*) 0);
-    register_sensor("temp", SENSOR_TYPE_INPUT, "degC", 30, process_dht, (void*) 1);
 #endif
 
     ESP_LOGI(TAG, "%s: called", __func__);

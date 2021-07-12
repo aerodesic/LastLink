@@ -84,7 +84,8 @@ int                               linklayer_node_address;
 static os_mutex_t                 linklayer_mutex;
 static int                        node_flags;
 static os_queue_t                 receive_queue;
-#define RECEIVE_THREAD_STACK_SIZE    8192
+//#define RECEIVE_THREAD_STACK_SIZE    8192
+#define RECEIVE_THREAD_STACK_SIZE    10000
 #define RECEIVE_THREAD_PRIORITY      20
 static os_thread_t                receive_thread;
 static os_queue_t                 promiscuous_queue;

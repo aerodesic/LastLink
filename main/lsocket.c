@@ -115,7 +115,6 @@ static bool pingreply_packet_process(packet_t *packet);
 static int find_ping_table_entry(int sequence);
 
 static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t len, bool eor, ls_address_t address, ls_port_t port);
-static ls_socket_t * validate_socket(int s);
 
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
 static void stream_shutdown_windows(ls_socket_t *socket);
@@ -205,7 +204,7 @@ static os_mutex_t    global_socket_lock;
 
 static ls_socket_t   socket_table[CONFIG_LASTLINK_NUMBER_OF_SOCKETS];
 
-#ifdef SOCKET_LOCKING_DEBUG
+#ifdef CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG
 
 #define GLOBAL_SOCKET_LOCK() \
     do {                                                            \
@@ -260,14 +259,25 @@ static inline void unlock_socket_debug(ls_socket_t *socket, const char *file, in
 }
 #define UNLOCK_SOCKET(socket)    unlock_socket_debug(socket, __FILE__, __LINE__)
 
-#else /* !SOCKET_LOCKING_DEBUG */
+#else /* !CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG */
 
 #define GLOBAL_SOCKET_LOCK()     os_acquire_recursive_mutex(global_socket_lock)
 #define GLOBAL_SOCKET_UNLOCK()   os_release_recursive_mutex(global_socket_lock)
 #define LOCK_SOCKET(socket)      os_acquire_recursive_mutex((socket)->lock)
 #define LOCK_SOCKET_TRY(socket)  os_acquire_recursive_mutex_with_timeout((socket)->lock, 0)
 #define UNLOCK_SOCKET(socket)    os_release_recursive_mutex((socket)->lock)
-#endif /* SOCKET_LOCKING_DEBUG */
+#endif /* CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG */
+
+/* For external use - note these don't help much in tracking locking/unlocking. */
+bool lock_socket(ls_socket_t* socket)
+{
+    return LOCK_SOCKET(socket);
+}
+
+void unlock_socket(ls_socket_t* socket)
+{
+    UNLOCK_SOCKET(socket);
+}
 
 static const char* socket_type_of(const ls_socket_t *socket)
 {
@@ -719,9 +729,9 @@ static ls_socket_t *find_free_socket(void)
     return socket;
 }
 
-static int next_local_port = 5000;
+static int next_src_port = 5000;
 
-static int find_free_local_port(void) {
+static int find_free_src_port(void) {
 
     int found = -1;
 
@@ -733,20 +743,20 @@ static int find_free_local_port(void) {
         collision = false;
 
         /* Increment local port number pool */
-        if (++next_local_port >= 65536) {
-            next_local_port = 5000;
+        if (++next_src_port >= 65536) {
+            next_src_port = 5000;
         }
 
         /* Go through all sockets to see if we have used this port */
         for (int s = 0; !collision && s < ELEMENTS_OF(socket_table); ++s) {
-            if (next_local_port == socket_table[s].local_port) {
+            if (next_src_port == socket_table[s].src_port) {
                 collision = true;
             }
         }
     } while (collision);
 
     /* We will use this one */
-    found = next_local_port;
+    found = next_src_port;
 
     GLOBAL_SOCKET_UNLOCK();
 
@@ -765,24 +775,36 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
 
     ls_port_t dest_port = get_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN);
     ls_port_t src_port  = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
-    int dest_addr       = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
+    // int dest_addr       = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
 
     for (int index = 0; socket == NULL && index < CONFIG_LASTLINK_NUMBER_OF_SOCKETS; ++index) {
         if (socket_table[index].socket_type == type) {
+            // ESP_LOGI(TAG, "%s: socket type %d wanted %d", __func__, socket_table[index].socket_type, type);
+            // ESP_LOGI(TAG, "%s: socket src_port %d dest_port %d", __func__, socket_table[index].src_port, dest_port);
+            // ESP_LOGI(TAG, "%s: socket dest_port %d src_port %d socket dest_addr %d", __func__, socket_table[index].dest_port, src_port, socket_table[index].dest_addr);
+            // ESP_LOGI(TAG, "%s: test 1 %d", __func__, (socket_table[index].src_port == dest_port));
+            // ESP_LOGI(TAG, "%s: test 2 %d", __func__, (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port || socket_table[index].dest_addr == BROADCAST_ADDRESS)); 
+
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             if ( !(socket_table[index].state == LS_STATE_LISTENING) &&
 #else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
             if (
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
-                (socket_table[index].dest_addr == 0 || socket_table[index].dest_addr == BROADCAST_ADDRESS || socket_table[index].dest_addr == dest_addr) &&
-                socket_table[index].local_port == dest_port &&
-                (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port)) {
+                // (socket_table[index].dest_addr == 0 || socket_table[index].dest_addr == BROADCAST_ADDRESS) &&
+                (socket_table[index].src_port == dest_port) &&
+                (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port || socket_table[index].dest_addr == BROADCAST_ADDRESS)) {
 
                 socket = &socket_table[index];
+// ESP_LOGI(TAG, "%s: locking socket %p", __func__, socket);
                 LOCK_SOCKET(socket);
+// ESP_LOGI(TAG, "%s: found socket %p", __func__, socket);
+            } else {
+// ESP_LOGI(TAG, "%s: not found socket %p", __func__, &socket_table[index]);
             }
         }
     }
+
+// ESP_LOGI(TAG, "%s: returning socket %p", __func__, socket);
 
     /* Return socket if we found it */
     return socket;
@@ -797,7 +819,7 @@ static ls_socket_t *find_listening_socket_from_packet(const packet_t *packet)
 
     for (int index = 0; socket == NULL && index < ELEMENTS_OF(socket_table); ++index) {
         /* A socket listening on the specified port is all we need */
-        if (socket_table[index].socket_type == LS_STREAM && socket_table[index].state == LS_STATE_LISTENING && socket_table[index].local_port == dest_port) {
+        if (socket_table[index].socket_type == LS_STREAM && socket_table[index].state == LS_STATE_LISTENING && socket_table[index].src_port == dest_port) {
             socket = &socket_table[index];
         }
     }
@@ -828,7 +850,7 @@ static packet_t *datagram_packet_create_from_socket(const ls_socket_t *socket)
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
-        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->local_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->src_port);
     }
 
     return packet;
@@ -839,10 +861,19 @@ static bool datagram_packet_process(packet_t *packet)
     bool handled = false;
 
     if (packet != NULL) {
-        if (linklayer_packet_is_for_this_node(packet) || get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+        bool specifically_for_us = linklayer_packet_is_for_this_node(packet);
+
+        if (specifically_for_us || get_uint_field(packet, HEADER_DEST_ADDRESS, ADDRESS_LEN) == BROADCAST_ADDRESS) {
+
+// ESP_LOGI(TAG, "%s: checking packet", __func__);
+
             ls_socket_t *socket = find_socket_from_packet(packet, LS_DATAGRAM);
 
+// ESP_LOGI(TAG, "%s: socket is %p", __func__, socket);
+
             if (socket != NULL) {
+
+// ls_dump_socket_ptr("handled", socket);
 
                 /* Send the packet to the datagram input queue */
                 ref_packet(packet);
@@ -853,7 +884,7 @@ static bool datagram_packet_process(packet_t *packet)
             }
 
             /* say 'handled' it if directed to us (i.e. don't retransmit it) */
-            handled = linklayer_packet_is_for_this_node(packet);;
+            handled = specifically_for_us;
         }
 
         release_packet(packet);
@@ -903,7 +934,7 @@ static packet_t *stream_packet_create_from_socket(const ls_socket_t *socket, uin
 
     if (packet != NULL) {
         set_uint_field(packet, DATAGRAM_DEST_PORT, PORT_NUMBER_LEN, socket->dest_port);
-        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->local_port);
+        set_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN, socket->src_port);
         set_uint_field(packet, STREAM_FLAGS, FLAGS_LEN, flags);
         set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
 //printf("%s: packet %p\n", __func__, packet);
@@ -1117,7 +1148,7 @@ static bool stream_packet_process(packet_t *packet)
 
                                 /* Create a new connection that achievs a local endpoint for the new socket */
                                 new_connection->state         = LS_STATE_INBOUND_CONNECT;
-                                new_connection->local_port    = listen_socket->local_port;
+                                new_connection->src_port      = listen_socket->src_port;
                                 new_connection->dest_port     = get_uint_field(packet, DATAGRAM_SRC_PORT, PORT_NUMBER_LEN);
                                 new_connection->dest_addr     = get_uint_field(packet, HEADER_ORIGIN_ADDRESS, ADDRESS_LEN);
                                 new_connection->parent        = listen_socket;
@@ -1188,7 +1219,7 @@ static bool stream_packet_process(packet_t *packet)
                         if (!reject && socket->output_window != NULL) {
                             int length = get_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN);
                             if (length != 0 && length < socket->output_window->length) {
-ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__, socket->output_window->length, length, socket - socket_table);
+// ESP_LOGI(TAG, "%s: output_window changed from %d to %d for socket %d", __func__, socket->output_window->length, length, socket - socket_table);
                                 socket->output_window->length = length;
                             }
                         }
@@ -1482,7 +1513,7 @@ int ls_socket(ls_socket_type_t socket_type)
         if (socket != NULL) {
             socket->socket_type = socket_type;
             socket->state = LS_STATE_SOCKET;
-            socket->local_port = -1;
+            socket->src_port = -1;
 
             /* Return the socket index in the table plus the offset */
             ret = socket - socket_table + FIRST_LASTLINK_FD;
@@ -1505,7 +1536,7 @@ int ls_socket(ls_socket_type_t socket_type)
  *
  * Bind an port to the local port.
  */
-ls_error_t ls_bind(int s, ls_port_t local_port)
+ls_error_t ls_bind(int s, ls_port_t src_port)
 {
     ls_error_t err = LSE_INVALID_SOCKET;
 
@@ -1518,7 +1549,7 @@ ls_error_t ls_bind(int s, ls_port_t local_port)
             socket->state = LS_STATE_BOUND;
 
             /* Assign local port from free pool if not specified by user */
-            socket->local_port = local_port;
+            socket->src_port = src_port;
 
             err = LSE_NO_ERROR;
         }
@@ -2067,9 +2098,9 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
             socket->dest_port = port;
             socket->dest_addr = address;
 
-            /* If localport is 0, bind an unused local port to this socket */
-            if (socket->local_port == 0) {
-                socket->local_port = find_free_local_port();
+            /* If src_port is 0, bind an unused local port to this socket */
+            if (socket->src_port == 0) {
+                socket->src_port = find_free_src_port();
             }
 
             if (socket->socket_type == LS_DATAGRAM) {
@@ -2542,11 +2573,13 @@ static ls_error_t ls_write_helper(ls_socket_t *socket, const char* buf, size_t l
         socket->busy--;
     }
 
-    if ((ret < 0) && (socket != NULL)) {
-        socket->last_error = ret;
-    }
+    if (socket != NULL) {
+        if (ret < 0) {
+            socket->last_error = ret;
+        }
 
-    UNLOCK_SOCKET(socket);
+        UNLOCK_SOCKET(socket);
+    }
 
     return ret;
 }
@@ -2772,11 +2805,13 @@ ls_error_t ls_read_with_address(int s, char* buf, size_t maxlen, int* address, i
         socket->busy--;
     }
 
-    if ((ret < 0) && (socket != NULL)) {
-        socket->last_error = ret;
-    }
+    if (socket != NULL) {
+        if (ret < 0) {
+            socket->last_error = ret;
+        }
 
-    UNLOCK_SOCKET(socket);
+        UNLOCK_SOCKET(socket);
+    }
 
     return ret;
 }
@@ -2926,7 +2961,7 @@ ls_error_t ls_close(int s)
 /*
  * Validate socket table index and return it's pointer, locked.
  */
-static ls_socket_t *validate_socket(int s)
+ls_socket_t *validate_socket(int s)
 {
     ls_socket_t *ret = NULL;
 
@@ -3154,14 +3189,15 @@ ls_error_t ls_get_last_error(int s)
 /*
  * Get local port of socket
  */
-ls_error_t ls_get_local_port(int s)
+ls_error_t ls_get_src_port(int s)
 {
     ls_socket_t *socket = validate_socket(s);
 
     ls_error_t err;
 
     if (socket != NULL) {
-        err = socket->local_port;
+        err = socket->src_port;
+        UNLOCK_SOCKET(socket);
     } else {
         err = LSE_INVALID_SOCKET;
     }
@@ -3175,14 +3211,14 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
         switch (socket->socket_type) {
             default:
             case LS_DATAGRAM: {
-                printf("%s%s %d (%p) state %s type %s local port %d dest port %d dest addr %d\n",
+                printf("%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d\n",
                        msg ? msg : "",
                        msg ? ": " : "",
                        socket - socket_table + FIRST_LASTLINK_FD,
                        socket,
                        socket_state_of(socket),
                        socket_type_of(socket),
-                       socket->local_port,
+                       socket->src_port,
                        socket->dest_port,
                        socket->dest_addr);
                 break;
@@ -3190,14 +3226,14 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             case LS_STREAM: {
                 if (socket->state == LS_STATE_LISTENING) {
-                    printf("%s%s %d (%p) state %s type %s local port %d dest port %d dest addr %d\n",
+                    printf("%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d\n",
                            msg ? msg : "",
                            msg ? ": " : "",
                            socket - socket_table + FIRST_LASTLINK_FD,
                            socket,
                            socket_state_of(socket),
                            socket_type_of(socket),
-                           socket->local_port,
+                           socket->src_port,
                            socket->dest_port,
                            socket->dest_addr);
                 } else {
@@ -3208,7 +3244,7 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
                            socket,
                            socket_state_of(socket),
                            socket_type_of(socket),
-                           socket->local_port,
+                           socket->src_port,
                            socket->dest_port,
                            socket->dest_addr,
                            socket->parent ? (socket->parent - socket_table) : -1,
@@ -3247,7 +3283,7 @@ static ls_error_t ls_dump_socket_ptr(const char* msg, const ls_socket_t *socket)
             }
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
         }
-#ifdef SOCKET_LOCKING_DEBUG
+#ifdef CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG
         if (socket->lock_count != 0) {
             printf("   Lock count %d last by %s:%d\n", socket->lock_count, socket->last_lock_file, socket->last_lock_line);
         }
@@ -3515,6 +3551,105 @@ static int dgsend_command(int argc, const char **argv)
                     } else {
                         ret = ls_write(socket, data, strlen(data));
                         printf("ls_write returned %d\n", ret);
+                    }
+                } else {
+                    printf("ls_connect returned %d\n", ret);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+
+    } else {
+        printf("Insufficient params\n");
+    }
+    return 0;
+}
+
+/**********************************************************************/
+/* dgcon <address> <port>                                             */
+/* Enter a loop and take commands entered and send to the socket,     */
+/* while displaying packets received from the socket.                 */
+/* Control-C breaks out                                               */
+/**********************************************************************/
+typedef struct dgcon_data {
+    os_thread_t thread_id;
+    int socket;
+    int running;
+} dgcon_data_t;
+
+static void dgcon_reader(void* data)
+{
+    dgcon_data_t* dgdata = (dgcon_data_t*) data;
+
+    dgdata->running = 1;
+
+    while (dgdata->running > 0) {
+        /* Read data from socket and echo to terminal */
+        char buffer[300];
+
+        int address;
+        int port;
+
+        int len = ls_read_with_address(dgdata->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
+
+        if (len > 0) {
+            buffer[len] = '\0';
+            printf("%s", buffer); 
+        }
+    }
+
+    dgdata->running = 0;
+
+    os_exit_thread();
+}
+
+
+static int dgcon_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "<address> <port>", "Send and receive datagram date");
+    } else if (argc == 3) {
+        int address = strtol(argv[1], NULL, 10);
+        int port = strtol(argv[2], NULL, 10);
+
+        int socket = ls_socket(LS_DATAGRAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, 0);
+            if (ret >= 0) {
+                ret = ls_connect(socket, address, port);
+                //ls_dump_socket("sending", socket);
+                if (ret >= 0) {
+                    dgcon_data_t dgdata;
+                    dgdata.socket = socket;
+
+                    /* Spawn a reader socket to echo back input packets to the control */
+                    dgdata.thread_id = os_create_thread(dgcon_reader, "dgcon_reader", 4095, 0, (void*) &dgdata);
+
+                    /* Loop reading but terminate on control-c (-1 return) */
+                    int len;
+
+                    do {
+                        char buffer[80];
+
+                        len = readline(buffer, sizeof(buffer));
+                        if (len > 0) {
+                            printf("Writing \"%s\"\n", buffer);
+                            int rc = ls_write(socket, buffer, len);
+                            if (rc < 0) {
+                                printf("rc %d\n", rc);
+                            }
+                                 
+                        }
+                    } while (len > 0);
+   
+                    /* Kill reader thread */
+                    dgdata.running = -1;
+                    while (dgdata.running != 0) {
+                        os_delay(100);
                     }
                 } else {
                     printf("ls_connect returned %d\n", ret);
@@ -3951,6 +4086,7 @@ ls_error_t ls_socket_init(void)
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("dglisten",   dglisten_command);
     add_command("dgsend",     dgsend_command);
+    add_command("dgcon",      dgcon_command);
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     add_command("stconsumer", stconsumer_command);
     add_command("stproducer", stproducer_command);

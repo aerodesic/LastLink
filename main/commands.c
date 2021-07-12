@@ -26,7 +26,7 @@
 
 #define COMMAND_PROCESSOR_STACK_SIZE 10000
 
-static int readline(char *buffer, size_t len)
+int readline(char *buffer, size_t len)
 {
     int index = 0;
 
@@ -47,6 +47,8 @@ static int readline(char *buffer, size_t len)
                     printf("\b \b");
                     --index;
                 }
+            } else if ((ch & 0x7F) == '\x03') {
+                return -1;
             } else if (isprint(ch)) {
                 if (index < len-1) {
                     printf("%c", ch);
@@ -511,7 +513,7 @@ int spawn_command(int argc, const char **argv)
     return results;
 }
 
-#ifdef CONFIG_DHT_ENABLED
+#ifdef CONFIG_DHT_ENABLE
 #include "dht.h"
 
 int dht_command(int argc, const char **argv)
@@ -600,7 +602,7 @@ void CommandProcessor(void* params)
             }
 
         } else if (len < 0) {
-            running = false;
+            printf("Control-c detected\n");
         }
     }
     printf("\n");
@@ -683,7 +685,7 @@ void init_commands(void)
     add_command("kill",        kill_command);
     add_command("time",        time_command);
     add_command("spawn",       spawn_command);
-#ifdef CONFIG_DHT_ENABLED
+#ifdef CONFIG_DHT_ENABLE
     add_command("dht",         dht_command);
 #endif
     add_command("setinactive", linklayer_set_inactive_command);

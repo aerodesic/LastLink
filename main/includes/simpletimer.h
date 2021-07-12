@@ -29,6 +29,7 @@ static inline bool simpletimer_is_stopped(simpletimer_t *timer);
 static inline bool simpletimer_is_running(simpletimer_t *timer);
 static inline void simpletimer_start(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval);
+static inline void simpletimer_set_expire_in(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_update(simpletimer_t *timer, uint32_t interval);
 static inline void simpletimer_set_expired(simpletimer_t *timer);
 static inline void simpletimer_stop(simpletimer_t *timer);
@@ -88,6 +89,15 @@ static inline void simpletimer_extend(simpletimer_t *timer, uint32_t interval)
     } else {
         timer->target += interval;
     }
+}
+
+/*
+ * Force an expiration in <interval> milliseconds but don't change interval.
+ */
+static inline void simpletimer_set_expire_in(simpletimer_t *timer, uint32_t interval)
+{
+    timer->target += get_milliseconds() + interval;
+    timer->state = ST_RUNNING;
 }
 
 static inline void simpletimer_set_expired(simpletimer_t *timer)
