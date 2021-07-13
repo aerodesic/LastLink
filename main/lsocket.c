@@ -3646,9 +3646,8 @@ static int dgcon_command(int argc, const char **argv)
                             if (rc < 0) {
                                 printf("rc %d\n", rc);
                             }
-                                 
                         }
-                    } while (len > 0);
+                    } while (len >= 0);
    
                     /* Kill reader thread */
                     dgdata.running = -1;

@@ -207,19 +207,30 @@ static int config_command(int argc, const char **argv)
 {
     if (argc == 0) {
         show_help(argv[0], "", "Show all config vars");
-        show_help(argv[0], "<var>", "Show value of config var");
-        show_help(argv[0], "<var> <value>", "Set value of config var");
+        show_help(argv[0], "get <var>", "Get value of config var");
+        show_help(argv[0], "set <var> <value>", "Set value of config var");
+        show_help(argv[0], "del <var>", "Delete config var");
     } else if (argc == 1) {
         write_config(stdout);
-    } else {
-        const char* var = argv[1];
-        if (argc > 2) {
-            lock_config();
-            set_config_str(var, argv[2]);
-            unlock_config();
-        } else {
-            printf("%s = '%s'\n", var, get_config_str(var, "**UNDEFINED**"));
+    } else if (argc == 4 && strcmp(argv[1], "set") == 0) {
+        lock_config();
+        bool ok = set_config_str(argv[2], argv[3]);
+        unlock_config();
+        if (!ok) {
+            printf("Unable to set %s to '%s'\n", argv[2], argv[3]);
         }
+
+    } else if (argc == 3 && strcmp(argv[1], "get") == 0) {
+        printf("%s = '%s'\n", argv[2], get_config_str(argv[2], "**UNDEFINED**"));
+
+    } else if (argc == 3 && strcmp(argv[1], "del") == 0) {
+        lock_config();
+        bool ok = delete_config(argv[2]);
+        unlock_config();
+
+        printf("%s %sdeleted\n", argv[2], ok ? "" : "not ");
+      
+
     }
 
     return 0;

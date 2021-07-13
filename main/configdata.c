@@ -20,35 +20,40 @@
 static const char *TAG = "configdata";
 
 typedef struct configitem {
-    struct configitem *next;
-    struct configitem *prev;
-    struct configitem **owner;
-    const char* name;
+    struct configitem *next;   /* Next cell in list */
+    struct configitem *prev;   /* Previous cell in list */
+    struct configitem *owner;  /* Section that owns this cell */
+    const char* name;          /* Name of this cell */
 
     enum {
         CONFIG_SECTION,
         CONFIG_VALUE,
     } type;
     union {
-        struct configitem *section;
+        struct configitem *head;
         const char* value;
     };
 } configitem_t;
+
+/* The config table starts out as a naked, un-named section */
+static configitem_t config_table = {
+    .next = &config_table,
+    .prev = &config_table,
+    .name = "base_config_section",
+    .type = CONFIG_SECTION,
+};
 
 static os_mutex_t config_lock;
 static int config_locked = 0;
 static int config_changes = 0;
 static const char* config_file_name = NULL;
-static configitem_t* config_table;
 
-static configitem_t* find_config_entry(const char* name, configitem_t** parent, configitem_t* table);
+static configitem_t* find_config_entry(const char* name, configitem_t* section, bool create);
 static char* skip_blanks(char* bufp);
-static esp_err_t delete_config_cell(configitem_t* item);
-static esp_err_t release_config(configitem_t** table);
+static esp_err_t release_config(configitem_t* table);
 static void write_config_value(FILE* fp, configitem_t* cell, int indent);
-static configitem_t* add_config_cell(configitem_t** owner, const char* info);
-static esp_err_t load_config_table(FILE* fp, configitem_t** owner, char* buffer, size_t bufferlen);
-static configitem_t* find_config_entry(const char* name, configitem_t** parent, configitem_t* table);
+static configitem_t* add_config_cell(configitem_t* section);
+static esp_err_t load_config_table(FILE* fp, configitem_t* section, char* buffer, size_t bufferlen);
 
 static char* skip_blanks(char* bufp)
 {
@@ -58,57 +63,73 @@ static char* skip_blanks(char* bufp)
     return bufp;
 }
 
-static esp_err_t delete_config_cell(configitem_t* item)
+/* Iterate through the cells in this group and print their contents */
+static void dump_cells(const char* title, configitem_t* section, int indent)
 {
-    esp_err_t ret = ESP_OK;
-
-    // ESP_LOGD(TAG, "delete_config_cell: '%s' type %d", item->name, item->type);
-
-    /* Remove item from table */
-    item->next->prev = item->prev;
-    item->prev->next = item->next;
-
-    configitem_t* next = item->next;
-
-    if (item->type == CONFIG_SECTION) {
-        /* Recursively delete section */
-        ret = release_config(&item->section);
-    } else if (item->type == CONFIG_VALUE) {
-        free((void*) item->value);
+    if (section != NULL && section->head != NULL) {
+        if (title != NULL) {
+            printf("%s owner %p\n", title, section->owner);
+        }
+        configitem_t *cell = section->head;
+        do {
+            if (cell->type == CONFIG_SECTION) {
+                if (cell->head != NULL) {
+                    printf("%*.*s%p: section '%s' owner %p %p\n", indent, indent, "", cell, cell->name, cell->owner, cell->head);
+                    dump_cells(NULL, cell, indent+5);
+                }
+            } else if (cell->type == CONFIG_VALUE) {
+                printf("%*.*s%p: value '%s' owner %p \"%s\"\n", indent, indent, "", cell, cell->name, cell->owner, cell->value);
+            }
+            cell = cell->next;
+        } while (cell != section->head);
     }
-
-    /* If we are removing the cell pointed to by the owner's pointer,
-     * we null it out of the list is now empty otherwise we move
-     * the pointer on to the next item.
-     */
-    if (*(item->owner) == item) {
-        *(item->owner) = (item->next) == next ? NULL : next;
-    }
-
-    free((void*) item->name);
-
-    free((void*) item);
-
-    return ret;
 }
 
-static esp_err_t release_config(configitem_t** table)
+/* Release an item */
+static esp_err_t release_config(configitem_t* item)
 {
     esp_err_t ret = ESP_OK;
 
-    configitem_t* item = *table;
+    if (item != NULL) {
+        if (item->type == CONFIG_VALUE) {
+            /* Just free the value */
+            free((void*) item->value);
+            item->value = NULL;
+        } else if (item->type == CONFIG_SECTION) {
+            /* Release the section list */
+            while (item->head != NULL) {
+                release_config(item->head);
+            }
+        }
 
-    while ((ret == ESP_OK) && (item != NULL)) {
-        // ESP_LOGD(TAG, "'%s' item %p next %p prev %p", item->name, item, item->next, item->prev);
-        configitem_t* nextitem = item->next;
-        /* If deleting the last item, call it empty after deletion */
-        bool empty = nextitem == item;
-        ret = delete_config_cell(item);
-        // ESP_LOGD(TAG, "list is %s", empty ? "empty" : "not empty");
-        item = empty ? NULL : nextitem;
+        /* Unlink current item from parent's list */
+        item->prev->next = item->next;
+        item->next->prev = item->prev;
+
+        /* Item owner MUST be a section.  Check and if section head points to this item, advance the pointer */
+        if (item->owner->type != CONFIG_SECTION) {
+            /* Owner of an item MUST be a section */
+            ESP_LOGE(TAG, "%s: owner of %s (%s) is not a section", __func__, item->name, item->owner->name);
+        } else if (item->owner->head == item) {
+            /* We are removing the head of the owner's list.  moved to next */
+            item->owner->head = item->next;
+            /* If still points to this item, clear owner list */
+            if (item->owner->head == item) {
+                item->owner->head = NULL;
+            }
+        } 
+
+        /* Free the name */
+ESP_LOGI(TAG, "%s: releasing %s", __func__, item->name);
+        free((void*) item->name);
+
+        /* And free the item */
+        free((void*) item);
+
+        ++config_changes;
+    } else {
+        ret = ESP_FAIL;
     }
-
-    *table = NULL;
 
     return ret;
 }
@@ -123,12 +144,16 @@ static void write_config_value(FILE* fp, configitem_t* cell, int indent)
             if (cell->type == CONFIG_SECTION) {
 
                 fprintf(fp, "%*.*s[%s]\n", indent, indent, "", cell->name);
-                write_config_value(fp, cell->section, indent + 4);
+                if (cell->head != NULL) {
+                    write_config_value(fp, cell->head, indent + 4);
+                }
                 fprintf(fp, "%*.*s[end]\n", indent, indent, "");
 
             } else if (cell->type == CONFIG_VALUE) {
 
-                fprintf(fp, "%*.*s%s=%s\n", indent, indent, "", cell->name, cell->value);
+                if (cell->value != NULL) {
+                    fprintf(fp, "%*.*s%s=%s\n", indent, indent, "", cell->name, cell->value);
+                }
 
             }
 
@@ -138,36 +163,35 @@ static void write_config_value(FILE* fp, configitem_t* cell, int indent)
     }
 }
 
-static configitem_t* add_config_cell(configitem_t** owner, const char* info)
+static configitem_t* add_config_cell(configitem_t* section)
 {
     configitem_t* cell = (configitem_t*) malloc(sizeof(configitem_t));
     if (cell != NULL) {
-        if (*owner == NULL) {
+        if (section->head == NULL) {
             /* First entry on new table */
             cell->next = cell;
             cell->prev = cell;
-            *owner = cell;
-            // ESP_LOGD(TAG, "new cell '%s' at %p owned by list %p", info, cell, owner);
+            section->head = cell;
+ESP_LOGI(TAG, "%s: first cell at %p in section %s", __func__, cell, section->name);
         } else {
             /* Insert it at end of owner */
-            // ESP_LOGD(TAG, "appending '%s' at %p to owner by %p at %p", info, cell, *owner, (*owner)->prev);
-            cell->next = *owner;
-            cell->prev = (*owner)->prev;
-            (*owner)->prev->next = cell;
-            (*owner)->prev = cell;
+ESP_LOGI(TAG, "%s: appending cell at %p to section %s", __func__, cell, section->name);
+            cell->next = section->head;
+            cell->prev = section->head->prev;
+            section->head->prev->next = cell;
+            section->head->prev = cell;
         }
-        cell->owner = owner;
+        cell->owner = section;
     }
     return cell;
 }
 
-static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer, size_t bufferlen)
+static esp_err_t load_config_table(FILE *fp, configitem_t* section, char* buffer, size_t bufferlen)
 {
     esp_err_t ret = ESP_OK;
     bool done = false;
-    *owner = NULL;
 
-    // ESP_LOGI(TAG, "load_config_table owner into %p -> %p", owner, *owner);
+ESP_LOGI(TAG, "load_config_table owner into section %s", section->name);
     /* Read the file and parse the values */
     while (!done  && (ret == ESP_OK) && (fgets(buffer, bufferlen, fp) != NULL)) {
         char* p = strchr(buffer, '\n');
@@ -177,7 +201,7 @@ static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer,
         p = skip_blanks(buffer);
         /* Ignore blank lines */
         if (*p != 0) {
-            // ESP_LOGI(TAG, "load: %s", buffer);
+ESP_LOGI(TAG, "load: %s", buffer);
             if (*p == '[') {
                 /* Start of a section */
                 char* name = skip_blanks(p+1);
@@ -186,15 +210,15 @@ static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer,
                     *endp = '\0';
                 }
                 if (strcmp(name, "end") != 0) {
-                    configitem_t* cell = add_config_cell(owner, p);
+                    configitem_t* cell = add_config_cell(section);
                     if (cell != NULL) {
                         /* Create a section at this point*/
                         cell->name = strdup(name);
                         cell->type = CONFIG_SECTION;
-                        cell->section = NULL;
+                        cell->head = NULL;
 
-                        // ESP_LOGI(TAG, "start section in cell %p", cell);
-                        ret = load_config_table(fp, &cell->section, buffer, bufferlen);
+ESP_LOGI(TAG, "start section in cell %p", cell);
+                        ret = load_config_table(fp, cell, buffer, bufferlen);
                     } else {
                         ret = ENOMEM;
                     }
@@ -209,13 +233,11 @@ static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer,
                     *p = '\0';
                     p = skip_blanks(p+1);
                     if (p != NULL) {
-                        configitem_t* cell = add_config_cell(owner, name);
+                        configitem_t* cell = add_config_cell(section);
                         if (cell != NULL) {
-                            char* value = strdup(p);
-
                             cell->name = strdup(name);
                             cell->type = CONFIG_VALUE;
-                            cell->value = value;
+                            cell->value = strdup(p);
                         } else {
                             ret = ENOMEM;
                         }
@@ -224,6 +246,8 @@ static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer,
             }
         }
     }
+
+//dump_cells("after load", &config_table, 0);
     // ESP_LOGI(TAG, "load_config_table exit %d", ret);
 
     return ret;
@@ -232,7 +256,7 @@ static esp_err_t load_config_table(FILE *fp, configitem_t** owner, char* buffer,
 bool write_config(FILE* fp)
 {
     if (fp != NULL) {
-        write_config_value(fp, config_table, 0);
+        write_config_value(fp, config_table.head, 0);
     }
     return fp != NULL;
 }
@@ -248,7 +272,7 @@ bool save_config(const char* filename)
         // ESP_LOGI(TAG, "%s opened on %p", filename, fp);
 
         if (fp != NULL) {
-            write_config_value(fp, config_table, 0);
+            write_config_value(fp, config_table.head, 0);
             fclose(fp);
         }
     } else {
@@ -349,10 +373,10 @@ esp_err_t init_configuration(const char* filename)
  *                           password=something or other
  *                       [end]
  *                    [end]
- *     parent      If non-null, receives pointer to section that contains this item.
- *     table       Table to search
+ *     section     section to search for item
+ *     create      true if to create entry if not found
  */
-static configitem_t* find_config_entry(const char* name, configitem_t** parent, configitem_t* table)
+static configitem_t* find_config_entry(const char* name, configitem_t* section, bool create)
 {
     const char* delim = ".";
     const char* field;
@@ -360,62 +384,77 @@ static configitem_t* find_config_entry(const char* name, configitem_t** parent, 
 
     char* str = strdup(name);
     char* tokens = str;
+    char* rest;
 
-    while ((table != NULL) && (field = strtok(tokens, delim)) != NULL) {
-        str = NULL;
+// dump_cells("Table", section, 0);
+
+    bool done = false;
+    while (!done && (field = strtok_r(tokens, delim, &rest)) != NULL) {
         tokens = NULL;
         found = NULL;
 
-        // ESP_LOGD(TAG, "find_config_item looking for '%s'", field);
+        // ESP_LOGI(TAG, "find_config_item looking for '%s'", field);
 
-        configitem_t* item = table;
-        do {
-            // ESP_LOGD(TAG, "looking for '%s' at %p '%s'", field, item, item->name);
-            if (strcmp(item->name, field) == 0) {
-                /* Found field */
-                // ESP_LOGD(TAG, "found at %p type %d", item, item->type);
-                found = item;
-            }
-            item = item->next;
-        } while (!found && item != table);
+        configitem_t* item = section->head;
 
-        if (found) {
-            if (found->type == CONFIG_SECTION) {
-                if (parent != NULL) {
-                    *parent = table;
+        if (item != NULL) {
+            do {
+                ESP_LOGI(TAG, "%s: looking for '%s' at %p '%s'", __func__, field, item, item->name);
+                if (strcmp(item->name, field) == 0) {
+                    /* Found field */
+                    ESP_LOGI(TAG, "%s: found at %p type %d", __func__, item, item->type);
+                    found = item;
                 }
-                table = found->section;
+                item = item->next;
+            } while (!found && item != section->head);
+        }
+
+        if (found != NULL) {
+            if (found->type == CONFIG_SECTION) {
+                section = found;
             }
         } else {
-            table = NULL;
+            /* Give up */
+            done = true;
+        }
+    }
+
+    if (found == NULL && create) {
+        /* Create rest of structure here */
+        do {
+//ESP_LOGI(TAG, "%s: adding cell for %s", __func__, field);
+            found = add_config_cell(section);
+
+            if (found != NULL) {
+                found->name = strdup(field);
+                found->type = CONFIG_SECTION;   /* Assume section until we run out of fields */
+                found->head = NULL;             /* No contents */
+                section = found;                /* Next owner cell */
+
+                field =  strtok_r(tokens, delim, &rest);
+            } else {
+                field = NULL;
+            }
+        } while (field != NULL);
+             
+        if (found != NULL) {
+            /* Turn last found into a VALUE */
+            found->type = CONFIG_VALUE;
+            found->value = strdup(""); 
         }
     }
 
     free((void*) str);
 
-    return (found && found->type == CONFIG_VALUE) ? found : NULL;
+    return (found);
 }
 
 bool delete_config(const char* field)
 {
-    configitem_t* parent;
-
-    configitem_t* item = find_config_entry(field, &parent, config_table);
+    configitem_t* item = find_config_entry(field, &config_table, false);
     if (item != NULL) {
-        /* Remove the item from the list */
-        item->next->prev = item->prev;
-        item->prev->next = item->next;
-
-        /* parent->type *MUST* be a SECTION, but check anyway */
-        if (parent->type == CONFIG_SECTION) {
-            if (parent->section == parent) {
-                parent->section = NULL;
-            }
-        } else {
-            ESP_LOGI(TAG, "************ parent of %s not a section (%s) *************", item->name, parent->name);
-        }
-
-        free((void*) item);
+        release_config(item);
+dump_cells("after delete", &config_table, 0);
     }
 
     return item != NULL;
@@ -425,7 +464,7 @@ const char* get_config_str(const char* field, const char* defvalue)
 {
     const char* ret = NULL;
 
-    configitem_t* item = find_config_entry(field, NULL, config_table);
+    configitem_t* item = find_config_entry(field, &config_table, false);
     if (item != NULL && item->type == CONFIG_VALUE) {
         ret = item->value;
     } else {
@@ -446,14 +485,17 @@ int get_config_int(const char* field, int defvalue)
 
 bool set_config_str(const char* field, const char* value)
 {
-    configitem_t* item = find_config_entry(field, NULL, config_table);
+    configitem_t* item = find_config_entry(field, &config_table, true);
+    
     if (item != NULL) {
         if (strcmp(item->value, value) != 0) {
             free((void*) (item->value));
             item->value = strdup(value);
             config_changes++;
+dump_cells("after set", &config_table, 0);
         }
     }
+  
     return item != NULL;
 }
 

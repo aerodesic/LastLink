@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
@@ -40,6 +41,7 @@
 #include "tokenize.h"
 #include "lsocket_internal.h"
 #include "dht.h"
+#include "configdata.h"
 
 #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
@@ -157,20 +159,46 @@ bool process_dht(sensor_transaction_t transaction, const char* name, void* param
         dht_value_t humidity;
         dht_ret_t rc = dht_read(&humidity, &temperature);
         if (rc != DHT_OK) {
-            strncpy(reply_buffer, "Read Error", reply_len);
+            strncpy(reply_buffer, "READ", reply_len);
             reply_buffer[reply_len - 1] = '\0';
             success = false;
         } else {
             snprintf(reply_buffer, reply_len, "%.1f", param == 0 ? humidity : temperature);
         }
     } else {
-        snprintf(reply_buffer, reply_len, "Invalid transaction");
+        snprintf(reply_buffer, reply_len, "RO");
         success = false;
     }
 
     return success;
 }
 #endif
+
+bool process_config_value(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
+{
+    bool success = false;
+
+    lock_config();
+
+    if (transaction == SENSOR_READ) {
+        const char* value = get_config_str((char*) param, "");
+        if (value != NULL) {
+            snprintf(reply_buffer, reply_len, "%s", value);
+            success = true;
+        }
+    } else if (transaction == SENSOR_WRITE) {
+
+        va_list args;
+        va_start(args, reply_len);
+
+        const char* value = va_arg(args, const char*);
+        success = set_config_str((const char*) param, value);
+    }
+
+    unlock_config();
+
+    return success;
+}
 
 static void initialize_all_sensors(void)
 {
@@ -194,6 +222,8 @@ static void initialize_all_sensors(void)
     } else {
         ESP_LOGE(TAG, "unable to read dht sensor - not adding to sensors");
     }
+
+    register_sensor("testval",  SENSOR_TYPE_VALUE, "",     0,  process_config_value, (void*) "values.testval");
 #endif
 }
 
@@ -231,16 +261,18 @@ ESP_LOGI(TAG, "%s: running", __func__);
     
                         /* Wait for a sensor data request */
                         int len = ls_read_with_address(socket, sensor_commands_buf, sizeof(sensor_commands_buf)-1, &sender_address, &sender_port, CONFIG_LASTLINK_SENSORS_SCAN_INTERVAL);
-    if (len >= 0) {
-        ESP_LOGI(TAG, "%s: packet %d bytes from %d/%d", __func__, len, sender_address, sender_port);
-    }
+                        //if (len >= 0) {
+                        //    ESP_LOGI(TAG, "%s: packet %d bytes from %d/%d", __func__, len, sender_address, sender_port);
+                        //}
     
                         if (len > 0) {
                             /************************************************************************
                              * Process a request to update or get value from a sensor.
-                             * A 'get' request is specified by giving the sensor name only.
+                             * A '*' will report all sensors available, with units and R/W status.
                              *
-                             * A 'set' request is specified by the format <sensor name>=<value>
+                             * A read request is specified by giving the sensor name only.
+                             *
+                             * A write request is specified by the format <sensor name>=<value>
                              *
                              * A reply will be generated for every 'get' request in the form:
                              *   V:<sensor name>=<value>
@@ -251,7 +283,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                              * detected, no response will be given.
                              ************************************************************************/
                             sensor_commands_buf[len] = '\0';
-                            ESP_LOGI(TAG, "%s: sensor commands: %s", __func__, sensor_commands_buf);
+                            // ESP_LOGI(TAG, "%s: sensor commands: %s", __func__, sensor_commands_buf);
 
                             /* Parse list of:
                              *   <name>[=<value>],...
@@ -279,28 +311,53 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                     value = NULL;
                                 }
 
-                                ESP_LOGI(TAG, "%s: sensor request %s: %s", __func__, item, value?value : "NULL");
-                                sensor_cache_t *sensor = lookup_sensor(item);
                                 int moved = 0;
+                                if (strcmp(item, "*") == 0) {
+                                    /* Return log of sensor channels available */
+                                    os_acquire_recursive_mutex(sensor_lock);
 
-                                if (sensor != NULL) {
-                                   char sensor_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH];
+                                    sensor_cache_t *sensor = (sensor_cache_t*) FIRST_LIST_ITEM(&sensor_cache);
 
-                                    if (value != NULL) {
-                                        /* Setting value */
-                                        if (! write_sensor(sensor, value, sensor_buffer, sizeof(sensor_buffer))) {
-                                            moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s=%s\n", sensor->name, sensor_buffer);
+                                    while (sensor != NULL) {
+                                        const char *sensor_type;
+                                        switch (sensor->type) {
+                                            case SENSOR_TYPE_INPUT:              sensor_type = "IN";         break;
+                                            case SENSOR_TYPE_INPUT_ACCUMULATOR:  sensor_type = "IN_AC";      break;
+                                            case SENSOR_TYPE_OUTPUT:             sensor_type = "OUT";        break;
+                                            case SENSOR_TYPE_OUTPUT_TIMED:       sensor_type = "OUT_TIMED";  break;
+                                            case SENSOR_TYPE_VALUE:              sensor_type = "VAL";        break;
+                                            default:                             sensor_type = "?";          break;
+                                        }
+                                        int moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "N:%s:%s:%s\n", sensor->name, sensor->units, sensor_type);
+                                        reply_pointer += moved;
+                                        reply_used += moved;
+                                        sensor = NEXT_LIST_ITEM(sensor, &sensor_cache);
+                                    }
+
+                                    os_release_recursive_mutex(sensor_lock);
+                                } else {
+                                    //ESP_LOGI(TAG, "%s: sensor request %s: %s", __func__, item, value?value : "NULL");
+                                    sensor_cache_t *sensor = lookup_sensor(item);
+
+                                    if (sensor != NULL) {
+                                       char sensor_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH];
+
+                                        if (value != NULL) {
+                                            /* Setting value */
+                                            if (! write_sensor(sensor, value, sensor_buffer, sizeof(sensor_buffer))) {
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
+                                            }
+                                        } else {
+                                            /* Reading value */
+                                            if (read_sensor(sensor, sensor_buffer, sizeof(sensor_buffer))) {
+                                            moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
+                                            } else {
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
+                                            }
                                         }
                                     } else {
-                                        /* Reading value */
-                                        if (read_sensor(sensor, sensor_buffer, sizeof(sensor_buffer))) {
-                                            moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s=%s %s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
-                                        } else {
-                                            moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s=%s\n", sensor->name, sensor_buffer);
-                                        }
+                                        moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "U:%s\n", item);
                                     }
-                                } else {
-                                    moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "U:%s\n", item);
                                 }
 
                                 reply_pointer += moved;
