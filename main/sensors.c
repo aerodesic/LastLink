@@ -392,7 +392,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                     if (sensor->notify || strcmp(value_buffer, sensor->last_value) != 0)  {
                                         strncpy(sensor->last_value, value_buffer, sizeof(sensor->last_value));
                                         sensor->last_value[sizeof(sensor->last_value)-1] = '\0';
-                                        int len = snprintf(reply_buffer, sizeof(reply_buffer), "V:%s=%s %s", sensor->name, value_buffer, sensor->units ? sensor->units : "");
+                                        int len = snprintf(reply_buffer, sizeof(reply_buffer), "V:%s:%s:%s\n", sensor->name, value_buffer, sensor->units ? sensor->units : "");
     
                                         ret = ls_write(socket, reply_buffer, len);
 
@@ -637,6 +637,114 @@ int sensor_commands(int argc, const char **argv)
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
+/**********************************************************************/
+/* scon connect to sensor system                                      */
+/* Enter a loop and take commands entered and send to the socket,     */
+/* while displaying packets received from the socket.                 */
+/* Control-C breaks out                                               */
+/**********************************************************************/
+typedef struct scon_data {
+    os_thread_t thread_id;
+    int socket;
+    int running;
+} scon_data_t;
+
+static void scon_reader(void* data)
+{
+    scon_data_t* sdata = (scon_data_t*) data;
+
+    sdata->running = 1;
+
+    printf("scon_reader running\n");
+
+    while (sdata->running > 0) {
+        /* Read data from socket and echo to terminal */
+        char buffer[300];
+
+        int address;
+        int port;
+
+        int len = ls_read_with_address(sdata->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
+
+        if (len > 0) {
+            buffer[len] = '\0';
+            printf("%s", buffer); 
+        }
+    }
+
+    sdata->running = 0;
+
+    printf("scon_reader stopping\n");
+
+    os_exit_thread();
+}
+
+
+#define MAX_SCON_ARGS   10
+static int scon_command(int argc, const char **argv)
+{
+    if (argc == 0) {
+        show_help(argv[0], "", "Connect to sensor system");
+    } else {
+        int socket = ls_socket(LS_DATAGRAM);
+        if (socket >= 0) {
+            int ret = ls_bind(socket, 0);
+            if (ret >= 0) {
+                scon_data_t sdata;
+                sdata.socket = socket;
+
+                /* Spawn a reader socket to echo back input packets to the control */
+                sdata.thread_id = os_create_thread(scon_reader, "scon_reader", 4095, 0, (void*) &sdata);
+
+                /* Loop reading but terminate on control-c (-1 return) */
+                int len;
+
+                do {
+                    char buffer[80];
+
+                    len = readline(buffer, sizeof(buffer));
+                    if (len > 0) {
+                        // <address> <port> <data>
+                        const char* argv[3];
+                        int argc = tokenize(buffer, argv, sizeof(argv) / sizeof(argv[0]));
+//                      for (int arg = 0; arg < argc; ++arg) {
+//                          printf("arg[%d]: '%s'\n", arg, argv[arg]);
+//                      }
+
+                        if (argc == 3) {
+                            int address = strtol(argv[0], NULL, 10);
+                            int port = strtol(argv[1], NULL, 10);
+                            int rc = ls_connect(socket, address, port);
+
+                            if (rc >= 0) {
+                                rc = ls_write(socket, argv[2], strlen(argv[2]));
+                            }
+
+                            if (rc < 0) {
+                                printf("E:%d\n", rc);
+                            }
+                        } else {
+                            printf("E:ARGS\n");
+                        }
+                    }
+                } while (len >= 0);
+   
+                /* Kill reader thread */
+                sdata.running = -1;
+                while (sdata.running != 0) {
+                    os_delay(100);
+                }
+            } else {
+                printf("ls_bind returned %d\n", ret);
+            }
+            ls_close(socket);
+        } else {
+            printf("Unable to open socket: %d\n", socket);
+        }
+    }
+    return 0;
+}
+
 bool init_sensors(void)
 {
     sensor_lock = os_create_recursive_mutex();
@@ -645,6 +753,7 @@ bool init_sensors(void)
 
 #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("sensors", sensor_commands);
+    add_command("scon", scon_command);
 #endif
 
     ESP_LOGI(TAG, "%s: called", __func__);

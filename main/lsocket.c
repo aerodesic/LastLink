@@ -2089,12 +2089,8 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
 
     ls_socket_t *socket = validate_socket(s);
 
-    if (socket != NULL && socket->state == LS_STATE_BOUND) {
-
-        if (socket->busy != 0) {
-            ret = LSE_SOCKET_BUSY;
-        } else {
-            socket->busy++;
+    if (socket != NULL) {
+        if (socket->socket_type == LS_DATAGRAM) {
             socket->dest_port = port;
             socket->dest_addr = address;
 
@@ -2102,21 +2098,32 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
             if (socket->src_port == 0) {
                 socket->src_port = find_free_src_port();
             }
-
-            if (socket->socket_type == LS_DATAGRAM) {
-                /* Datagram connection is easy - we just say it's connected */
-                socket->state = LS_STATE_CONNECTED;
-                if (socket->datagram_packets == NULL) {
-                    socket->datagram_packets = os_create_queue(5, sizeof(packet_t*));
-                }
+            /* Datagram connection is easy - we just say it's connected */
+            socket->state = LS_STATE_CONNECTED;
+            if (socket->datagram_packets == NULL) {
+                socket->datagram_packets = os_create_queue(5, sizeof(packet_t*));
+            }
 
 #ifdef NOTUSED
-                /* Special case: our dest address changes to the last destination of the packet we receive.  */
-                socket->rename_dest = address == NULL_ADDRESS;
+            /* Special case: our dest address changes to the last destination of the packet we receive.  */
+            socket->rename_dest = address == NULL_ADDRESS;
 #endif
-
-            } else if (socket->socket_type == LS_STREAM) {
+        } else if (socket->socket_type == LS_STREAM) {
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
+            if (socket->state != LS_STATE_BOUND) {
+                ret = LSE_INVALID_SOCKET;
+            } else if (socket->busy != 0) {
+                ret = LSE_SOCKET_BUSY;
+            } else {
+                socket->busy++;
+                socket->dest_port = port;
+                socket->dest_addr = address;
+
+                /* If src_port is 0, bind an unused local port to this socket */
+                if (socket->src_port == 0) {
+                    socket->src_port = find_free_src_port();
+                }
+
                 /* Start sending connect packet and wait for complete */
                 state_machine_start("outbound connect",
                                     socket,
@@ -2126,7 +2133,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                                     -1,                                     /* Use action time to calculate delay */
                                     STREAM_CONNECT_RETRIES);                /* Try this many times */
 
-
+    
                 UNLOCK_SOCKET(socket);
 
                 /* A response of some kind will be forthcoming.  It will be NO_ERROR or some other network error */
@@ -2142,24 +2149,21 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                     simpletimer_start(&socket->keepalive_timer, CONFIG_LASTLINK_STREAM_KEEP_ALIVE_TIME * 1000);
                 }
 #endif
+                socket->busy--;
+            }
 #else /* !CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
 
-                ret = LSE_NOT_IMPLEMENTED;
+            ret = LSE_NOT_IMPLEMENTED;
 
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
-
-            } else {
-                ret = LSE_INVALID_SOCKET;
-            }
-
-            socket->busy--;
+        } else {
+            ret = LSE_INVALID_SOCKET;
         }
-
-        UNLOCK_SOCKET(socket);
-
     } else {
         ret = LSE_INVALID_SOCKET;
     }
+
+    UNLOCK_SOCKET(socket);
 
     if (ret != LSE_INVALID_SOCKET) {
         socket->last_error = ret;
@@ -3574,7 +3578,7 @@ static int dgsend_command(int argc, const char **argv)
 }
 
 /**********************************************************************/
-/* dgcon <address> <port>                                             */
+/* dgcon <address> <dest port> [<src port>]                           */
 /* Enter a loop and take commands entered and send to the socket,     */
 /* while displaying packets received from the socket.                 */
 /* Control-C breaks out                                               */
@@ -3615,16 +3619,18 @@ static void dgcon_reader(void* data)
 static int dgcon_command(int argc, const char **argv)
 {
     if (argc == 0) {
-        show_help(argv[0], "<address> <port>", "Send and receive datagram date");
-    } else if (argc == 3) {
+        show_help(argv[0], "<address> <dest port> [<src port>]", "Send and receive datagram date");
+    } else if (argc >= 3) {
         int address = strtol(argv[1], NULL, 10);
-        int port = strtol(argv[2], NULL, 10);
+        int dest_port = strtol(argv[2], NULL, 10);
+
+        int src_port = argc > 3 ? strtol(argv[3], NULL, 10) : 0;
 
         int socket = ls_socket(LS_DATAGRAM);
         if (socket >= 0) {
-            int ret = ls_bind(socket, 0);
+            int ret = ls_bind(socket, src_port);
             if (ret >= 0) {
-                ret = ls_connect(socket, address, port);
+                ret = ls_connect(socket, address, dest_port);
                 //ls_dump_socket("sending", socket);
                 if (ret >= 0) {
                     dgcon_data_t dgdata;
@@ -3641,6 +3647,7 @@ static int dgcon_command(int argc, const char **argv)
 
                         len = readline(buffer, sizeof(buffer));
                         if (len > 0) {
+                            // <address>:<port>:<data>
                             // printf("Writing \"%s\"\n", buffer);
                             int rc = ls_write(socket, buffer, len);
                             if (rc < 0) {
