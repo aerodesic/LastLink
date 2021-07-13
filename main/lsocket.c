@@ -3641,10 +3641,10 @@ static int dgcon_command(int argc, const char **argv)
 
                         len = readline(buffer, sizeof(buffer));
                         if (len > 0) {
-                            printf("Writing \"%s\"\n", buffer);
+                            // printf("Writing \"%s\"\n", buffer);
                             int rc = ls_write(socket, buffer, len);
                             if (rc < 0) {
-                                printf("rc %d\n", rc);
+                                printf("E:%d\n", rc);
                             }
                         }
                     } while (len >= 0);

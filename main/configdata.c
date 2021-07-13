@@ -120,7 +120,7 @@ static esp_err_t release_config(configitem_t* item)
         } 
 
         /* Free the name */
-ESP_LOGI(TAG, "%s: releasing %s", __func__, item->name);
+//ESP_LOGI(TAG, "%s: releasing %s", __func__, item->name);
         free((void*) item->name);
 
         /* And free the item */
@@ -172,10 +172,10 @@ static configitem_t* add_config_cell(configitem_t* section)
             cell->next = cell;
             cell->prev = cell;
             section->head = cell;
-ESP_LOGI(TAG, "%s: first cell at %p in section %s", __func__, cell, section->name);
+//ESP_LOGI(TAG, "%s: first cell at %p in section %s", __func__, cell, section->name);
         } else {
             /* Insert it at end of owner */
-ESP_LOGI(TAG, "%s: appending cell at %p to section %s", __func__, cell, section->name);
+//ESP_LOGI(TAG, "%s: appending cell at %p to section %s", __func__, cell, section->name);
             cell->next = section->head;
             cell->prev = section->head->prev;
             section->head->prev->next = cell;
@@ -191,7 +191,7 @@ static esp_err_t load_config_table(FILE *fp, configitem_t* section, char* buffer
     esp_err_t ret = ESP_OK;
     bool done = false;
 
-ESP_LOGI(TAG, "load_config_table owner into section %s", section->name);
+//ESP_LOGI(TAG, "load_config_table owner into section %s", section->name);
     /* Read the file and parse the values */
     while (!done  && (ret == ESP_OK) && (fgets(buffer, bufferlen, fp) != NULL)) {
         char* p = strchr(buffer, '\n');
@@ -201,7 +201,7 @@ ESP_LOGI(TAG, "load_config_table owner into section %s", section->name);
         p = skip_blanks(buffer);
         /* Ignore blank lines */
         if (*p != 0) {
-ESP_LOGI(TAG, "load: %s", buffer);
+//ESP_LOGI(TAG, "load: %s", buffer);
             if (*p == '[') {
                 /* Start of a section */
                 char* name = skip_blanks(p+1);
@@ -217,7 +217,7 @@ ESP_LOGI(TAG, "load: %s", buffer);
                         cell->type = CONFIG_SECTION;
                         cell->head = NULL;
 
-ESP_LOGI(TAG, "start section in cell %p", cell);
+//ESP_LOGI(TAG, "start section in cell %p", cell);
                         ret = load_config_table(fp, cell, buffer, bufferlen);
                     } else {
                         ret = ENOMEM;
@@ -399,10 +399,10 @@ static configitem_t* find_config_entry(const char* name, configitem_t* section, 
 
         if (item != NULL) {
             do {
-                ESP_LOGI(TAG, "%s: looking for '%s' at %p '%s'", __func__, field, item, item->name);
+                //ESP_LOGI(TAG, "%s: looking for '%s' at %p '%s'", __func__, field, item, item->name);
                 if (strcmp(item->name, field) == 0) {
                     /* Found field */
-                    ESP_LOGI(TAG, "%s: found at %p type %d", __func__, item, item->type);
+                    //ESP_LOGI(TAG, "%s: found at %p type %d", __func__, item, item->type);
                     found = item;
                 }
                 item = item->next;
@@ -454,7 +454,7 @@ bool delete_config(const char* field)
     configitem_t* item = find_config_entry(field, &config_table, false);
     if (item != NULL) {
         release_config(item);
-dump_cells("after delete", &config_table, 0);
+//dump_cells("after delete", &config_table, 0);
     }
 
     return item != NULL;
@@ -492,7 +492,7 @@ bool set_config_str(const char* field, const char* value)
             free((void*) (item->value));
             item->value = strdup(value);
             config_changes++;
-dump_cells("after set", &config_table, 0);
+//dump_cells("after set", &config_table, 0);
         }
     }
   

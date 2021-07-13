@@ -321,11 +321,11 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                     while (sensor != NULL) {
                                         const char *sensor_type;
                                         switch (sensor->type) {
-                                            case SENSOR_TYPE_INPUT:              sensor_type = "IN";         break;
-                                            case SENSOR_TYPE_INPUT_ACCUMULATOR:  sensor_type = "IN_AC";      break;
-                                            case SENSOR_TYPE_OUTPUT:             sensor_type = "OUT";        break;
-                                            case SENSOR_TYPE_OUTPUT_TIMED:       sensor_type = "OUT_TIMED";  break;
-                                            case SENSOR_TYPE_VALUE:              sensor_type = "VAL";        break;
+                                            case SENSOR_TYPE_INPUT:              sensor_type = "input";      break;
+                                            case SENSOR_TYPE_INPUT_ACCUMULATOR:  sensor_type = "accum";      break;
+                                            case SENSOR_TYPE_OUTPUT:             sensor_type = "output";     break;
+                                            case SENSOR_TYPE_OUTPUT_TIMED:       sensor_type = "timed";      break;
+                                            case SENSOR_TYPE_VALUE:              sensor_type = "value";      break;
                                             default:                             sensor_type = "?";          break;
                                         }
                                         int moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "N:%s:%s:%s\n", sensor->name, sensor->units, sensor_type);
@@ -344,13 +344,15 @@ ESP_LOGI(TAG, "%s: running", __func__);
 
                                         if (value != NULL) {
                                             /* Setting value */
-                                            if (! write_sensor(sensor, value, sensor_buffer, sizeof(sensor_buffer))) {
+                                            if (write_sensor(sensor, value, sensor_buffer, sizeof(sensor_buffer))) {
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, value, sensor->units ? sensor->units : "");
+                                            } else {
                                                 moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
                                             }
                                         } else {
                                             /* Reading value */
                                             if (read_sensor(sensor, sensor_buffer, sizeof(sensor_buffer))) {
-                                            moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
                                             } else {
                                                 moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
                                             }
