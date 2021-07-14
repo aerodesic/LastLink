@@ -359,7 +359,7 @@ static bool is_valid_address(int address)
  * Create a generic packet
  *
  * Entry:
- *      dest          Target address
+ *      dest            Target address
  *      protocol        Protocol number
  *      length          Payload length
  */
@@ -1604,34 +1604,32 @@ void linklayer_release_packets_in_queue(os_queue_t queue) {
 }
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-static int linklayer_print_status(int argc, const char** argv)
+static void linklayer_print_status(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "", "Print linklayer status");
+    if (context->argc == 0) {
+        show_help(context, "", "Print linklayer status");
     } else {
-        printf("linklayer_lock: %s\n", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
+        command_reply(context, "linklayer_lock: %s", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
         /* Print radio status */
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
             if (radio_table[radio_num] != NULL) {
                 radio_t *radio = radio_table[radio_num];
                 printf("\n");
-                radio->print_status(radio);
+                radio->print_status(context, radio);
             }
         }
     }
-    return 0;
 }
 
-static int linklayer_debug_flag(int argc, const char **argv)
+static void linklayer_debug_flag(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "0 / 1", "Set debug flag");
-    } else if (argc > 1) {
-        debug_flag = strtol(argv[1], NULL, 10);
+    if (context->argc == 0) {
+        show_help(context, "0 / 1", "Set debug flag");
+    } else if (context->argc > 1) {
+        debug_flag = strtol(context->argv[1], NULL, 10);
     } else {
-        printf("linklayer debug_flag %d\n", debug_flag);
+        command_reply(context, "linklayer debug_flag %d", debug_flag);
     }
-    return 0;
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
@@ -1648,10 +1646,10 @@ static void send_beacon(os_timer_t timer_id)
 #endif
 
 // #if CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON
-// static int send_reset_beacon(int argc, const char** argv)
+// static int send_reset_beacon(command_context_t* context)
 // {
-//     if (argc == 0) {
-//         show_help(argv[0], "", "Send Reset Sequence Beacon");
+//     if (context->argc == 0) {
+//         show_help(context->argv[0], "", "Send Reset Sequence Beacon");
 //     } else {
 //         /* Send a sequence number reset beacon */
 //         //packet_t *beacon = beacon_packet_create(NULL, false);
@@ -1757,9 +1755,9 @@ bool linklayer_init(int address, int flags, int announce)
 #endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("ll", linklayer_print_status);
-    add_command("ldb", linklayer_debug_flag);
-//  add_command("srb", send_reset_beacon);
+    add_command("ll",  linklayer_print_status, COMMAND_ONCE);
+    add_command("ldb", linklayer_debug_flag,   COMMAND_ONCE);
+//  add_command("srb", send_reset_beacon,      COMMAND_ONCE);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
     return ok;

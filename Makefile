@@ -65,6 +65,7 @@ COMPONENTS += xtensa-debug-module
 COMPONENTS += bootloader_support
 COMPONENTS += vfs
 COMPONENTS += xtensa
+COMPONENTS += platform_include
 
 EXTRA_CFLAGS = -s
 

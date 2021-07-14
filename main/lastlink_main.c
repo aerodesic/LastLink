@@ -136,7 +136,9 @@ void app_main(void)
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
     init_commands();
+#endif
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
@@ -204,7 +206,9 @@ void app_main(void)
 
 #endif /* DISABLED_WHILE_LOOKING_FOR_CRASH */
 
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
     start_commands(stdin, stdout);
+#endif
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));

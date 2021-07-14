@@ -16,6 +16,11 @@
 #include "os_specific.h"
 
 #include "configdata.h"
+#include "tokenize.h"
+
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
+#include "commands.h"
+#endif
 
 static const char *TAG = "configdata";
 
@@ -49,19 +54,10 @@ static int config_changes = 0;
 static const char* config_file_name = NULL;
 
 static configitem_t* find_config_entry(const char* name, configitem_t* section, bool create);
-static char* skip_blanks(char* bufp);
 static esp_err_t release_config(configitem_t* table);
 static void write_config_value(FILE* fp, configitem_t* cell, int indent);
 static configitem_t* add_config_cell(configitem_t* section);
 static esp_err_t load_config_table(FILE* fp, configitem_t* section, char* buffer, size_t bufferlen);
-
-static char* skip_blanks(char* bufp)
-{
-    while (isspace(*bufp)) {
-        ++bufp;
-    }
-    return bufp;
-}
 
 /* Iterate through the cells in this group and print their contents */
 static void dump_cells(const char* title, configitem_t* section, int indent)
@@ -321,6 +317,77 @@ bool unlock_config(void)
     return false;
 }
 
+static void write_config_command_reply(command_context_t *context, configitem_t* cell, int indent)
+{
+    configitem_t* start = cell;
+    do {
+        if (cell->type == CONFIG_SECTION) {
+
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+            command_reply(context, "[%s]", cell->name);
+#else
+            command_reply(context, "%*.*s[%s]", indent, indent, "", cell->name);
+#endif
+
+            if (cell->head != NULL) {
+                write_config_command_reply(context, cell->head, indent + 4);
+            }
+
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+            command_reply(context, "[end]");
+#else
+            command_reply(context, "%*.*s[end]", indent, indent, "");
+#endif
+
+        } else if (cell->type == CONFIG_VALUE) {
+
+            if (cell->value != NULL) {
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+                command_reply(context, "%s=%s", cell->name, cell->value);
+#else
+                command_reply(context, "%*.*s%s=%s", indent, indent, "", cell->name, cell->value);
+#endif
+            }
+
+        }
+
+        cell = cell->next;
+
+    } while (cell != start);
+}
+
+/**********************************************************************/
+/* config [ <var> [ <value> ] ]                                       */
+/**********************************************************************/
+static void config_command(command_context_t *context)
+{
+    if (context->argc == 0) {
+        show_help(context, "", "Show all config vars");
+        show_help(context, "get <var>", "Get value of config var");
+        show_help(context, "set <var> <value>", "Set value of config var");
+        show_help(context, "del <var>", "Delete config var");
+    } else if (context->argc == 1) {
+        write_config_command_reply(context, config_table.head, 0);
+    } else if (context->argc == 4 && strcmp(context->argv[1], "set") == 0) {
+        lock_config();
+        bool ok = set_config_str(context->argv[2], context->argv[3]);
+        unlock_config();
+        if (!ok) {
+            command_reply_error(context, "Unable to set %s to '%s'", context->argv[2], context->argv[3]);
+        }
+
+    } else if (context->argc == 3 && strcmp(context->argv[1], "get") == 0) {
+        command_reply_error(context, "%s = '%s'", context->argv[2], get_config_str(context->argv[2], "**UNDEFINED**"));
+
+    } else if (context->argc == 3 && strcmp(context->argv[1], "del") == 0) {
+        lock_config();
+        bool ok = delete_config(context->argv[2]);
+        unlock_config();
+
+        command_reply_error(context, "%s %sdeleted", context->argv[2], ok ? "" : "not ");
+    }
+}
+
 /*
  * init_configuration
  *
@@ -357,6 +424,10 @@ esp_err_t init_configuration(const char* filename)
     }
 
     save_config(NULL);
+
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
+    add_command("config",      config_command,  COMMAND_ONCE);
+#endif
 
     return ret;
 }

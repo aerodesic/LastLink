@@ -12,6 +12,7 @@
 #include "sdkconfig.h"
 #include "os_specific.h"
 #include "packets.h"
+#include "commands.h"
 
 typedef int ls_port_t;
 typedef int ls_address_t;
@@ -159,6 +160,6 @@ ls_error_t ping(int address, uint32_t *elapsed, int* routelist, int routelistlen
 /*
  * debug
  */
-ls_error_t ls_dump_socket(const char* msg, int socket);
+ls_error_t ls_dump_socket(command_context_t* context, const char* msg, int socket);
 
 #endif /* __lsocket_h_include */

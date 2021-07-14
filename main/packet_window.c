@@ -709,15 +709,15 @@ void packet_window_receive_random(void *param)
 }
 
 
-int run_packet_window_test(int argc, const char **argv)
+int run_packet_window_test(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "r/t", "Run packet_window tests as receiver or transmitter");
-    } else if (argc > 1) {
+    if (context->argc == 0) {
+        show_help(context, "r/t", "Run packet_window tests as receiver or transmitter");
+    } else if (context->argc > 1) {
         /* Create input window */
         packet_window_t *window = packet_window_create(TEST_WINDOW_SIZE);
 
-        if (argv[1][0] == 'r') {
+        if (context->argv[1][0] == 'r') {
             /* Create consumer */
             consumer_thread = os_create_thread(packet_window_receive_sequential, "rcv_sequential", 8192, 0, (void *) window);
 

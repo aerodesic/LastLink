@@ -365,10 +365,10 @@ typedef struct {
     int                 pending_retries;
 } route_table_values_t;
 
-static int print_route_table(int argc, const char **argv)
+static void print_route_table(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "", "Print route table");
+    if (context->argc == 0) {
+        show_help(context, "", "Print route table");
     } else {
         route_table_values_t table[CONFIG_LASTLINK_MAX_ROUTES];
 
@@ -399,10 +399,10 @@ static int print_route_table(int argc, const char **argv)
         route_table_unlock();
 
         if (rt_used != 0) {
-            printf("Dest  Radio  Source  Sequence  Metric  RouteTo  Flags  Life  Pending  Timer  Retries\n");
+            command_reply(context, "Dest  Radio  Source  Sequence  Metric  RouteTo  Flags  Life  Pending  Timer  Retries");
 
             for (int index = 0; index < rt_used; ++index) {
-                printf("%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5d  %-d\n",
+                command_reply(context, "%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5d  %-d",
                         table[index].dest,
                         table[index].radio_num,
                         table[index].origin,
@@ -417,8 +417,6 @@ static int print_route_table(int argc, const char **argv)
             }
         }
     }
-
-    return 0;
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
@@ -436,7 +434,7 @@ void route_table_init(void)
     }
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("routes", print_route_table);
+    add_command("routes", print_route_table, COMMAND_ONCE);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 }
 

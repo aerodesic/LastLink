@@ -528,10 +528,10 @@ typedef struct {
 #endif
 } packet_info_table_t;
 
-int print_packet_table(int argc, const char **argv)
+static void print_packet_table(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "[ -a ] [ -d ]", "Show packet table");
+    if (context->argc == 0) {
+        show_help(context, "[ -a ] [ -d ]", "Show packet table");
     } else {
         int num_packets = 0;
 
@@ -567,8 +567,8 @@ int print_packet_table(int argc, const char **argv)
         }
 
         bool all = false;
-        for (int arg = 1; arg < argc; ++arg) {
-            if (strcmp(argv[arg], "-a") == 0) {
+        for (int arg = 1; arg < context->argc; ++arg) {
+            if (strcmp(context->argv[arg], "-a") == 0) {
                 all = true;
             }
         }
@@ -580,14 +580,14 @@ int print_packet_table(int argc, const char **argv)
                 if (all || table[index].ref != 0) {
                     if (! header_printed) {
                         #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                        printf("Buffer      Ref  Xmit  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed\n");
+                        command_reply(context, "Buffer      Ref  Xmit  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data     Last Accessed");
                         #else
-                        printf("Buffer      Ref  Xmit  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data\n");
+                        command_reply(context, "Buffer      Ref  Xmit  Dir   Radio  Length  Delay  RouteTo  Origin  Dest  Sender  Proto  Callback  CB Data");
                         #endif
                         header_printed = true;
                     }
                     #if CONFIG_LASTLINK_DEBUG_PACKET_ALLOCATION
-                    printf("%-10p  %-3d  %-4d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d\n",
+                    command_reply(context, "%-10p  %-3d  %-4d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %-10p  %s:%d",
                             table[index].buffer,
                             table[index].ref,
                             table[index].transmitting,
@@ -605,7 +605,7 @@ int print_packet_table(int argc, const char **argv)
                             table[index].last_referenced_filename ? table[index].last_referenced_filename : "<NONE>",
                             table[index].last_referenced_lineno);
                     #else
-                    printf("%-10p  %-3d  %-4d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p\n",
+                    command_reply(context, "%-10p  %-3d  %-4d  %s  %-5d  %-6d  %-5d  %-7x  %-6x  %-4x  %-6x  %-5d  %-8s  %p",
                             table[index].buffer,
                             table[index].ref,
                             table[index].transmitting,
@@ -625,12 +625,10 @@ int print_packet_table(int argc, const char **argv)
             }
         }
 
-        printf("\nPacket lock:    %s\n", os_get_mutex_count(packet_mutex) ? "UNLOCKED" : "LOCKED");
-        printf("\nFree packets:   %d\n", available_packets());
-        printf("\nPackets in use: %d\n", packets_in_use);
+        command_reply(context, "Packet lock:    %s", os_get_mutex_count(packet_mutex) ? "UNLOCKED" : "LOCKED");
+        command_reply(context, "Free packets:   %d", available_packets());
+        command_reply(context, "Packets in use: %d", packets_in_use);
     }
-
-    return 0;
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
@@ -707,7 +705,7 @@ bool init_packets(int num_packets)
         deinit_packets();
     } else {
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-        add_command("p", print_packet_table);
+        add_command("p", print_packet_table,  COMMAND_ONCE);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
     }
 

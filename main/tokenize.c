@@ -60,3 +60,32 @@ char *strstrip(char *s)
 
     return s;
 }
+
+
+char* skip_blanks(char* bufp)
+{
+    while (isspace(*bufp)) {
+        ++bufp;
+    }
+    return bufp;
+}
+
+
+#ifdef TESTING
+#include <stdio.h>
+#define MAX_TEST_ARGS  5
+int main(int argc, char** argv)
+{
+    char buffer[200];
+
+    while (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+        const char* args[MAX_TEST_ARGS];
+        int nargs = tokenize(buffer, args, MAX_TEST_ARGS);
+        for (int arg = 0; arg < nargs; ++arg) {
+            printf("arg[%d] = '%s'\n", arg, args[arg]);
+        }
+    }
+ 
+    return 0;
+}
+#endif /*TESTING*/

@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "os_specific.h"
 #include "packets.h"
+#include "commands.h"
 
 #ifdef NOTUSED
 typedef enum {
@@ -144,7 +145,7 @@ typedef struct radio {
     bool (*set_inactive)(radio_t* radio, bool inactive);
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    void (*print_status)(radio_t* radio);
+    void (*print_status)(command_context_t* context, radio_t* radio);
 #endif
 } radio_t;
 

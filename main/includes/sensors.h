@@ -39,13 +39,10 @@ typedef bool (sensor_function_t)(sensor_transaction_t transaction, const char* n
  *      name            Name of sensor as reported and manipulated
  *      type            Type (input/output/timed/value, etc.)
  *      units           Units of sensor (if not NULL) [e.g. "seconds", "cc", "degC", etc.]
- *      notify_time     If > 0 then automatically broadcast sensor value every <notify_time> seconds.
- *                      If < 0, then automatically broadcast sensor when value changes
- *                      If == 0, then only send value when requested.
  *      function        Function to call to read/write sensor value.
  *      param           An additional parameter, if needed, passed to the read/write function.
  */
-bool register_sensor(const char* name, sensor_type_t type, const char* units, int notify_time, sensor_function_t function, void* param);
+bool register_sensor(const char* name, sensor_type_t type, const char* units, sensor_function_t function, void* param);
 
 /*
  * Deregister a sensor.

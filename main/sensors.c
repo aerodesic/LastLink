@@ -43,9 +43,9 @@
 #include "dht.h"
 #include "configdata.h"
 
-#ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
 #include "commands.h"
-#endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
+#endif /* CONFIG_LASTLINK_COMMAND_INTERFACE */
 
 #define TAG "sensors"
 
@@ -61,12 +61,6 @@ typedef struct sensor_cache {
 
     /* Extra optional value to pass to function parameter */
     void               *param;
-
-    /* Timer that controls when to test sensor value */
-    simpletimer_t      timer;
-
-    /* True if to automatically notify even if value has not changed */
-    bool               notify;
 
     /* An optional place to store the last sensor value */
     char               last_value[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH+1];
@@ -217,13 +211,13 @@ static void initialize_all_sensors(void)
     if (read_rc == DHT_OK) {
         ESP_LOGI(TAG, "read dht successful - creating sensors");
         /* Add a couple of sensors for testing */
-        register_sensor("rh",   SENSOR_TYPE_INPUT, "%rh",  30, process_dht, (void*) 0);
-        register_sensor("temp", SENSOR_TYPE_INPUT, "degC", 30, process_dht, (void*) 1);
+        register_sensor("rh",   SENSOR_TYPE_INPUT, "%rh",  process_dht, (void*) 0);
+        register_sensor("temp", SENSOR_TYPE_INPUT, "degC", process_dht, (void*) 1);
     } else {
         ESP_LOGE(TAG, "unable to read dht sensor - not adding to sensors");
     }
 
-    register_sensor("testval",  SENSOR_TYPE_VALUE, "",     0,  process_config_value, (void*) "values.testval");
+    register_sensor("testval",  SENSOR_TYPE_VALUE, "",     process_config_value, (void*) "values.testval");
 #endif
 }
 
@@ -259,12 +253,8 @@ ESP_LOGI(TAG, "%s: running", __func__);
                         int sender_address;
                         int sender_port;
     
-                        /* Wait for a sensor data request */
-                        int len = ls_read_with_address(socket, sensor_commands_buf, sizeof(sensor_commands_buf)-1, &sender_address, &sender_port, CONFIG_LASTLINK_SENSORS_SCAN_INTERVAL);
-                        //if (len >= 0) {
-                        //    ESP_LOGI(TAG, "%s: packet %d bytes from %d/%d", __func__, len, sender_address, sender_port);
-                        //}
-    
+                        /* Wait for a sensor data request (1 second max and look for termination) */
+                        int len = ls_read_with_address(socket, sensor_commands_buf, sizeof(sensor_commands_buf)-1, &sender_address, &sender_port, 1000);
                         if (len > 0) {
                             /************************************************************************
                              * Process a request to update or get value from a sensor.
@@ -297,7 +287,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                             char *reply_pointer = reply_buffer;
                             int reply_used = 0;
 
-                            while ((item = strtok_r(tokens, "\n", &rest)) != NULL) {
+                            while ((item = strtok_r(tokens, " ", &rest)) != NULL) {
                                 tokens = NULL;
                                 strstrip(item);
                                 char *value = strchr(item, '=');
@@ -374,45 +364,6 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                 }
                             }
                         }
-    
-                        /* Do a scan and send notifications for values that have changed or need periodically posting */
-                        os_acquire_recursive_mutex(sensor_lock);
-    
-                        sensor_cache_t *sensor = (sensor_cache_t*) FIRST_LIST_ITEM(&sensor_cache);
-    
-                        while (sensor != NULL) {
-                            // ESP_LOGD(TAG, "%s: looking at sensor %p: '%s'", __func__, sensor, sensor->name);
-    
-                            /* If timer is expired, announce the sensor value */
-                            if (simpletimer_is_expired(&sensor->timer)) {
-                                /* Try to read it's value */
-                                char value_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH+1];
-                                if (read_sensor(sensor, value_buffer, sizeof(value_buffer))) {
-                                    /* If always notify or if value has changed, send the value */
-                                    if (sensor->notify || strcmp(value_buffer, sensor->last_value) != 0)  {
-                                        strncpy(sensor->last_value, value_buffer, sizeof(sensor->last_value));
-                                        sensor->last_value[sizeof(sensor->last_value)-1] = '\0';
-                                        int len = snprintf(reply_buffer, sizeof(reply_buffer), "V:%s:%s:%s\n", sensor->name, value_buffer, sensor->units ? sensor->units : "");
-    
-                                        ret = ls_write(socket, reply_buffer, len);
-
-                                        if (ret < 0) {
-                                            ESP_LOGE(TAG, "%s: write %s failed: %d", __func__, sensor->name, ret);
-                                        // } else {
-                                        //       ESP_LOGI(TAG, "%s: service %s type %s on port %d posted", __func__, service->name, (service->socket_type == LS_STREAM ? "S" : "D"), service->port);
-                                        }
-                                    }
-                                } else {
-                                    ESP_LOGE(TAG, "%s: unable to read sensor '%s'", __func__, sensor->name);
-                                }
-
-                                simpletimer_restart(&sensor->timer);
-                            }
-
-                            sensor = NEXT_LIST_ITEM(sensor, &sensor_cache);
-                        }
-    
-                        os_release_recursive_mutex(sensor_lock);
                     }
 
                     deregister_service(CONFIG_LASTLINK_SENSORS_PLATFORM_NAME);
@@ -435,14 +386,10 @@ ESP_LOGI(TAG, "%s: running", __func__);
  *      name            Name of sensor as reported and manipulated
  *      type            Type (input/output/timed/value, etc.)
  *      units           Units of sensor (if not NULL) [e.g. "seconds", "cc", "degC", etc.]
- *      notify_time     If > 0 then automatically broadcast sensor value every <notify_time> seconds.
- *                      If < 0, then automatically broadcast sensor when value changes
- *                      If == 0, then only send value when requested.
- *                      (time is in seconds)
  *      function        Function to call to read/write sensor value.
  *      param           An additional parameter, if needed, passed to the read/write function.
  */
-bool register_sensor(const char* name, sensor_type_t type, const char* units, int notify_time, sensor_function_t function, void* param)
+bool register_sensor(const char* name, sensor_type_t type, const char* units, sensor_function_t function, void* param)
 {
     sensor_cache_t *sensor = NULL;
 
@@ -456,28 +403,6 @@ bool register_sensor(const char* name, sensor_type_t type, const char* units, in
             sensor->function = function;
             sensor->param = param;
             sensor->units = units ? strdup(units) : NULL;
-
-            /* Set the timer based upon definition of notify_time:
-             *  If < 0, test every abs(n) ms but report only when changed.
-             *  If > 0, report every (n) ms
-             *  If == 0, don't report - timer is stopped.
-             */ 
-             
-            if (notify_time != 0) {
-                int abs_notify = notify_time > 0 ? notify_time : -notify_time;
-
-                /* Period of reporting sensor automatically is abs(notify_time) */
-                simpletimer_start(&sensor->timer, abs_notify * 1000);
-
-                /* Randomize the time by extending for a 0..<notify_time> milliseconds with a minimum of 1 seconds */
-                simpletimer_set_expire_in(&sensor->timer, (os_urandom() % abs_notify) * 1000);
-
-                /* Notify every <notify_time> seconds when set; otherwise only notify every <notify_time> seconds when changed. */
-                sensor->notify = notify_time > 0;
-            } else {
-                simpletimer_stop(&sensor->timer);
-            }
-
 
             /* Add to table */
             ADD_TO_LIST(&sensor_cache, sensor);
@@ -513,6 +438,8 @@ bool deregister_sensor(const char* name)
 }
 
 
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
+
 #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 typedef struct sensor_cache_copy {
     void*             p;
@@ -520,22 +447,19 @@ typedef struct sensor_cache_copy {
     void*             next;
     sensor_type_t     type;
     sensor_function_t *function;
-    bool              notify;
-    int               timer;
     char              last_value[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH+1];
     char              name[CONFIG_LASTLINK_SENSORS_MAX_NAME_LENGTH+1];
     const char*       units;
 } sensor_cache_copy_t;
 
-int sensor_commands(int argc, const char **argv)
+static void sensor_command(command_context_t* context)
 {
     const char* err = NULL;
 
-    if (argc == 0) {
-        show_help(argv[0], "list", "List active sensors");
-        show_help(argv[0], "add <name> <type>", "List active sensors");
-        printf("%s: print some help here\n", __func__);
-    } else if (argc == 1 || strcmp(argv[1], "list") == 0) {
+    if (context->argc == 0) {
+        show_help(context, "list", "List active sensors");
+        show_help(context, "add <name> <type>", "List active sensors");
+    } else if (context->argc == 1 || strcmp(context->argv[1], "list") == 0) {
         /* List sensors configured */
         os_acquire_recursive_mutex(sensor_lock);
 
@@ -556,10 +480,6 @@ int sensor_commands(int argc, const char **argv)
 
             sensors[num_sensors].function = sensor->function;
 
-            sensors[num_sensors].timer = simpletimer_is_running(&sensor->timer) ? simpletimer_remaining(&sensor->timer) : -1;
-
-            sensors[num_sensors].notify = sensor->notify;
-
             strncpy(sensors[num_sensors].last_value, sensor->last_value, sizeof(sensors[num_sensors].last_value));
             sensors[num_sensors].last_value[sizeof(sensors[num_sensors].last_value) - 1] = '\0';
 
@@ -576,48 +496,46 @@ int sensor_commands(int argc, const char **argv)
         os_release_recursive_mutex(sensor_lock);
 
         if (num_sensors != 0) {
-            printf("P           Next        Prev        Type  Notify  Function    Timer  Last Value  Units  Name\n");
-            //     "0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  xx    xxxxxx  0xXXXXXXXX  XXXXX  XXXXXXXXXX  XXXXX  XXXXX"
+            command_reply(context, "P           Next        Prev        Type  Function    Last Value  Units  Name");
+            //     "0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  xx    0xXXXXXXXX  XXXXXXXXXX  XXXXX  XXXXX"
             for (int index = 0; index < num_sensors; ++index) {
-                printf("%p  %p  %p  %-4d  %-6s  %p  %-5d  %-10s  %-5s  %-s\n",
+                command_reply(context, "%p  %p  %p  %-4d  %p  %-10s  %-5s  %-s",
                        sensors[index].p,
                        sensors[index].next,
                        sensors[index].prev,
                        sensors[index].type,
-                       sensors[index].notify ? "True" : "False",
                        sensors[index].function,
-                       sensors[index].timer / 1000,
                        sensors[index].last_value,
                        sensors[index].units,
                        sensors[index].name);
             }
         }
-    } else if (strcmp(argv[1], "set") == 0) {
+    } else if (strcmp(context->argv[1], "set") == 0) {
         /* sensor set <name> <value> */
-        if (argc == 4) {
+        if (context->argc == 4) {
             os_acquire_recursive_mutex(sensor_lock);
-            sensor_cache_t *sensor = lookup_sensor(argv[2]);
+            sensor_cache_t *sensor = lookup_sensor(context->argv[2]);
             if (sensor != NULL) {
                 char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
-                if (! write_sensor(sensor, argv[3], reply_buffer, sizeof(reply_buffer))) {
-                    printf("%s: set %s error '%s'\n", __func__, argv[2], reply_buffer);
+                if (! write_sensor(sensor, context->argv[3], reply_buffer, sizeof(reply_buffer))) {
+                    command_reply(context, "set %s error '%s'", context->argv[2], reply_buffer);
                 }
             }
             os_release_recursive_mutex(sensor_lock);
         } else {
-            err = "Wrong  number of parameters";
+            err = "Wrong number of parameters";
         }
-    } else if (strcmp(argv[1], "get") == 0) {
+    } else if (strcmp(context->argv[1], "get") == 0) {
         /* sensor get <name> */
-        if (argc == 3) {
+        if (context->argc == 3) {
             os_acquire_recursive_mutex(sensor_lock);
-            sensor_cache_t *sensor = lookup_sensor(argv[2]);
+            sensor_cache_t *sensor = lookup_sensor(context->argv[2]);
             if (sensor != NULL) {
                 char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
                 if (read_sensor(sensor, reply_buffer, sizeof(reply_buffer))) {
-                    printf("%s: get %s value '%s'\n", __func__, argv[2], reply_buffer);
+                    command_reply(context, "get %s value '%s'", context->argv[2], reply_buffer);
                 } else {
-                    printf("%s: get %s error '%s'\n", __func__, argv[2], reply_buffer);
+                    command_reply(context, "get %s error '%s'", context->argv[2], reply_buffer);
                 }
             }
             os_release_recursive_mutex(sensor_lock);
@@ -626,14 +544,10 @@ int sensor_commands(int argc, const char **argv)
         }
     }
 
-    int rc = 0;
-
-    if (err != NULL) {
-        printf("%s\n", err);
-        rc = 1;
+    if (err) {
+        command_reply_error(context, err);
+        context->results = -1;
     }
-
-    return rc;
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
@@ -647,103 +561,160 @@ typedef struct scon_data {
     os_thread_t thread_id;
     int socket;
     int running;
+    command_context_t *context;
 } scon_data_t;
 
-static void scon_reader(void* data)
+static void scon_reader(void* param)
 {
-    scon_data_t* sdata = (scon_data_t*) data;
+    scon_data_t* scon_data = (scon_data_t*) param;
 
-    sdata->running = 1;
+    command_context_t* context = scon_data->context;
 
-    printf("scon_reader running\n");
+    scon_data->running = 1;
 
-    while (sdata->running > 0) {
+    while (scon_data->running > 0) {
         /* Read data from socket and echo to terminal */
         char buffer[300];
 
         int address;
         int port;
 
-        int len = ls_read_with_address(sdata->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
+        int len = ls_read_with_address(scon_data->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
 
         if (len > 0) {
             buffer[len] = '\0';
-            printf("%s", buffer); 
+            const char *p = buffer;
+            while (p != NULL) {
+                const char *pend = strchr(p, '\n');            
+                const char *nextp;
+
+                if (pend == NULL) {
+                    pend = p + strlen(p);
+                    nextp = NULL;
+                } else {
+                    nextp = pend + 1;
+                }
+
+                command_reply(context, "%*.*s", (pend - p), (pend - p), p);
+                p = nextp;
+            }
         }
     }
 
-    sdata->running = 0;
+    scon_data->running = 0;
 
-    printf("scon_reader stopping\n");
+    command_reply(context, "scon_reader stopping");
 
     os_exit_thread();
 }
 
 
-#define MAX_SCON_ARGS   10
-static int scon_command(int argc, const char **argv)
+#define MAX_SCON_ARGS 3
+/*
+ * scon
+ *   -> <nn>:ack
+ * <nn>:<address> <port> <data>
+ *   -> <nn>:<reply if any>
+ * ...
+ * <nn>:close
+ *   -> <nn>:closed
+ */
+
+
+/*
+ * This command is spawned.
+ */
+static void scon_command(command_context_t* context)
 {
-    if (argc == 0) {
-        show_help(argv[0], "", "Connect to sensor system");
-    } else {
-        int socket = ls_socket(LS_DATAGRAM);
-        if (socket >= 0) {
-            int ret = ls_bind(socket, 0);
-            if (ret >= 0) {
-                scon_data_t sdata;
-                sdata.socket = socket;
+    int rc = 0;
 
-                /* Spawn a reader socket to echo back input packets to the control */
-                sdata.thread_id = os_create_thread(scon_reader, "scon_reader", 4095, 0, (void*) &sdata);
+    if (context->argc == 0) {
+        show_help(context, "", "Connect to sensor system");
+    } else if (context->argc == 1) {
+        /* Create scon data instance for connection */
+        scon_data_t* scon_data = (scon_data_t*) malloc(sizeof(scon_data_t));
+        if (scon_data == NULL) {
+            command_reply_error(context, "out of memory");
+        } else {
+            context->param = (void*) scon_data;
 
-                /* Loop reading but terminate on control-c (-1 return) */
-                int len;
+            scon_data->socket = ls_socket(LS_DATAGRAM);
+            scon_data->context = context;
 
-                do {
-                    char buffer[80];
+            if (scon_data->socket >= 0) {
+                int ret = ls_bind(scon_data->socket, 0);
+                if (ret >= 0) {
+                    /* Spawn a reader socket to echo back input packets to the control */
+                    scon_data->thread_id = os_create_thread(scon_reader, "scon_reader", 4095, 0, (void*) scon_data);
 
-                    len = readline(buffer, sizeof(buffer));
-                    if (len > 0) {
-                        // <address> <port> <data>
-                        const char* argv[3];
-                        int argc = tokenize(buffer, argv, sizeof(argv) / sizeof(argv[0]));
-//                      for (int arg = 0; arg < argc; ++arg) {
-//                          printf("arg[%d]: '%s'\n", arg, argv[arg]);
-//                      }
+                    /* Enter read loop from command processor and decode commands */
+                    while (!context_check_termination_request(context)) {
+                        char *message = command_read_more_with_timeout(context, -1);
+                        if (message != NULL) {
+                            const char* args[MAX_SCON_ARGS];
+                            int nargs = tokenize(message, args, MAX_SCON_ARGS);
 
-                        if (argc == 3) {
-                            int address = strtol(argv[0], NULL, 10);
-                            int port = strtol(argv[1], NULL, 10);
-                            int rc = ls_connect(socket, address, port);
-
-                            if (rc >= 0) {
-                                rc = ls_write(socket, argv[2], strlen(argv[2]));
+                            if (nargs == 1 && strcmp(args[0], "close")) {
+                                context->terminate = true;
+                            } else if (nargs >= 2) {
+                                /* Post data to socket */
+                                int address = strtol(args[0], NULL, 10);
+                                int port = strtol(args[1], NULL, 10);
+                    
+                                int rc = ls_connect(scon_data->socket, address, port);
+                    
+                                if (rc >= 0) {
+                                    if (nargs > 2) {
+                                        rc = ls_write(scon_data->socket, args[2], strlen(args[2]));
+                                    } else {
+                                        rc = ls_write(scon_data->socket, "", 0);
+                                    }
+                                }                
+                     
+                                if (rc < 0) {
+                                    command_reply_error(context, "error %d", rc);
+                                }
+                            } else {
+                                command_reply_error(context, "insufficent params");
                             }
 
-                            if (rc < 0) {
-                                printf("E:%d\n", rc);
-                            }
-                        } else {
-                            printf("E:ARGS\n");
+                            free((void*) message);
                         }
                     }
-                } while (len >= 0);
-   
-                /* Kill reader thread */
-                sdata.running = -1;
-                while (sdata.running != 0) {
-                    os_delay(100);
+
+                    /* Close down connection server */
+                    scon_data->running = -1;
+                    while (scon_data->running != 0) {
+                        os_delay(100);
+                    }
+                    ls_close(scon_data->socket);
+                    scon_data->thread_id = NULL; 
+
+                    command_reply(context, "closed");
+                } else {
+                    command_reply_error(context, "bind failed");
                 }
             } else {
-                printf("ls_bind returned %d\n", ret);
+                command_reply_error(context, "socket failed");
             }
-            ls_close(socket);
-        } else {
-            printf("Unable to open socket: %d\n", socket);
+
         }
+    } else {
+        command_reply_error(context, "invalid args");
     }
-    return 0;
+
+    if (context->param != NULL) {
+        free(context->param);
+        context->param = NULL;
+    }
+
+    if (context->spawned) {
+        context_release(context);
+    }
+
+    context->results = rc;
 }
+#endif /* CONFIG_LASTLINK_COMMAND_INTERFACE */
 
 bool init_sensors(void)
 {
@@ -751,9 +722,11 @@ bool init_sensors(void)
 
     sensor_scanner_thread_id = os_create_thread(sensor_scanner_thread, "sensors", SENSOR_SCANNER_STACK_SIZE, 0, NULL);
 
-#ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("sensors", sensor_commands);
-    add_command("scon", scon_command);
+#ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
+  #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
+    add_command("sensors", sensor_command,  COMMAND_ONCE);
+  #endif
+    add_command("scon", scon_command,       COMMAND_SPAWN);
 #endif
 
     ESP_LOGI(TAG, "%s: called", __func__);

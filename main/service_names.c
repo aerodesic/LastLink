@@ -461,18 +461,18 @@ typedef struct service_cache_copy {
     char              name[SERVICE_NAMES_MAX_LEN+1];
 } service_cache_copy_t;
 
-static int service_table_commands(int argc, const char **argv)
+static void service_table_commands(command_context_t* context)
 {
     int rc = 0;
 
-    if (argc == 0) {
-        show_help(argv[0], "", "List service cache");
+    if (context->argc == 0) {
+        show_help(context, "", "List service cache");
 
-    } else if (argc == 2) {
+    } else if (context->argc == 2) {
 #define MAX_ADDRESSES_IN_SEARCH   20
         ls_address_t      addresses[MAX_ADDRESSES_IN_SEARCH];
 
-        int addresses_found = find_all_services(argv[1], addresses, MAX_ADDRESSES_IN_SEARCH);
+        int addresses_found = find_all_services(context->argv[1], addresses, MAX_ADDRESSES_IN_SEARCH);
 
         for (int index = 0; index < addresses_found; ++index) {
             ls_socket_type_t  socket_type = LS_UNUSED;
@@ -480,14 +480,14 @@ static int service_table_commands(int argc, const char **argv)
             int               dest_addr = -1;
             int               dest_port = -1;
 
-            if (find_service(argv[1], addresses[index], &socket_type, &src_port, &dest_addr, &dest_port) == LSE_NO_ERROR) {
-                printf("Service %s found source %d/%d dest %d/%d type %d\n", argv[1], addresses[index], src_port, dest_addr, dest_port, socket_type);
+            if (find_service(context->argv[1], addresses[index], &socket_type, &src_port, &dest_addr, &dest_port) == LSE_NO_ERROR) {
+                command_reply(context, "Service %s found source %d/%d dest %d/%d type %d", context->argv[1], addresses[index], src_port, dest_addr, dest_port, socket_type);
             } else {
-                printf("Service %s not found\n", argv[1]);
+                command_reply(context, "Service %s not found", context->argv[1]);
             }
 
             if (addresses_found > MAX_ADDRESSES_IN_SEARCH) {
-                printf("Only the first %d of %d services displayed\n", MAX_ADDRESSES_IN_SEARCH, addresses_found);
+                command_reply_error(context, "Only the first %d of %d services displayed", MAX_ADDRESSES_IN_SEARCH, addresses_found);
             }
         }
     } else {
@@ -521,8 +521,8 @@ static int service_table_commands(int argc, const char **argv)
         os_release_recursive_mutex(service_lock);
 
         if (num_services != 0) {
-            printf("P           Next        Prev        Local  Type  Source       Destination  Timer  Name\n");
-            //      0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  XXXXX  XXXX  AAAAAA/PPPP  AAAAAA/PPPP  XXXXX  XX..."
+            command_reply(context, "P           Next        Prev        Local  Type  Source       Destination  Timer  Name");
+            //                      0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  XXXXX  XXXX  AAAAAA/PPPP  AAAAAA/PPPP  XXXXX  XX..."
             for (int index = 0; index < num_services; ++index) {
                 char src_address[30];
                 char dest_address[30];
@@ -539,7 +539,7 @@ static int service_table_commands(int argc, const char **argv)
                     sprintf(dest_address, "%d/%d", services[index].dest_addr, services[index].dest_port);
                 }
 
-                printf("%p  %p  %p  %-5s  %-4s  %-11s  %-11s  %-5d  %-s\n",
+                command_reply(context, "%p  %p  %p  %-5s  %-4s  %-11s  %-11s  %-5d  %-s",
                        services[index].p,
                        services[index].next,
                        services[index].prev,
@@ -553,7 +553,7 @@ static int service_table_commands(int argc, const char **argv)
         }
     }
 
-    return rc;
+    context->results = rc;
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
@@ -568,7 +568,7 @@ bool init_service_names(void)
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     if (ok) {
-        ok = add_command("services", service_table_commands);
+        ok = add_command("services", service_table_commands, COMMAND_ONCE);
     }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 

@@ -161,11 +161,50 @@ menu "LastLink Configuration"
 
             The contents of this table is filled from a configuration variable.
 
-    config LASTLINK_EXTRA_DEBUG_COMMANDS
-        bool "Add table debug commands"
+    config LASTLINK_COMMAND_INTERFACE
+        bool "Add command interface to serial connection"
         default y
         help
+            If enabled, adds a command API to serial port
+         
+    config LASTLINK_COMMAND_MAX_CONTEXTS
+        int "Number of command execution contexts"
+        default 5
+        range 2 16
+        depends on LASTLINK_COMMAND_INTERFACE
+        help
+            Specifies the maximum number of 'in process' commands contexts
+            that can be active at a single time. 
+
+    config LASTLINK_COMMAND_MAX_PENDING_REQUESTS
+        int "Max requests to a spawned command"
+        default 3
+        range 1 16
+        depends on LASTLINK_COMMAND_INTERFACE
+        help
+            Sets the maximum number of queued 'input' requests to a spawned command
+
+    config LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+        bool "Checksummed protocol command interface"
+        default n
+        depends on LASTLINK_COMMAND_INTERFACE
+        help
+            Adds a checksummed message protocol to command interface.
+
+    config LASTLINK_CHECKSUMMED_COMMAND_INTERFACE_IGNORE_CHECKSUM
+        bool "Ignore checksum for testing"
+        default n
+        depends on LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+        help
+            Set to ignore testing on the checksummed interface.
+
+    config LASTLINK_EXTRA_DEBUG_COMMANDS
+        bool "Add extra debug commands"
+        default y
+        depends on LASTLINK_COMMAND_INTERFACE && !LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
+        help
             If enabled, adds extra table lists to command  processor.
+            Only available in 'text' (i.e. NOT Checksummed command processor.)
 
     config LASTLINK_WIFI_SSID
         string "WiFi SSID"
