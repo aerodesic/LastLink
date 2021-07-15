@@ -220,8 +220,12 @@ void command_reply(command_context_t* context, const char *fmt, ...)
     char buffer[256];
     va_list args;
 
-    // Create the header
-    int len = sprintf(buffer, "%d:", context ? context->id : 0);
+    int len = 0;
+
+    // Create the header if non-zero id
+    if (context && context->id != 0) {
+        len = sprintf(buffer, "%d:", context ? context->id : 0);
+    }
  
     va_start(args, fmt);
     len += vsnprintf(buffer + len, sizeof(buffer) - len, fmt, args);
@@ -239,8 +243,12 @@ void command_reply_error(command_context_t* context, const char *fmt, ...)
     char buffer[256];
     va_list args;
 
-    // Create the header
-    int len = sprintf(buffer, "%d:", context ? context->id : 0);
+    int len = 0;
+
+    // Create the header if non-zero id
+    if (context && context->id != 0) {
+        len = sprintf(buffer, "%d:", context ? context->id : 0);
+    }
  
     va_start(args, fmt);
     len += vsnprintf(buffer + len, sizeof(buffer) - len, fmt, args);
@@ -708,7 +716,7 @@ void dht_command(command_context_t* context)
             dht_value_t temp;
             dht_ret_t rc = dht_read(&rh, &temp);
             if (rc == 0) {
-                command_reply(context, "rh %.1f%% temp %.1f deg", rc, rh, temp);
+                command_reply(context, "rh %.1f%% temp %.1f deg", rh, temp);
             } else {
                 command_reply_error(context, "dht error %d", rc);
             }
@@ -752,9 +760,18 @@ static command_context_t* create_context(bool spawned, int argc, const char** ar
             context->input_queue = os_create_queue(CONFIG_LASTLINK_COMMAND_MAX_PENDING_REQUESTS, sizeof(const char*));
             /* Make private copy of argv array */
 
+            /* Special case: if argc is 0, then allow it to be 1 (the first argv is the function name in any case).
+             * (However, this will probably never be a problem as argc=0 only happens in the case of the 'help'
+             * activation of a function and that doesn't happen in 'spawn' mode.
+             */
+             
+//ESP_LOGI(TAG, "%s: copy %d args for %s", __func__, argc, argv[0]);
+
+            int eff_argc = argc ? argc : 1;
+
             /* Base size includes the argv overhead */
-            size_t size = sizeof(const char*) * (argc+1);;
-            for (int arg = 0; arg < argc; ++arg) {
+            size_t size = sizeof(const char*) * (eff_argc+1);
+            for (int arg = 0; arg < eff_argc; ++arg) {
                 size += strlen(argv[arg]) + 1;
             }
 
@@ -765,17 +782,17 @@ static command_context_t* create_context(bool spawned, int argc, const char** ar
                 context->argv = (const char**) args;
 
                 /* Where the strings are stored */
-                char* dest = args + sizeof(const char*) * (argc + 1);
+                char* dest = args + sizeof(const char*) * (eff_argc + 1);
 
                 /* Copy the args */
-                for (int arg = 0; arg < argc; ++arg) {
+                for (int arg = 0; arg < eff_argc; ++arg) {
                     context->argv[arg] = dest;
                     strcpy(dest, argv[arg]);
                     dest += strlen(argv[arg]) + 1;
                 }
 
                 /* Store terminating NULL */
-                context->argv[argc] = NULL; 
+                context->argv[eff_argc] = NULL; 
             }
         } else {
             context->argv = argv;
@@ -793,7 +810,7 @@ static command_context_t* create_context(bool spawned, int argc, const char** ar
 void context_release(command_context_t* context)
 {
     if (context != NULL) {
-ESP_LOGI(TAG, "%s: %p id %d spawned %d", __func__, context, context->id, context->spawned);
+//ESP_LOGI(TAG, "%s: %p id %d spawned %d", __func__, context, context->id, context->spawned);
         if (context->spawned) {
             if (context->input_queue != NULL) {
                 os_delete_queue(context->input_queue);
@@ -805,6 +822,7 @@ ESP_LOGI(TAG, "%s: %p id %d spawned %d", __func__, context, context->id, context
             context->argc = 0;
             context->thread_id = NULL;
             context->terminate = false;
+            context->spawned = false;
         }
 
         context->id = 0;
@@ -890,10 +908,10 @@ void CommandProcessor(void* params)
                 int id = strtol(p, &p, 10);
 
                 if (id == 0) {
-                    command_reply_error(NULL, "bad contexxt number");
+                    command_reply_error(NULL, "bad context");
                 } else {
                     command_context_t* context = find_context(id);
-printf("context is %p\n", context);
+//printf("context is %p\n", context);
                     if (context != NULL) {
                         /* Skip past delimiter if one is present  */
                         if (*p == ':' || *p == ' ') {
@@ -907,9 +925,9 @@ printf("context is %p\n", context);
                             free((void*) p_copy);
                         }
                     } else {
-printf("before reply\n");
-                        command_reply_error(NULL, "no context");
-printf("after reply\n");
+//printf("before reply\n");
+                        command_reply_error(NULL, "unknown context");
+//printf("after reply\n");
                     }
                 }
             } else { 
@@ -922,8 +940,6 @@ printf("after reply\n");
                     void (*function)(command_context_t* context) = NULL;
                     command_mode_t mode = COMMAND_ONCE;
     
-                    os_acquire_recursive_mutex(command_lock);
-    
                     if (argc > 0) {
                         command_entry_t *command = find_command(args[0]);
                         if (command != NULL) {
@@ -935,34 +951,45 @@ printf("after reply\n");
                     os_release_recursive_mutex(command_lock);
     
                     if (function != NULL) {
-                        command_context_t* context = create_context(mode == COMMAND_SPAWN, argc, args);
-                        if (context == NULL) {
-                            command_reply_error(NULL, "out of contexts");
-                        } else {
-                            /* Either run the command or spawn as thread */
-                            int rc = 0;
 
-                            if (mode == COMMAND_SPAWN) {
-                                command_reply(context, "ack");
+                        os_acquire_recursive_mutex(command_lock);
+
+                        int rc = 0;
+
+                        if (mode == COMMAND_ONCE) {
+                            command_context_t once_context = {
+                                .argc = argc,
+                                .argv = args,
+                            };
+
+
+                            (*function)(&once_context);
+                            rc = once_context.results;
+
+                        } else {
+                            command_context_t* context = create_context(mode == COMMAND_SPAWN, argc, args);
+                            if (context == NULL) {
+                                command_reply_error(NULL, "out of contexts");
+                            
+                            } else {
+                                /* Run the command as spawned */
+                                command_reply(context, "ack %s", context->argv[0]);
+
                                 char command_name[20];
-                                sprintf(command_name, "%s_commmand", context->argv[0]);
+                                snprintf(command_name, sizeof(command_name), "%s_%d", context->argv[0], context->id);
                                 context->thread_id = os_create_thread((void (*)(void*)) function, command_name, 8192, 0, (void*) context);
+
                                 if (context->thread_id == NULL) {
                                     rc = -1;
+                                    context_release(context);
                                 } 
-                            } else {
-                                (*function)(context);
-                                rc = context->results;
                             }
+                        }
 
-                            /* If either a one-shot or error occurred during launch.
-                             * In either case, we need to do the release here because the context passes back the error code */
-                            if (rc != 0 || mode == COMMAND_ONCE) {
-                                context_release(context);
-                                if (rc != 0) {
-                                    command_reply_error(context, "Error: %d", rc);
-                                }
-                            }
+                        os_release_recursive_mutex(command_lock);
+
+                        if (rc != 0) {
+                            command_reply_error(NULL, "Error: %d", rc);
                         }
                     } else if (argc > 0) {
                         command_reply_error(NULL, "Invalid command: %s", args[0]);

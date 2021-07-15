@@ -253,7 +253,7 @@ static inline bool lock_socket_debug(ls_socket_t* socket, bool try, const char *
 static inline void unlock_socket_debug(ls_socket_t *socket, const char *file, int line)
 {
     if (socket->lock_count == 0) {
-       printf("%s: socket not locked; last lock %s:%d\n", __func__, socket->last_lock_file, socket->last_lock_line);
+       ESP_LOGI(TAG, "%s: socket not locked; last lock %s:%d", __func__, socket->last_lock_file, socket->last_lock_line);
     } else {
        socket->lock_count--;
     }
@@ -3981,13 +3981,16 @@ static void socket_command(command_context_t* context)
                 int ret = ls_bind(socket_data->socket, 0);
                 if (ret >= 0) {
                     /* Spawn a reader socket to echo back input packets to the control */
-                    socket_data->thread_id = os_create_thread(datagram_reader, "datagram_reader", 4095, 0, (void*) socket_data);
+                    char reader_name[30];
+                    snprintf(reader_name, sizeof(reader_name), "datagram_reader_%d", context->id);
+                    socket_data->thread_id = os_create_thread(datagram_reader, reader_name, 4095, 0, (void*) socket_data);
 
                     /* Enter read loop from command processor and decode commands */
                     while (!context_check_termination_request(context)) {
                         char *message = command_read_more_with_timeout(context, -1);
+//ESP_LOGI(TAG, "%s: message at '%p'", __func__, message);
                         if (message != NULL) {
-                            // ESP_LOGI(TAG, "%s: message is '%s'", __func__, message);
+//ESP_LOGI(TAG, "%s: message is '%s'", __func__, message);
 
                             const char* args[MAX_SCON_ARGS];
                             int nargs = tokenize(message, args, MAX_SCON_ARGS);
@@ -4052,14 +4055,14 @@ static void socket_command(command_context_t* context)
         command_reply_error(context, "not implemented");
 #endif
     } else {
-        for (int arg = 0; arg < context->argc; ++arg) {
-            printf("argv[%d] = '%s'\n", arg, context->argv[arg]);
-        }
+        // for (int arg = 0; arg < context->argc; ++arg) {
+        //     printf("argv[%d] = '%s'\n", arg, context->argv[arg]);
+        // }
         command_reply_error(context, "invalid args");
     }
 
     if (context->spawned) {
-ESP_LOGI(TAG, "%s: releasing socket context %p", __func__, context);
+//ESP_LOGI(TAG, "%s: releasing socket context %p", __func__, context);
         context_release(context);
         os_exit_thread();
     }

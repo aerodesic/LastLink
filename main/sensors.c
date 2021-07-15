@@ -62,9 +62,6 @@ typedef struct sensor_cache {
     /* Extra optional value to pass to function parameter */
     void               *param;
 
-    /* An optional place to store the last sensor value */
-    char               last_value[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH+1];
-
     const char         *name;
     const char         *units;
 } sensor_cache_t;
@@ -447,7 +444,6 @@ typedef struct sensor_cache_copy {
     void*             next;
     sensor_type_t     type;
     sensor_function_t *function;
-    char              last_value[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH+1];
     char              name[CONFIG_LASTLINK_SENSORS_MAX_NAME_LENGTH+1];
     const char*       units;
 } sensor_cache_copy_t;
@@ -480,9 +476,6 @@ static void sensor_command(command_context_t* context)
 
             sensors[num_sensors].function = sensor->function;
 
-            strncpy(sensors[num_sensors].last_value, sensor->last_value, sizeof(sensors[num_sensors].last_value));
-            sensors[num_sensors].last_value[sizeof(sensors[num_sensors].last_value) - 1] = '\0';
-
             strncpy(sensors[num_sensors].name, sensor->name, CONFIG_LASTLINK_SENSORS_MAX_NAME_LENGTH);
             sensors[num_sensors].name[CONFIG_LASTLINK_SENSORS_MAX_NAME_LENGTH] = '\0';
 
@@ -496,16 +489,15 @@ static void sensor_command(command_context_t* context)
         os_release_recursive_mutex(sensor_lock);
 
         if (num_sensors != 0) {
-            command_reply(context, "P           Next        Prev        Type  Function    Last Value  Units  Name");
-            //     "0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  xx    0xXXXXXXXX  XXXXXXXXXX  XXXXX  XXXXX"
+            command_reply(context, "P           Next        Prev        Type  Function    Units  Name");
+            //                     "0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  xx    0xXXXXXXXX  XXXXX  XXXXX"
             for (int index = 0; index < num_sensors; ++index) {
-                command_reply(context, "%p  %p  %p  %-4d  %p  %-10s  %-5s  %-s",
+                command_reply(context, "%p  %p  %p  %-4d  %p  %-5s  %-s",
                        sensors[index].p,
                        sensors[index].next,
                        sensors[index].prev,
                        sensors[index].type,
                        sensors[index].function,
-                       sensors[index].last_value,
                        sensors[index].units,
                        sensors[index].name);
             }
