@@ -38,10 +38,10 @@
 #include "simpletimer.h"
 #include "lsocket.h"
 #include "sensors.h"
-#include "tokenize.h"
 #include "lsocket_internal.h"
 #include "dht.h"
 #include "configdata.h"
+#include "tokenize.h"
 
 #ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
 #include "commands.h"
@@ -551,169 +551,6 @@ static void sensor_command(command_context_t* context)
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
-/**********************************************************************/
-/* scon connect to sensor system                                      */
-/* Enter a loop and take commands entered and send to the socket,     */
-/* while displaying packets received from the socket.                 */
-/* Control-C breaks out                                               */
-/**********************************************************************/
-typedef struct scon_data {
-    os_thread_t thread_id;
-    int socket;
-    int running;
-    command_context_t *context;
-} scon_data_t;
-
-static void scon_reader(void* param)
-{
-    scon_data_t* scon_data = (scon_data_t*) param;
-
-    command_context_t* context = scon_data->context;
-
-    scon_data->running = 1;
-
-    while (scon_data->running > 0) {
-        /* Read data from socket and echo to terminal */
-        char buffer[300];
-
-        int address;
-        int port;
-
-        int len = ls_read_with_address(scon_data->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
-
-        if (len > 0) {
-            buffer[len] = '\0';
-            const char *p = buffer;
-            while (p != NULL) {
-                const char *pend = strchr(p, '\n');            
-                const char *nextp;
-
-                if (pend == NULL) {
-                    pend = p + strlen(p);
-                    nextp = NULL;
-                } else {
-                    nextp = pend + 1;
-                }
-
-                command_reply(context, "%*.*s", (pend - p), (pend - p), p);
-                p = nextp;
-            }
-        }
-    }
-
-    scon_data->running = 0;
-
-    command_reply(context, "scon_reader stopping");
-
-    os_exit_thread();
-}
-
-
-#define MAX_SCON_ARGS 3
-/*
- * scon
- *   -> <nn>:ack
- * <nn>:<address> <port> <data>
- *   -> <nn>:<reply if any>
- * ...
- * <nn>:close
- *   -> <nn>:closed
- */
-
-
-/*
- * This command is spawned.
- */
-static void scon_command(command_context_t* context)
-{
-    int rc = 0;
-
-    if (context->argc == 0) {
-        show_help(context, "", "Connect to sensor system");
-    } else if (context->argc == 1) {
-        /* Create scon data instance for connection */
-        scon_data_t* scon_data = (scon_data_t*) malloc(sizeof(scon_data_t));
-        if (scon_data == NULL) {
-            command_reply_error(context, "out of memory");
-        } else {
-            context->param = (void*) scon_data;
-
-            scon_data->socket = ls_socket(LS_DATAGRAM);
-            scon_data->context = context;
-
-            if (scon_data->socket >= 0) {
-                int ret = ls_bind(scon_data->socket, 0);
-                if (ret >= 0) {
-                    /* Spawn a reader socket to echo back input packets to the control */
-                    scon_data->thread_id = os_create_thread(scon_reader, "scon_reader", 4095, 0, (void*) scon_data);
-
-                    /* Enter read loop from command processor and decode commands */
-                    while (!context_check_termination_request(context)) {
-                        char *message = command_read_more_with_timeout(context, -1);
-                        if (message != NULL) {
-                            const char* args[MAX_SCON_ARGS];
-                            int nargs = tokenize(message, args, MAX_SCON_ARGS);
-
-                            if (nargs == 1 && strcmp(args[0], "close")) {
-                                context->terminate = true;
-                            } else if (nargs >= 2) {
-                                /* Post data to socket */
-                                int address = strtol(args[0], NULL, 10);
-                                int port = strtol(args[1], NULL, 10);
-                    
-                                int rc = ls_connect(scon_data->socket, address, port);
-                    
-                                if (rc >= 0) {
-                                    if (nargs > 2) {
-                                        rc = ls_write(scon_data->socket, args[2], strlen(args[2]));
-                                    } else {
-                                        rc = ls_write(scon_data->socket, "", 0);
-                                    }
-                                }                
-                     
-                                if (rc < 0) {
-                                    command_reply_error(context, "error %d", rc);
-                                }
-                            } else {
-                                command_reply_error(context, "insufficent params");
-                            }
-
-                            free((void*) message);
-                        }
-                    }
-
-                    /* Close down connection server */
-                    scon_data->running = -1;
-                    while (scon_data->running != 0) {
-                        os_delay(100);
-                    }
-                    ls_close(scon_data->socket);
-                    scon_data->thread_id = NULL; 
-
-                    command_reply(context, "closed");
-                } else {
-                    command_reply_error(context, "bind failed");
-                }
-            } else {
-                command_reply_error(context, "socket failed");
-            }
-
-        }
-    } else {
-        command_reply_error(context, "invalid args");
-    }
-
-    if (context->param != NULL) {
-        free(context->param);
-        context->param = NULL;
-    }
-
-    if (context->spawned) {
-        context_release(context);
-    }
-
-    context->results = rc;
-}
 #endif /* CONFIG_LASTLINK_COMMAND_INTERFACE */
 
 bool init_sensors(void)
@@ -726,7 +563,6 @@ bool init_sensors(void)
   #ifdef CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("sensors", sensor_command,  COMMAND_ONCE);
   #endif
-    add_command("scon", scon_command,       COMMAND_SPAWN);
 #endif
 
     ESP_LOGI(TAG, "%s: called", __func__);

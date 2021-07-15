@@ -84,6 +84,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
@@ -98,6 +99,7 @@
 #include "linklayer.h"
 #include "routes.h"
 #include "packet_window.h"
+#include "tokenize.h"
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
@@ -3455,56 +3457,6 @@ static void print_ping_table(command_context_t* context)
 }
 
 /**********************************************************************/
-/* dglisten <port>                                                    */
-/**********************************************************************/
-static void dglisten_command(command_context_t* context)
-{
-    if (context->argc == 0) {
-        show_help(context, "<port>", "Listen for datagrams on <port>");
-    } else if (context->argc > 1) {
-        int port = strtol(context->argv[1], NULL, 10);
-        int socket = ls_socket(LS_DATAGRAM);
-        if (socket >= 0) {
-            command_reply(context, "listening socket %d port %d...", socket, port);
-            int ret = ls_bind(socket, port);
-            if (ret >= 0) {
-                /* Accept packets from any */
-                ret = ls_connect(socket, NULL_ADDRESS, 0);
-                if (ret == LSE_NO_ERROR) {
-                    ls_dump_socket(context, "receiving", socket);
-                    while (!context_check_termination_request(context)) {
-                        char buf[200];
-                        int address;
-
-                        int len = ls_read_with_address(socket, buf, sizeof(buf), &address, &port, 50);
-                        if (len >= 0) {
-                            buf[len] = '\0';
-                            command_reply(context, "Data from %d/%d len %d: '%s'", address, port, len, buf);
-                        } else if (len != LSE_TIMEOUT) {
-                            command_reply(context, "ls_read returned %d", len);
-                        }
-                    }
-                } else {
-                    command_reply(context, "ls_connect returned %d", ret);
-                }
-            } else {
-                command_reply(context, "ls_bind returned %d", ret);
-            }
-            ls_close(socket);
-        } else {
-           command_reply(context, "Unable to open socket: %d", socket);
-        }
-    } else {
-        command_reply(context, "Insufficient params");
-    }
-
-    /* If we were spawned, release the context now */
-    if (context->spawned) {
-        context_release(context);
-    }
-}
-
-/**********************************************************************/
 /* dgsend <address> <port> <data> <burst count>                       */
 /**********************************************************************/
 static void dgsend_command(command_context_t* context)
@@ -3555,101 +3507,7 @@ static void dgsend_command(command_context_t* context)
 
     if (context->spawned) {
         context_release(context);
-    }
-}
-
-/**********************************************************************/
-/* dgcon <address> <dest port> [<src port>]                           */
-/* Enter a loop and take commands entered and send to the socket,     */
-/* while displaying packets received from the socket.                 */
-/* Control-C breaks out                                               */
-/**********************************************************************/
-typedef struct dgcon_data {
-    os_thread_t thread_id;
-    int socket;
-    int running;
-} dgcon_data_t;
-
-static void dgcon_reader(void* data)
-{
-    dgcon_data_t* dgdata = (dgcon_data_t*) data;
-
-    dgdata->running = 1;
-
-    while (dgdata->running > 0) {
-        /* Read data from socket and echo to terminal */
-        char buffer[300];
-
-        int address;
-        int port;
-
-        int len = ls_read_with_address(dgdata->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
-
-        if (len > 0) {
-            buffer[len] = '\0';
-            printf("%s", buffer); 
-        }
-    }
-
-    dgdata->running = 0;
-
-    os_exit_thread();
-}
-
-
-static void dgcon_command(command_context_t* context)
-{
-    if (context->argc == 0) {
-        show_help(context, "<address> <dest port> [<src port>]", "Send and receive datagram date");
-    } else if (context->argc >= 3) {
-        int address = strtol(context->argv[1], NULL, 10);
-        int dest_port = strtol(context->argv[2], NULL, 10);
-
-        int src_port = context->argc > 3 ? strtol(context->argv[3], NULL, 10) : 0;
-
-        int socket = ls_socket(LS_DATAGRAM);
-        if (socket >= 0) {
-            int ret = ls_bind(socket, src_port);
-            if (ret >= 0) {
-                ret = ls_connect(socket, address, dest_port);
-                if (ret >= 0) {
-                    dgcon_data_t dgdata;
-                    dgdata.socket = socket;
-
-                    /* Spawn a reader socket to echo back input packets to the control */
-                    dgdata.thread_id = os_create_thread(dgcon_reader, "dgcon_reader", 4095, 0, (void*) &dgdata);
-
-                    do {
-                        char* buffer = command_read_more(context);
-                        if (buffer != NULL) {
-                            int rc = ls_write(socket, buffer, strlen(buffer));
-                            if (rc < 0) {
-                                command_reply_error(context, "E:%d", rc);
-                            }
-                        }
-                    } while (!context_check_termination_request(context));
-   
-                    /* Kill reader thread */
-                    dgdata.running = -1;
-                    while (dgdata.running != 0) {
-                        os_delay(100);
-                    }
-                } else {
-                    command_reply_error(context, "ls_connect returned %d", ret);
-                }
-            } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
-            }
-            ls_close(socket);
-        } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
-        }
-    } else {
-        command_reply_error(context, "Insufficient params");
-    }
-
-    if (context->spawned) {
-        context_release(context);
+        os_exit_thread();
     }
 }
 
@@ -3703,6 +3561,7 @@ static void stconsumer_command(command_context_t* context)
 
     if (context->spawned) {
         context_release(context);
+        os_exit_thread();
     }
 }
 
@@ -3771,6 +3630,7 @@ static void stproducer_command(command_context_t* context)
 
     if (context->spawned) {
         context_release(context);
+        os_exit_thread();
     }
 }
 
@@ -3828,6 +3688,11 @@ static void stwrite_command(command_context_t* context)
 
     } else {
         command_reply_error(context, "Insufficient params");
+    }
+
+    if (context->spawned) {
+        context_release(context);
+        os_exit_thread();
     }
 }
 
@@ -3893,6 +3758,11 @@ static void stread_command(command_context_t* context)
     } else {
         command_reply_error(context, "Insufficient params");
     }
+
+    if (context->spawned) {
+        context_release(context);
+        os_exit_thread();
+    }
 }
 
 /**********************************************************************/
@@ -3932,6 +3802,11 @@ static void stconcycle_command(command_context_t* context)
 
     } else {
         command_reply_error(context, "Insufficient params");
+    }
+
+    if (context->spawned) {
+        context_release(context);
+        os_exit_thread();
     }
 }
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
@@ -3987,6 +3862,11 @@ static void ping_command(command_context_t* context)
         }
         command_reply(context, "%d fail  %d good  %d total", fail, good, total);
     }
+
+    if (context->spawned) {
+        context_release(context);
+        os_exit_thread();
+    }
 }
 
 static void print_sockets(command_context_t* context)
@@ -4006,6 +3886,184 @@ static void print_sockets(command_context_t* context)
 }
 
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
+
+/**********************************************************************/
+/* connect to socket datagram or stream port (later) and transact     */
+/* information.  Enters a loop and take commands entered and send to  */
+/* the socket, while displaying packets received from the socket.     */
+/**********************************************************************/
+typedef struct socket_data {
+    os_thread_t thread_id;
+    int socket;
+    int running;
+    command_context_t *context;
+} socket_data_t;
+
+static void datagram_reader(void* param)
+{
+    socket_data_t* socket_data = (socket_data_t*) param;
+
+    command_context_t* context = socket_data->context;
+
+    socket_data->running = 1;
+
+    while (socket_data->running > 0) {
+        /* Read data from socket and echo to terminal */
+        char buffer[300];
+
+        int address;
+        int port;
+
+        int len = ls_read_with_address(socket_data->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
+
+        if (len > 0) {
+            buffer[len] = '\0';
+            const char *p = buffer;
+            while (p != NULL) {
+                const char *pend = strchr(p, '\n');            
+                const char *nextp;
+
+                if (pend == NULL) {
+                    pend = p + strlen(p);
+                    nextp = NULL;
+                } else {
+                    nextp = pend + 1;
+                }
+
+                command_reply(context, "%*.*s", (pend - p), (pend - p), p);
+                p = nextp;
+            }
+        }
+    }
+
+    socket_data->running = 0;
+
+    command_reply(context, "datagram_reader stopping");
+
+    os_exit_thread();
+}
+
+
+#define MAX_SCON_ARGS 3
+/*
+ * socket d
+ *   -> <nn>:ack
+ * <nn>:<address> <port> <data>
+ *   -> <nn>:<reply if any>
+ * ...
+ * <nn>:close
+ *   -> <nn>:closed
+ */
+
+
+/*
+ * This command is spawned.
+ */
+static void socket_command(command_context_t* context)
+{
+    if (context->argc == 0) {
+        show_help(context, "d", "Connect to datagram socket");
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
+        show_help(context, "s <node> <port>", "Connect to stream socket");
+#endif
+    } else if (context->argc == 2 && tolower(context->argv[1][0]) == 'd') {
+        /* Create dgcon data instance for connection */
+        socket_data_t* socket_data = (socket_data_t*) malloc(sizeof(socket_data_t));
+        if (socket_data == NULL) {
+            command_reply_error(context, "out of memory");
+        } else {
+            context->param = (void*) socket_data;
+
+            socket_data->socket = ls_socket(LS_DATAGRAM);
+            socket_data->context = context;
+
+            if (socket_data->socket >= 0) {
+                int ret = ls_bind(socket_data->socket, 0);
+                if (ret >= 0) {
+                    /* Spawn a reader socket to echo back input packets to the control */
+                    socket_data->thread_id = os_create_thread(datagram_reader, "datagram_reader", 4095, 0, (void*) socket_data);
+
+                    /* Enter read loop from command processor and decode commands */
+                    while (!context_check_termination_request(context)) {
+                        char *message = command_read_more_with_timeout(context, -1);
+                        if (message != NULL) {
+                            // ESP_LOGI(TAG, "%s: message is '%s'", __func__, message);
+
+                            const char* args[MAX_SCON_ARGS];
+                            int nargs = tokenize(message, args, MAX_SCON_ARGS);
+
+                            // for (int arg = 0; arg < nargs; ++arg) {
+                            //     printf("arg[%d] = '%s'\n", arg, args[arg]);
+                            // }
+
+                            if (nargs == 1 && strcmp(args[0], "close") == 0) {
+                                context->terminate = true;
+                            } else if (nargs >= 2) {
+                                /* Post data to socket */
+                                int address = strtol(args[0], NULL, 10);
+                                int port = strtol(args[1], NULL, 10);
+                    
+                                int rc = ls_connect(socket_data->socket, address, port);
+                    
+                                if (rc >= 0) {
+                                    if (nargs > 2) {
+                                        rc = ls_write(socket_data->socket, args[2], strlen(args[2]));
+                                    } else {
+                                        rc = ls_write(socket_data->socket, "", 0);
+                                    }
+                                }                
+                     
+                                if (rc < 0) {
+                                    command_reply_error(context, "error %d", rc);
+                                }
+                            } else {
+                                command_reply_error(context, "insufficent params");
+                            }
+
+                            free((void*) message);
+                        }
+                    }
+
+                    /* Close down connection server */
+                    socket_data->running = -1;
+                    while (socket_data->running != 0) {
+                        os_delay(100);
+                    }
+                    ls_close(socket_data->socket);
+                    socket_data->thread_id = NULL; 
+
+                    command_reply(context, "closed");
+
+                    if (context->param != NULL) {
+                        free(context->param);
+                        context->param = NULL;
+                    }
+
+                } else {
+                    command_reply_error(context, "bind failed");
+                }
+            } else {
+                command_reply_error(context, "socket failed");
+            }
+
+        }
+#if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
+    } else if (context->argc == 4 && tolower(context->argv[1][0]) == 's') {
+        command_reply_error(context, "not implemented");
+#endif
+    } else {
+        for (int arg = 0; arg < context->argc; ++arg) {
+            printf("argv[%d] = '%s'\n", arg, context->argv[arg]);
+        }
+        command_reply_error(context, "invalid args");
+    }
+
+    if (context->spawned) {
+ESP_LOGI(TAG, "%s: releasing socket context %p", __func__, context);
+        context_release(context);
+        os_exit_thread();
+    }
+}
 
 /*
  * Initialize ls_socket layer.
@@ -4059,10 +4117,9 @@ ls_error_t ls_socket_init(void)
         err = LSE_CANNOT_REGISTER;
     }
 
+    add_command("socket",     socket_command,       COMMAND_SPAWN);
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("dglisten",   dglisten_command,    COMMAND_SPAWN);
     add_command("dgsend",     dgsend_command,      COMMAND_SPAWN);
-    add_command("dgcon",      dgcon_command,       COMMAND_SPAWN);
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     add_command("stconsumer", stconsumer_command,  COMMAND_SPAWN);
     add_command("stproducer", stproducer_command,  COMMAND_SPAWN);

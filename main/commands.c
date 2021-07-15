@@ -770,8 +770,8 @@ static command_context_t* create_context(bool spawned, int argc, const char** ar
                 /* Copy the args */
                 for (int arg = 0; arg < argc; ++arg) {
                     context->argv[arg] = dest;
-                    strcpy(dest, argv[0]);
-                    dest += strlen(argv[0]) + 1;
+                    strcpy(dest, argv[arg]);
+                    dest += strlen(argv[arg]) + 1;
                 }
 
                 /* Store terminating NULL */
@@ -793,6 +793,7 @@ static command_context_t* create_context(bool spawned, int argc, const char** ar
 void context_release(command_context_t* context)
 {
     if (context != NULL) {
+ESP_LOGI(TAG, "%s: %p id %d spawned %d", __func__, context, context->id, context->spawned);
         if (context->spawned) {
             if (context->input_queue != NULL) {
                 os_delete_queue(context->input_queue);
@@ -800,11 +801,10 @@ void context_release(command_context_t* context)
             }
 
             free((void*) context->argv);
-
-            if (context->thread_id != NULL) {
-                os_delete_thread(context->thread_id);
-                context->thread_id = NULL;
-            }
+            context->argv = NULL;
+            context->argc = 0;
+            context->thread_id = NULL;
+            context->terminate = false;
         }
 
         context->id = 0;
@@ -827,6 +827,26 @@ char* command_read_more(command_context_t* context)
     return command_read_more_with_timeout(context, -1);
 }
 
+
+static void contexts_command(command_context_t* context)
+{
+    if (context->argc == 0) {
+        show_help(context, "", "Show list of contexts");
+    } else {
+        for (int c = 0; c < CONFIG_LASTLINK_COMMAND_MAX_CONTEXTS; ++c) {
+            command_reply(context, "%p: id %d spawned %s thread_id %p input_queue %p argc %d param %p terminate %d results %d",
+                          command_contexts + c,
+                          command_contexts[c].id,
+                          command_contexts[c].spawned ? "Yes" : "No",
+                          command_contexts[c].thread_id,
+                          command_contexts[c].input_queue,
+                          command_contexts[c].argc,
+                          command_contexts[c].param,
+                          command_contexts[c].terminate,
+                          command_contexts[c].results);
+        }
+    }
+}
 
    
 void CommandProcessor(void* params)
@@ -869,19 +889,28 @@ void CommandProcessor(void* params)
                  */
                 int id = strtol(p, &p, 10);
 
-                command_context_t* context = find_context(id);
-                if (context != NULL) {
-                    /* Skip past delimiter if one is present  */
-                    if (*p == ':' || *p == ' ') {
-                        ++p;
-                    }
-
-                    /* Add message to input queue */
-                    if (!os_put_queue_with_timeout(context->input_queue, (os_queue_item_t) strdup(p), 0)) {
-                        command_reply_error(context, "input full");
-                    }
+                if (id == 0) {
+                    command_reply_error(NULL, "bad contexxt number");
                 } else {
-                    command_reply_error(NULL, "no context");
+                    command_context_t* context = find_context(id);
+printf("context is %p\n", context);
+                    if (context != NULL) {
+                        /* Skip past delimiter if one is present  */
+                        if (*p == ':' || *p == ' ') {
+                            ++p;
+                        }
+    
+                        /* Add message to input queue */
+                        char *p_copy = strdup(p);
+                        if (!os_put_queue_with_timeout(context->input_queue, (os_queue_item_t) &p_copy, 0)) {
+                            command_reply_error(context, "input full");
+                            free((void*) p_copy);
+                        }
+                    } else {
+printf("before reply\n");
+                        command_reply_error(NULL, "no context");
+printf("after reply\n");
+                    }
                 }
             } else { 
                 /* New command  - look it up, create a context and issue the command */
@@ -910,13 +939,14 @@ void CommandProcessor(void* params)
                         if (context == NULL) {
                             command_reply_error(NULL, "out of contexts");
                         } else {
-                            command_reply(context, "ack");
-
                             /* Either run the command or spawn as thread */
                             int rc = 0;
 
                             if (mode == COMMAND_SPAWN) {
-                                context->thread_id = os_create_thread((void (*)(void*)) function, context->argv[0], 8192, 0, (void*) context);
+                                command_reply(context, "ack");
+                                char command_name[20];
+                                sprintf(command_name, "%s_commmand", context->argv[0]);
+                                context->thread_id = os_create_thread((void (*)(void*)) function, command_name, 8192, 0, (void*) context);
                                 if (context->thread_id == NULL) {
                                     rc = -1;
                                 } 
@@ -925,14 +955,13 @@ void CommandProcessor(void* params)
                                 rc = context->results;
                             }
 
-                            if (rc != 0) {
-                                command_reply_error(context, "Error: %d", rc);
-                            }
-
-                            /* If a one-shot command, we can release the context now */
-                            if (mode == COMMAND_ONCE) {
-                                /* One-shot command - release context now - otherwise command will release it's own context. */
+                            /* If either a one-shot or error occurred during launch.
+                             * In either case, we need to do the release here because the context passes back the error code */
+                            if (rc != 0 || mode == COMMAND_ONCE) {
                                 context_release(context);
+                                if (rc != 0) {
+                                    command_reply_error(context, "Error: %d", rc);
+                                }
                             }
                         }
                     } else if (argc > 0) {
@@ -1024,6 +1053,7 @@ void init_commands(void)
 #ifdef NOTUSED
     add_command("spawn",       spawn_command,                   COMMAND_SPAWN);
 #endif
+    add_command("contexts",    contexts_command,                COMMAND_ONCE);
 #ifdef CONFIG_DHT_ENABLE
     add_command("dht",         dht_command,                     COMMAND_ONCE);
 #endif
