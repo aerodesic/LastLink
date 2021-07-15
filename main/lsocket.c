@@ -3218,7 +3218,7 @@ static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg
         switch (socket->socket_type) {
             default:
             case LS_DATAGRAM: {
-                command_reply(context, "%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d",
+                command_reply(context, "D", "%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d",
                        msg ? msg : "",
                        msg ? ": " : "",
                        socket - socket_table + FIRST_LASTLINK_FD,
@@ -3233,7 +3233,7 @@ static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             case LS_STREAM: {
                 if (socket->state == LS_STATE_LISTENING) {
-                    command_reply(context, "%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d",
+                    command_reply(context, "D", "%s%s %d (%p) state %s type %s src port %d dest port %d dest addr %d",
                            msg ? msg : "",
                            msg ? ": " : "",
                            socket - socket_table + FIRST_LASTLINK_FD,
@@ -3244,7 +3244,7 @@ static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg
                            socket->dest_port,
                            socket->dest_addr);
                 } else {
-                    command_reply(context, "%s%s %d (%p) state %s type %s local port %d dest port %d dest addr %d parent %d input %d[%d] output %d[%d]",
+                    command_reply(context, "D", "%s%s %d (%p) state %s type %s local port %d dest port %d dest addr %d parent %d input %d[%d] output %d[%d]",
                            msg ? msg : "",
                            msg ? ": " : "",
                            socket - socket_table + FIRST_LASTLINK_FD,
@@ -3263,27 +3263,27 @@ static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg
                                for (int slot = 0; slot < socket->input_window->length; ++slot) {
                                    if (socket->input_window->queue[slot].inuse) {
                                        if (socket->input_window->queue[slot].packet != NULL) {
-                                           command_reply(context, "   In %d: %d", slot, get_uint_field(socket->input_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                           command_reply(context, "D", "   In %d: %d", slot, get_uint_field(socket->input_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                                        } else {
-                                           command_reply(context, "   In %d: NULL", slot);
+                                           command_reply(context, "D", "   In %d: NULL", slot);
                                        }
                                    }
                                }
                            } else {
-                               command_reply_error(context, "Input window missing");
+                               command_reply(context, "E", "Input window missing");
                            }
                            if (socket->input_window != NULL) {
                                for (int slot = 0; slot < socket->input_window->length; ++slot) {
                                    if (socket->output_window->queue[slot].inuse) {
                                        if (socket->output_window->queue[slot].packet != NULL) {
-                                           command_reply(context, "   Out %d: %d", slot, get_uint_field(socket->output_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
+                                           command_reply(context, "D", "   Out %d: %d", slot, get_uint_field(socket->output_window->queue[slot].packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN));
                                        } else {
-                                           command_reply(context, "   Out %d: NULL", slot);
+                                           command_reply(context, "D", "   Out %d: NULL", slot);
                                        }
                                    }
                                }
                            } else {
-                               command_reply_error(context, "   Output window missing");
+                               command_reply(context, "E", "   Output window missing");
                            }
                 }
                 break;
@@ -3292,11 +3292,11 @@ static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg
         }
 #ifdef CONFIG_LASTLINK_SOCKET_LOCKING_DEBUG
         if (socket->lock_count != 0) {
-            command_reply(context, "   Lock count %d last by %s:%d", socket->lock_count, socket->last_lock_file, socket->last_lock_line);
+            command_reply(context, "D", "   Lock count %d last by %s:%d", socket->lock_count, socket->last_lock_file, socket->last_lock_line);
         }
 #endif
     } else {
-        command_reply_error(context, "%s: invalid socket", msg);
+        command_reply(context, "E", "%s: invalid socket", msg);
     }
 
     return 0;
@@ -3439,10 +3439,10 @@ static void print_ping_table(command_context_t* context)
             for (int index = 0; index < num_pings; ++index) {
                 if (all || pings[index].sequence != 0) {
                     if (! header_printed) {
-                        command_reply(context, "Sequence  Queue  To    Thread  Routed  Retries  Error");
+                        command_reply(context, "D", "Sequence  Queue  To    Thread  Routed  Retries  Error");
                         header_printed = true;
                     }
-                    command_reply(context, "%-8d  %-5d  %-4d  %-6s  %-6s  %-7d  %-5d",
+                    command_reply(context, "D", "%-8d  %-5d  %-4d  %-6s  %-6s  %-7d  %-5d",
                             pings[index].sequence,
                             pings[index].queue,
                             pings[index].to,
@@ -3482,27 +3482,27 @@ static void dgsend_command(command_context_t* context)
                             char tempbuf[strlen(data) + 10];
                             sprintf(tempbuf, "%s: %d", data, count);
                             ret = ls_write(socket, tempbuf, strlen(tempbuf));
-                            command_reply_error(context, "ls_write returned %d", ret);
+                            command_reply(context, "E", "ls_write returned %d", ret);
                             if (--count != 0) {
                                 os_delay(50);
                             }
                         }
                     } else {
                         ret = ls_write(socket, data, strlen(data));
-                        command_reply(context, "ls_write returned %d", ret);
+                        command_reply(context, "D", "ls_write returned %d", ret);
                     }
                 } else {
-                    command_reply_error(context, "ls_connect returned %d", ret);
+                    command_reply(context, "E", "ls_connect returned %d", ret);
                 }
             } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
+                command_reply(context, "E", "ls_bind returned %d", ret);
             }
             ls_close(socket);
         } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
+            command_reply(context, "E", "Unable to open socket: %d", socket);
         }
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "E", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3527,36 +3527,36 @@ static void stconsumer_command(command_context_t* context)
             if (ret >= 0) {
                 /* Accept packets from any */
                 bool done = false;
-                command_reply(context, "listening socket %d port %d...", socket, port);
+                command_reply(context, "D", "listening socket %d port %d...", socket, port);
                 do {
                     int connection = ls_listen(socket, 5, 50);
                     if (connection >= 0) {
-                        command_reply(context, "got connection on %d",connection);
+                        command_reply(context, "D", "got connection on %d",connection);
                         char buffer[80];
                         int len;
 // Need to do a 'readline' on this
                         while ((len = ls_read(connection, buffer, sizeof(buffer))) > 0) {
                             fwrite(buffer, len, 1, stdout);
                         }
-                        command_reply(context, "--end--");
+                        command_reply(context, "D", "--end--");
                         ls_close(connection);
                         done = hit_test('\x03');
                     } else if (connection != LSE_TIMEOUT) {
-                        command_reply_error(context, "ls_listen returned %d", connection);
+                        command_reply(context, "E", "ls_listen returned %d", connection);
                         done = true;
                     } else {
                         done = context->context_check_termination_request(context);
                     }
                 } while (!done);
             } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
+                command_reply(context, "E", "ls_bind returned %d", ret);
             }
             ls_close(socket);
         } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
+            command_reply(context, "E", "Unable to open socket: %d", socket);
         }
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "E", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3585,47 +3585,47 @@ static void stproducer_command(command_context_t* context)
             if (ret >= 0) {
                 /* Accept packets from any */
                 bool done = false;
-                command_reply(context, "listening socket %d port %d...", socket, port);
+                command_reply(context, "D", "listening socket %d port %d...", socket, port);
                 do {
                     int connection = ls_listen(socket, 5, 50);
                     if (connection >= 0) {
                         char buffer[80];
-                        command_reply(context, "got connection on %d",connection);
+                        command_reply(context, "D", "got connection on %d",connection);
 
                         /* Read one line to get number of items to produce */
                         int len = read(connection, buffer, sizeof(buffer));
                         int count = strtol(buffer, NULL, 10);
 
-                        command_reply(context, "read %d bytes value %d", len, count);
+                        command_reply(context, "D", "read %d bytes value %d", len, count);
 
                         for (int line = 1; line <= count; ++line) {
                             sprintf(buffer, "%d: %s\n", line, data);
                             int towrite = strlen(buffer);
                             int len = write(connection, buffer, towrite);
                             if (len != towrite) {
-                                command_reply_error(context, "wrote %d but write returned %d", towrite, len);
+                                command_reply(context, "E", "wrote %d but write returned %d", towrite, len);
                             }
                         }
 
                         int ret = close(connection);
-                        command_reply(context, "connection closed %d", ret);
+                        command_reply(context, "D", "connection closed %d", ret);
 
                     } else if (connection != LSE_TIMEOUT) {
-                        command_reply(context, "ls_listen returned %d", connection);
+                        command_reply(context, "D", "ls_listen returned %d", connection);
                         done = true;
                     } else {
                         done = context_check_termination_request(context);
                     }
                 } while (!done);
             } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
+                command_reply(context, "E", "ls_bind returned %d", ret);
             }
             close(socket);
         } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
+            command_reply(context, "E", "Unable to open socket: %d", socket);
         }
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "E", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3664,7 +3664,7 @@ static void stwrite_command(command_context_t* context)
                         sprintf(buffer, "%s: line %d\n", message, line);
                         total += strlen(buffer);
                         ret = write(socket, buffer, strlen(buffer));
-                        command_reply(context, "write returned %d", ret);
+                        command_reply(context, "D", "write returned %d", ret);
                     }
 
                     int seconds = (simpletimer_elapsed(&timer) + 500) / 1000;
@@ -3672,22 +3672,22 @@ static void stwrite_command(command_context_t* context)
                         seconds = 1;
                     }
 
-                    command_reply(context, "%d bytes in %d seconds;  %d bytes/sec", total, seconds, total / seconds);
+                    command_reply(context, "D", "%d bytes in %d seconds;  %d bytes/sec", total, seconds, total / seconds);
                 } else {
-                    command_reply_error(context, "ls_connect returned %d", ret);
+                    command_reply(context, "E", "ls_connect returned %d", ret);
                 }
             } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
+                command_reply(context, "E", "ls_bind returned %d", ret);
             }
-            command_reply(context, "closing socket");
+            command_reply(context, "D", "closing socket");
             ret = ls_close(socket);
-            command_reply(context, "close returned %d", ret);
+            command_reply(context, "D", "close returned %d", ret);
         } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
+            command_reply(context, "E", "Unable to open socket: %d", socket);
         }
 
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "D", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3741,22 +3741,22 @@ static void stread_command(command_context_t* context)
                         seconds = 1;
                     }
 
-                    command_reply(context, "ret %d:  %d bytes in %d seconds;  %d bytes/sec", len, total, seconds, total / seconds);
+                    command_reply(context, "D", "ret %d:  %d bytes in %d seconds;  %d bytes/sec", len, total, seconds, total / seconds);
 
                 } else {
-                    command_reply_error(context, "ls_connect returned %d", ret);
+                    command_reply(context, "E", "ls_connect returned %d", ret);
                 }
             } else {
-                command_reply_error(context, "ls_bind returned %d", ret);
+                command_reply(context, "E", "ls_bind returned %d", ret);
             }
-            command_reply(context, "closing socket");
+            command_reply(context, "D", "closing socket");
             ret = ls_close(socket);
-            command_reply(context, "close returned %d", ret);
+            command_reply(context, "D", "close returned %d", ret);
         } else {
-            command_reply_error(context, "Unable to open socket: %d", socket);
+            command_reply(context, "E", "Unable to open socket: %d", socket);
         }
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "E", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3786,22 +3786,22 @@ static void stconcycle_command(command_context_t* context)
                     if (ret == LSE_NO_ERROR) {
                         os_delay(5000);
                     } else {
-                        command_reply_error(context, "ls_connect returned %d", ret);
+                        command_reply(context, "E", "ls_connect returned %d", ret);
                     }
                     os_delay(5000);
                 } else {
-                    command_reply_error(context, "ls_bind returned %d", ret);
+                    command_reply(context, "E", "ls_bind returned %d", ret);
                 }
                 ls_close(socket);
             } else {
-                command_reply_error(context, "Unable to create socket: %d", socket);
+                command_reply(context, "E", "Unable to create socket: %d", socket);
             }
 
             os_delay(5000);
         }
 
     } else {
-        command_reply_error(context, "Insufficient params");
+        command_reply(context, "E", "Insufficient params");
     }
 
     if (context->spawned) {
@@ -3845,12 +3845,12 @@ static void ping_command(command_context_t* context)
 
             if (path_len < 0) {
                 ++fail;
-                command_reply_error(context, "%d: Ping error %d", sequence, path_len);
+                command_reply(context, "E", "%d: Ping error %d", sequence, path_len);
             } else {
                 ++good;
-                command_reply(context, "%d: %d mS Path", sequence, elapsed);
+                command_reply(context, "D", "%d: %d mS Path", sequence, elapsed);
                 for (int path = 0; path < path_len; ++path) {
-                    command_reply(context, " %d", paths[path]);
+                    command_reply(context, "D", " %d", paths[path]);
                 }
             }
 
@@ -3860,7 +3860,7 @@ static void ping_command(command_context_t* context)
                 os_delay(1000);
             }
         }
-        command_reply(context, "%d fail  %d good  %d total", fail, good, total);
+        command_reply(context, "D", "%d fail  %d good  %d total", fail, good, total);
     }
 
     if (context->spawned) {
@@ -3880,7 +3880,7 @@ static void print_sockets(command_context_t* context)
             }
         }
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
-        command_reply(context, "socket_scanner_running %d", socket_scanner_running);
+        command_reply(context, "D", "socket_scanner_running %d", socket_scanner_running);
 #endif /* CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS */
     }
 }
@@ -3930,15 +3930,13 @@ static void datagram_reader(void* param)
                     nextp = pend + 1;
                 }
 
-                command_reply(context, "%*.*s", (pend - p), (pend - p), p);
+                command_reply(context, "D", "%*.*s", (pend - p), (pend - p), p);
                 p = nextp;
             }
         }
     }
 
     socket_data->running = 0;
-
-    command_reply(context, "datagram_reader stopping");
 
     os_exit_thread();
 }
@@ -3970,7 +3968,7 @@ static void socket_command(command_context_t* context)
         /* Create dgcon data instance for connection */
         socket_data_t* socket_data = (socket_data_t*) malloc(sizeof(socket_data_t));
         if (socket_data == NULL) {
-            command_reply_error(context, "out of memory");
+            command_reply(context, "E", "out of memory");
         } else {
             context->param = (void*) socket_data;
 
@@ -3982,7 +3980,7 @@ static void socket_command(command_context_t* context)
                 if (ret >= 0) {
                     /* Spawn a reader socket to echo back input packets to the control */
                     char reader_name[30];
-                    snprintf(reader_name, sizeof(reader_name), "datagram_reader_%d", context->id);
+                    snprintf(reader_name, sizeof(reader_name), "datagram_reader_%d", context->transaction_id);
                     socket_data->thread_id = os_create_thread(datagram_reader, reader_name, 4095, 0, (void*) socket_data);
 
                     /* Enter read loop from command processor and decode commands */
@@ -3999,9 +3997,7 @@ static void socket_command(command_context_t* context)
                             //     printf("arg[%d] = '%s'\n", arg, args[arg]);
                             // }
 
-                            if (nargs == 1 && strcmp(args[0], "close") == 0) {
-                                context->terminate = true;
-                            } else if (nargs >= 2) {
+                            if (nargs >= 2) {
                                 /* Post data to socket */
                                 int address = strtol(args[0], NULL, 10);
                                 int port = strtol(args[1], NULL, 10);
@@ -4017,13 +4013,16 @@ static void socket_command(command_context_t* context)
                                 }                
                      
                                 if (rc < 0) {
-                                    command_reply_error(context, "error %d", rc);
+                                    command_reply(context, "E", "%d", rc);
                                 }
                             } else {
-                                command_reply_error(context, "insufficent params");
+                                command_reply(context, "E", "insufficent params");
                             }
 
                             free((void*) message);
+                        } else {
+                            /* EOF */
+                            context->terminate = true;
                         }
                     }
 
@@ -4035,7 +4034,7 @@ static void socket_command(command_context_t* context)
                     ls_close(socket_data->socket);
                     socket_data->thread_id = NULL; 
 
-                    command_reply(context, "closed");
+                    command_reply(context, "D", "closed");
 
                     if (context->param != NULL) {
                         free(context->param);
@@ -4043,22 +4042,22 @@ static void socket_command(command_context_t* context)
                     }
 
                 } else {
-                    command_reply_error(context, "bind failed");
+                    command_reply(context, "E", "bind failed");
                 }
             } else {
-                command_reply_error(context, "socket failed");
+                command_reply(context, "E", "socket failed");
             }
 
         }
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     } else if (context->argc == 4 && tolower(context->argv[1][0]) == 's') {
-        command_reply_error(context, "not implemented");
+        command_reply(context, "E", "not implemented");
 #endif
     } else {
         // for (int arg = 0; arg < context->argc; ++arg) {
         //     printf("argv[%d] = '%s'\n", arg, context->argv[arg]);
         // }
-        command_reply_error(context, "invalid args");
+        command_reply(context, "E", "invalid args");
     }
 
     if (context->spawned) {

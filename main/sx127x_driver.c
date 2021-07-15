@@ -1792,52 +1792,52 @@ void print_status(command_context_t* context, radio_t *radio)
     }
 
     if (ok) {
-        command_reply(context, "Radio %d:", radio->radio_num);
-        command_reply(context, "Transmit queue length:  %d", os_items_in_queue(radio->transmit_queue));
-        command_reply(context, "Waiting output:         %s", data.current_packet ? "YES" : "NO");
-        command_reply(context, "sync_word:              %02x", data.sync_word);
-        command_reply(context, "preamble_length:        %d", data.preamble_length);
-        command_reply(context, "coding_rate:            %d", data.coding_rate);
-        command_reply(context, "implicit_header:        %s", data.implicit_header ? "YES" : "NO");
-        command_reply(context, "hop_period:             %d", data.hop_period);
-        command_reply(context, "enable_crc:             %s", data.enable_crc ? "YES" : "NO");
-        command_reply(context, "channel:                %d", data.channel);
-        command_reply(context, "datarate:               %d", data.datarate);
-        command_reply(context, "bandwidth:              %d", data.bandwidth);
-        command_reply(context, "spreading_factor:       %d", data.spreading_factor);
-        command_reply(context, "tx_power:               %d", data.tx_power);
-        command_reply(context, "rx_interrupts:          %d", data.rx_interrupts);
-        command_reply(context, "rx_timeouts:            %d", data.rx_timeouts);
-        command_reply(context, "tx_interrupts:          %d", data.tx_interrupts);
-        command_reply(context, "tx_timeouts:            %d", data.tx_timeouts);
-        command_reply(context, "cad_interrupts:         %d", data.cad_interrupts);
-        command_reply(context, "cad_detected:           %d", data.cad_detected);
-        command_reply(context, "cad_timeouts:           %d", data.cad_timeouts);
+        command_reply(context, "D", "Radio %d:", radio->radio_num);
+        command_reply(context, "D", "Transmit queue length:  %d", os_items_in_queue(radio->transmit_queue));
+        command_reply(context, "D", "Waiting output:         %s", data.current_packet ? "YES" : "NO");
+        command_reply(context, "D", "sync_word:              %02x", data.sync_word);
+        command_reply(context, "D", "preamble_length:        %d", data.preamble_length);
+        command_reply(context, "D", "coding_rate:            %d", data.coding_rate);
+        command_reply(context, "D", "implicit_header:        %s", data.implicit_header ? "YES" : "NO");
+        command_reply(context, "D", "hop_period:             %d", data.hop_period);
+        command_reply(context, "D", "enable_crc:             %s", data.enable_crc ? "YES" : "NO");
+        command_reply(context, "D", "channel:                %d", data.channel);
+        command_reply(context, "D", "datarate:               %d", data.datarate);
+        command_reply(context, "D", "bandwidth:              %d", data.bandwidth);
+        command_reply(context, "D", "spreading_factor:       %d", data.spreading_factor);
+        command_reply(context, "D", "tx_power:               %d", data.tx_power);
+        command_reply(context, "D", "rx_interrupts:          %d", data.rx_interrupts);
+        command_reply(context, "D", "rx_timeouts:            %d", data.rx_timeouts);
+        command_reply(context, "D", "tx_interrupts:          %d", data.tx_interrupts);
+        command_reply(context, "D", "tx_timeouts:            %d", data.tx_timeouts);
+        command_reply(context, "D", "cad_interrupts:         %d", data.cad_interrupts);
+        command_reply(context, "D", "cad_detected:           %d", data.cad_detected);
+        command_reply(context, "D", "cad_timeouts:           %d", data.cad_timeouts);
 #ifdef USE_FHSS
-        command_reply(context, "fhss_interrupts:        %d", data.fhss_interrupts);
+        command_reply(context, "D", "fhss_interrupts:        %d", data.fhss_interrupts);
 #endif /* USE_FHSS */
-        command_reply(context, "packet_memory_failed:   %d", data.packet_memory_failed);
-        command_reply(context, "packet_crc_errors:      %d", data.packet_crc_errors);
-        command_reply(context, "saved irq_flags:        %02x", data.irq_flags);
-        command_reply(context, "live irq_flags:         %02x", live_irq_flags);
-        command_reply(context, "live irq_mask:          %02x", live_irq_mask);
-        command_reply(context, "handler_state:          %s", handler_state_of(data.handler_state));
-        command_reply(context, "handler_cycles:         %d", data.handler_cycles);
-        command_reply(context, "wakeup_ticks:           %d", data.wakeup_ticks);
-        command_reply(context, "window_number:          %d", data.window_number);
-        command_reply(context, "current_packet_window:  %d", data.current_packet_window);
-        command_reply(context, "window_width:           %d", data.window_width);
-        command_reply(context, "window_event_count:     %d", data.window_event_count);
+        command_reply(context, "D", "packet_memory_failed:   %d", data.packet_memory_failed);
+        command_reply(context, "D", "packet_crc_errors:      %d", data.packet_crc_errors);
+        command_reply(context, "D", "saved irq_flags:        %02x", data.irq_flags);
+        command_reply(context, "D", "live irq_flags:         %02x", live_irq_flags);
+        command_reply(context, "D", "live irq_mask:          %02x", live_irq_mask);
+        command_reply(context, "D", "handler_state:          %s", handler_state_of(data.handler_state));
+        command_reply(context, "D", "handler_cycles:         %d", data.handler_cycles);
+        command_reply(context, "D", "wakeup_ticks:           %d", data.wakeup_ticks);
+        command_reply(context, "D", "window_number:          %d", data.window_number);
+        command_reply(context, "D", "current_packet_window:  %d", data.current_packet_window);
+        command_reply(context, "D", "window_width:           %d", data.window_width);
+        command_reply(context, "D", "window_event_count:     %d", data.window_event_count);
 
         int wakeup_timer_remaining = simpletimer_remaining(&data.handler_wakeup_timer_status);
 
         if (simpletimer_is_running(&data.handler_wakeup_timer_status)) {
-            command_reply(context, "wakeup_timer:           %d", wakeup_timer_remaining);
+            command_reply(context, "D", "wakeup_timer:           %d", wakeup_timer_remaining);
         } else {
-            command_reply(context, "wakeup_timer:           %s", simpletimer_is_expired(&data.handler_wakeup_timer_status) ? "expired" : "stopped");
+            command_reply(context, "D", "wakeup_timer:           %s", simpletimer_is_expired(&data.handler_wakeup_timer_status) ? "expired" : "stopped");
         }
     } else {
-        command_reply_error(context, "Unable to lock data");
+        command_reply(context, "E", "Unable to lock data");
     }
 }
 #endif

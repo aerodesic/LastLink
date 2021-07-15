@@ -399,10 +399,10 @@ static void print_route_table(command_context_t* context)
         route_table_unlock();
 
         if (rt_used != 0) {
-            command_reply(context, "Dest  Radio  Source  Sequence  Metric  RouteTo  Flags  Life  Pending  Timer  Retries");
+            command_reply(context, "D", "Dest  Radio  Source  Sequence  Metric  RouteTo  Flags  Life  Pending  Timer  Retries");
 
             for (int index = 0; index < rt_used; ++index) {
-                command_reply(context, "%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5d  %-d",
+                command_reply(context, "D", "%-4d  %-5d  %-6d  %-8d  %-6d  %-7d  %02x     %-4d  %-7d  %-5d  %-d",
                         table[index].dest,
                         table[index].radio_num,
                         table[index].origin,

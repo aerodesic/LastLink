@@ -481,13 +481,13 @@ static void service_table_commands(command_context_t* context)
             int               dest_port = -1;
 
             if (find_service(context->argv[1], addresses[index], &socket_type, &src_port, &dest_addr, &dest_port) == LSE_NO_ERROR) {
-                command_reply(context, "Service %s found source %d/%d dest %d/%d type %d", context->argv[1], addresses[index], src_port, dest_addr, dest_port, socket_type);
+                command_reply(context, "D", "Service %s found source %d/%d dest %d/%d type %d", context->argv[1], addresses[index], src_port, dest_addr, dest_port, socket_type);
             } else {
-                command_reply(context, "Service %s not found", context->argv[1]);
+                command_reply(context, "D", "Service %s not found", context->argv[1]);
             }
 
             if (addresses_found > MAX_ADDRESSES_IN_SEARCH) {
-                command_reply_error(context, "Only the first %d of %d services displayed", MAX_ADDRESSES_IN_SEARCH, addresses_found);
+                command_reply(context, "E", "Only the first %d of %d services displayed", MAX_ADDRESSES_IN_SEARCH, addresses_found);
             }
         }
     } else {
@@ -521,8 +521,8 @@ static void service_table_commands(command_context_t* context)
         os_release_recursive_mutex(service_lock);
 
         if (num_services != 0) {
-            command_reply(context, "P           Next        Prev        Local  Type  Source       Destination  Timer  Name");
-            //                      0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  XXXXX  XXXX  AAAAAA/PPPP  AAAAAA/PPPP  XXXXX  XX..."
+            command_reply(context, "D", "P           Next        Prev        Local  Type  Source       Destination  Timer  Name");
+            //                          0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  XXXXX  XXXX  AAAAAA/PPPP  AAAAAA/PPPP  XXXXX  XX..."
             for (int index = 0; index < num_services; ++index) {
                 char src_address[30];
                 char dest_address[30];
@@ -539,7 +539,7 @@ static void service_table_commands(command_context_t* context)
                     sprintf(dest_address, "%d/%d", services[index].dest_addr, services[index].dest_port);
                 }
 
-                command_reply(context, "%p  %p  %p  %-5s  %-4s  %-11s  %-11s  %-5d  %-s",
+                command_reply(context, "D", "%p  %p  %p  %-5s  %-4s  %-11s  %-11s  %-5d  %-s",
                        services[index].p,
                        services[index].next,
                        services[index].prev,

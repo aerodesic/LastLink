@@ -1609,7 +1609,7 @@ static void linklayer_print_status(command_context_t* context)
     if (context->argc == 0) {
         show_help(context, "", "Print linklayer status");
     } else {
-        command_reply(context, "linklayer_lock: %s", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
+        command_reply(context, "D", "linklayer_lock: %s", os_get_mutex_count(linklayer_mutex) ? "UNLOCKED" : "LOCKED");
         /* Print radio status */
         for (int radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
             if (radio_table[radio_num] != NULL) {
@@ -1628,7 +1628,7 @@ static void linklayer_debug_flag(command_context_t* context)
     } else if (context->argc > 1) {
         debug_flag = strtol(context->argv[1], NULL, 10);
     } else {
-        command_reply(context, "linklayer debug_flag %d", debug_flag);
+        command_reply(context, "D", "linklayer debug_flag %d", debug_flag);
     }
 }
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */

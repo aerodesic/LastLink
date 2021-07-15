@@ -489,10 +489,10 @@ static void sensor_command(command_context_t* context)
         os_release_recursive_mutex(sensor_lock);
 
         if (num_sensors != 0) {
-            command_reply(context, "P           Next        Prev        Type  Function    Units  Name");
+            command_reply(context, "D", "P           Next        Prev        Type  Function    Units  Name");
             //                     "0xXXXXXXXX  0xXXXXXXXX  0xXXXXXXXX  xx    0xXXXXXXXX  XXXXX  XXXXX"
             for (int index = 0; index < num_sensors; ++index) {
-                command_reply(context, "%p  %p  %p  %-4d  %p  %-5s  %-s",
+                command_reply(context, "D", "%p  %p  %p  %-4d  %p  %-5s  %-s",
                        sensors[index].p,
                        sensors[index].next,
                        sensors[index].prev,
@@ -510,7 +510,7 @@ static void sensor_command(command_context_t* context)
             if (sensor != NULL) {
                 char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
                 if (! write_sensor(sensor, context->argv[3], reply_buffer, sizeof(reply_buffer))) {
-                    command_reply(context, "set %s error '%s'", context->argv[2], reply_buffer);
+                    command_reply(context, "D", "set %s error '%s'", context->argv[2], reply_buffer);
                 }
             }
             os_release_recursive_mutex(sensor_lock);
@@ -525,9 +525,9 @@ static void sensor_command(command_context_t* context)
             if (sensor != NULL) {
                 char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
                 if (read_sensor(sensor, reply_buffer, sizeof(reply_buffer))) {
-                    command_reply(context, "get %s value '%s'", context->argv[2], reply_buffer);
+                    command_reply(context, "D", "get %s value '%s'", context->argv[2], reply_buffer);
                 } else {
-                    command_reply(context, "get %s error '%s'", context->argv[2], reply_buffer);
+                    command_reply(context, "D", "get %s error '%s'", context->argv[2], reply_buffer);
                 }
             }
             os_release_recursive_mutex(sensor_lock);
@@ -537,7 +537,7 @@ static void sensor_command(command_context_t* context)
     }
 
     if (err) {
-        command_reply_error(context, err);
+        command_reply(context, "E", err);
         context->results = -1;
     }
 }

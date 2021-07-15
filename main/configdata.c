@@ -324,9 +324,9 @@ static void write_config_command_reply(command_context_t *context, configitem_t*
         if (cell->type == CONFIG_SECTION) {
 
 #ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
-            command_reply(context, "[%s]", cell->name);
+            command_reply(context, "D", "[%s]", cell->name);
 #else
-            command_reply(context, "%*.*s[%s]", indent, indent, "", cell->name);
+            command_reply(context, "D", "%*.*s[%s]", indent, indent, "", cell->name);
 #endif
 
             if (cell->head != NULL) {
@@ -334,18 +334,18 @@ static void write_config_command_reply(command_context_t *context, configitem_t*
             }
 
 #ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
-            command_reply(context, "[end]");
+            command_reply(context, "D", "[end]");
 #else
-            command_reply(context, "%*.*s[end]", indent, indent, "");
+            command_reply(context, "D", "%*.*s[end]", indent, indent, "");
 #endif
 
         } else if (cell->type == CONFIG_VALUE) {
 
             if (cell->value != NULL) {
 #ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
-                command_reply(context, "%s=%s", cell->name, cell->value);
+                command_reply(context, "D", "%s=%s", cell->name, cell->value);
 #else
-                command_reply(context, "%*.*s%s=%s", indent, indent, "", cell->name, cell->value);
+                command_reply(context, "D", "%*.*s%s=%s", indent, indent, "", cell->name, cell->value);
 #endif
             }
 
@@ -373,18 +373,18 @@ static void config_command(command_context_t *context)
         bool ok = set_config_str(context->argv[2], context->argv[3]);
         unlock_config();
         if (!ok) {
-            command_reply_error(context, "Unable to set %s to '%s'", context->argv[2], context->argv[3]);
+            command_reply(context, "E", "Unable to set %s to '%s'", context->argv[2], context->argv[3]);
         }
 
     } else if (context->argc == 3 && strcmp(context->argv[1], "get") == 0) {
-        command_reply_error(context, "%s = '%s'", context->argv[2], get_config_str(context->argv[2], "**UNDEFINED**"));
+        command_reply(context, "E", "%s = '%s'", context->argv[2], get_config_str(context->argv[2], "**UNDEFINED**"));
 
     } else if (context->argc == 3 && strcmp(context->argv[1], "del") == 0) {
         lock_config();
         bool ok = delete_config(context->argv[2]);
         unlock_config();
 
-        command_reply_error(context, "%s %sdeleted", context->argv[2], ok ? "" : "not ");
+        command_reply(context, "E", "%s %sdeleted", context->argv[2], ok ? "" : "not ");
     }
 }
 

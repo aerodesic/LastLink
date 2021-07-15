@@ -11,8 +11,8 @@ os_thread_t start_commands(FILE* in, FILE* out);
 
 #ifdef CONFIG_LASTLINK_COMMAND_INTERFACE
 typedef struct {
-    /* The context id number */
-    int id;
+    /* The context transaction_id number */
+    int transaction_id;
 
     /*
      * True if spawned as separate process.
@@ -45,7 +45,6 @@ typedef struct {
 typedef void* command_context_t;
 #endif
 
-
 void init_commands(void);
 void deinit_commands(void);
 
@@ -59,9 +58,7 @@ bool remove_command(const char* name);
 void show_help(command_context_t* context, const char *params, const char *description);
 
 // command_context_t* command_read(char *buffer, size_t len);
-void command_context_set_header(command_context_t* context, const char* command);
-void command_reply(command_context_t* context, const char* fmt, ...);
-void command_reply_error(command_context_t* context, const char* fmt, ...);
+void command_reply(command_context_t* context, const char* type, const char* fmt, ...);
 char* command_read_more_with_timeout(command_context_t* context, int timeout);
 char* command_read_more(command_context_t* context);
 
