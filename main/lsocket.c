@@ -3984,7 +3984,7 @@ static void connect_command(command_context_t* context)
 
         context->param = (void*) &socket_data;
 
-        socket_data.node   = context->argc > 2 ? strtol(context->argv[2], NULL, 10) : 0;
+        socket_data.node   = context->argc > 2 ? ((strcasecmp(context->argv[2], "bcaddr") == 0) ? BROADCAST_ADDRESS : strtol(context->argv[2], NULL, 10)) : 0;
         socket_data.port   = context->argc > 3 ? strtol(context->argv[3], NULL, 10) : 0;
         int listen_port    = context->argc > 4 ? strtol(context->argv[4], NULL, 10) : 0;
 
