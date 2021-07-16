@@ -269,7 +269,7 @@ void command_reply(command_context_t* context, const char* type, const char *fmt
     va_end (args);
 
     os_acquire_recursive_mutex(command_lock);
-    printf("%s%s\n", (type[0] == "E") ? "Error:" : "", buffer);
+    printf("%s%s\n", (type[0] == 'E') ? "Error:" : "", buffer);
     os_release_recursive_mutex(command_lock);
 }
 
@@ -958,6 +958,7 @@ void CommandProcessor(void* params)
         
                 switch (transaction_command) {
                     /* Special command */
+                    case 'c':
                     case 'C': {
                         /* special case command 'close' terminations current context */
                         if (strcmp(p, "close") == 0) {
@@ -1002,7 +1003,7 @@ void CommandProcessor(void* params)
 
                                             char command_name[20];
                                             snprintf(command_name, sizeof(command_name), "%s_%d", context->argv[0], context->transaction_id);
-                                            context->thread_id = os_create_thread((void (*)(void*)) function, command_name, 8192, 0, (void*) context);
+                                            context->thread_id = os_create_thread((void (*)(void*)) command->function, command_name, 8192, 0, (void*) context);
 
                                             if (context->thread_id == NULL) {
                                                 context->results = -1;
@@ -1023,6 +1024,7 @@ void CommandProcessor(void* params)
                     }
 
                     /* data for previous context */
+                    case 'd':
                     case 'D': {
                         if (context != NULL) {
                             /* Add message to input queue */

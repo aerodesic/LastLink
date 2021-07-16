@@ -3895,6 +3895,8 @@ static void print_sockets(command_context_t* context)
 typedef struct socket_data {
     os_thread_t thread_id;
     int socket;
+    int node;
+    int port;
     int running;
     command_context_t *context;
 } socket_data_t;
@@ -3911,10 +3913,10 @@ static void datagram_reader(void* param)
         /* Read data from socket and echo to terminal */
         char buffer[300];
 
-        int address;
+        int node;
         int port;
 
-        int len = ls_read_with_address(socket_data->socket, buffer, sizeof(buffer) - 1, &address, &port, 500);
+        int len = ls_read_with_address(socket_data->socket, buffer, sizeof(buffer) - 1, &node, &port, 500);
 
         if (len > 0) {
             buffer[len] = '\0';
@@ -3930,7 +3932,7 @@ static void datagram_reader(void* param)
                     nextp = pend + 1;
                 }
 
-                command_reply(context, "D", "%*.*s", (pend - p), (pend - p), p);
+                command_reply(context, "D", "%d:%d:%*.*s", node, port, (pend - p), (pend - p), p);
                 p = nextp;
             }
         }
@@ -3943,28 +3945,34 @@ static void datagram_reader(void* param)
 
 
 #define MAX_SCON_ARGS 3
-/*
- * socket d
- *   -> <nn>:ack
- * <nn>:<address> <port> <data>
- *   -> <nn>:<reply if any>
- * ...
- * <nn>:close
- *   -> <nn>:closed
- */
-
 
 /*
  * This command is spawned.
+ *
+ * socket 'd'
+ *    Open a socket listener and send to specific host/port values.
+ *
+ * socket 'd' <host> <port>
+ *    Open a socket to a specific port/host and listen.
+ *    Outbound data goes to specific destination.
+ *
+ * Note: these are not implemented.
+ * socket 's' port
+ *    Open a listening socket on port <port>
+ *
+ * socket 's' host port
+ *    Connect to host/port
+ *
  */
 static void socket_command(command_context_t* context)
 {
     if (context->argc == 0) {
-        show_help(context, "d", "Connect to datagram socket");
+        show_help(context, "d",                               "Connect to steerable datagram socket");
+        show_help(context, "d <node> <port> [<listen port>]", "Connect to specifid host/port");
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
         show_help(context, "s <node> <port>", "Connect to stream socket");
 #endif
-    } else if (context->argc == 2 && tolower(context->argv[1][0]) == 'd') {
+    } else if (context->argc >= 2 && tolower(context->argv[1][0]) == 'd') {
         /* Create dgcon data instance for connection */
         socket_data_t* socket_data = (socket_data_t*) malloc(sizeof(socket_data_t));
         if (socket_data == NULL) {
@@ -3972,11 +3980,15 @@ static void socket_command(command_context_t* context)
         } else {
             context->param = (void*) socket_data;
 
+            socket_data->node = context->argc > 2 ? strtol(context->argv[2], NULL, 10) : 0;
+            socket_data->port = context->argc > 3 ? strtol(context->argv[3], NULL, 10) : 0;
+            int listen_port   = context->argc > 4 ? strtol(context->argv[4], NULL, 10) : 0;
+
             socket_data->socket = ls_socket(LS_DATAGRAM);
             socket_data->context = context;
 
             if (socket_data->socket >= 0) {
-                int ret = ls_bind(socket_data->socket, 0);
+                int ret = ls_bind(socket_data->socket, listen_port);
                 if (ret >= 0) {
                     /* Spawn a reader socket to echo back input packets to the control */
                     char reader_name[30];
@@ -3990,33 +4002,34 @@ static void socket_command(command_context_t* context)
                         if (message != NULL) {
 //ESP_LOGI(TAG, "%s: message is '%s'", __func__, message);
 
-                            const char* args[MAX_SCON_ARGS];
-                            int nargs = tokenize(message, args, MAX_SCON_ARGS);
+                            char *data = message;
+                            int use_node;
+                            int use_port;
 
-                            // for (int arg = 0; arg < nargs; ++arg) {
-                            //     printf("arg[%d] = '%s'\n", arg, args[arg]);
-                            // }
-
-                            if (nargs >= 2) {
-                                /* Post data to socket */
-                                int address = strtol(args[0], NULL, 10);
-                                int port = strtol(args[1], NULL, 10);
-                    
-                                int rc = ls_connect(socket_data->socket, address, port);
-                    
-                                if (rc >= 0) {
-                                    if (nargs > 2) {
-                                        rc = ls_write(socket_data->socket, args[2], strlen(args[2]));
-                                    } else {
-                                        rc = ls_write(socket_data->socket, "", 0);
-                                    }
-                                }                
-                     
-                                if (rc < 0) {
-                                    command_reply(context, "E", "%d", rc);
-                                }
+                            if (socket_data->node != 0 && socket_data->port != 0) {
+                                /* If we have a node/port then treat enter message as data */
+                                data = message;
+                                use_node = socket_data->node;
+                                use_port = socket_data->port;
                             } else {
-                                command_reply(context, "E", "insufficent params");
+                                /* Else extract node/port from message */
+                                data = skip_blanks(data);
+                                use_node = strtol(data, &data, 10);
+                                data = skip_blanks(data);
+                                use_port = strtol(data, &data, 10);
+                                data = skip_blanks(data);
+                            }
+                    
+                            command_reply(context, "I", "writing to %d/%d: '%s'", use_node, use_port, data);
+ 
+                            int rc = ls_connect(socket_data->socket, use_node, use_port);
+                    
+                            if (rc >= 0) {
+                                rc = ls_write(socket_data->socket, data, strlen(data));
+                            }                
+                     
+                            if (rc < 0) {
+                                command_reply(context, "E", "%d", rc);
                             }
 
                             free((void*) message);
