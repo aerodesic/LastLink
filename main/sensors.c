@@ -199,12 +199,12 @@ static void initialize_all_sensors(void)
     /* Only enable the sensor if we can read it */
     int count = 0;
     dht_value_t dummy;
-    while (count < 5 && (read_rc = dht_read(&dummy, &dummy)) != DHT_OK) { 
+    while (count < 5 && (read_rc = dht_read(&dummy, &dummy)) != DHT_OK) {
         ESP_LOGE(TAG, "%s: error %d reading dht", __func__, read_rc);
         count++;
         os_delay(2500);
     }
- 
+
     if (read_rc == DHT_OK) {
         ESP_LOGI(TAG, "read dht successful - creating sensors");
         /* Add a couple of sensors for testing */
@@ -249,7 +249,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                         char sensor_commands_buf[DATAGRAM_MAX_DATA+1];
                         int sender_address;
                         int sender_port;
-    
+
                         /* Wait for a sensor data request (1 second max and look for termination) */
                         int len = ls_read_with_address(socket, sensor_commands_buf, sizeof(sensor_commands_buf)-1, &sender_address, &sender_port, 1000);
                         if (len > 0) {
@@ -280,7 +280,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                             char *tokens = sensor_commands_buf;
                             char *rest;
                             char *item;
-    
+
                             char *reply_pointer = reply_buffer;
                             int reply_used = 0;
 
@@ -404,14 +404,14 @@ bool register_sensor(const char* name, sensor_type_t type, const char* units, se
             /* Add to table */
             ADD_TO_LIST(&sensor_cache, sensor);
         }
-        
+
         os_release_recursive_mutex(sensor_lock);
 
     } else {
         ESP_LOGE(TAG, "%s: Sensor %s already defined", __func__, name);
     }
 
-    
+
     return sensor != NULL;
 }
 
@@ -508,7 +508,7 @@ static void sensor_command(command_context_t* context)
             os_acquire_recursive_mutex(sensor_lock);
             sensor_cache_t *sensor = lookup_sensor(context->argv[2]);
             if (sensor != NULL) {
-                char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
+                char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH];
                 if (! write_sensor(sensor, context->argv[3], reply_buffer, sizeof(reply_buffer))) {
                     command_reply(context, "D", "set %s error '%s'", context->argv[2], reply_buffer);
                 }
@@ -523,7 +523,7 @@ static void sensor_command(command_context_t* context)
             os_acquire_recursive_mutex(sensor_lock);
             sensor_cache_t *sensor = lookup_sensor(context->argv[2]);
             if (sensor != NULL) {
-                char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH]; 
+                char reply_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH];
                 if (read_sensor(sensor, reply_buffer, sizeof(reply_buffer))) {
                     command_reply(context, "D", "get %s value '%s'", context->argv[2], reply_buffer);
                 } else {

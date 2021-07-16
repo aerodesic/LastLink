@@ -61,7 +61,7 @@ void set_str_value(eval_value_t *value, const char *string)
 
 /*
  * Built-in function definitions
- */ 
+ */
 static built_in_functions_t  built_in_functions;
 
 static built_in_function_t *find_built_in_function(const char *name)
@@ -132,7 +132,7 @@ eval_error_t built_in_function_len(eval_value_t *value, void *context, function_
     }
     return error;
 }
- 
+
 /*
  * defined() built-in function
  *
@@ -154,7 +154,7 @@ printf("%s: defined function parameter type is %d\n", __func__, param->value.typ
 
     return error;
 }
- 
+
 
 /*
  * Monadic operators
@@ -498,7 +498,7 @@ static int hex_char(const char **args)
 {
    int ch1 = *++(*args);
    int ch2 = *++(*args);
-   
+
 //printf("%s: ch1 %02x ch2 %02x\n", __func__, ch1, ch2);
 
    ch1 = tolower(ch1);

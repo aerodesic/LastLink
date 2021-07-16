@@ -743,17 +743,21 @@ void dht_command(command_context_t* context)
 }
 #endif /* CONFIG_DHT_ENABLE */
 
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
 static command_context_t command_contexts[CONFIG_LASTLINK_COMMAND_MAX_CONTEXTS];
+#endif
 
 static command_context_t* find_context(int transaction_id)
 {
     command_context_t* context = NULL;
 
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
     for (int index = 0; context == NULL && index < CONFIG_LASTLINK_COMMAND_MAX_CONTEXTS; ++index) {
         if (command_contexts[index].transaction_id == transaction_id) {
             context = &command_contexts[index];
         }
     }
+#endif
 
     return context;
 }
@@ -790,7 +794,7 @@ static command_context_t* context_create(command_context_t *context, int transac
              * (However, this will probably never be a problem as argc=0 only happens in the case of the 'help'
              * activation of a function and that doesn't happen in 'spawn' mode.
              */
-             
+
 //ESP_LOGI(TAG, "%s: copy %d args for %s", __func__, argc, argv[0]);
 
             int eff_argc = argc ? argc : 1;
@@ -802,7 +806,7 @@ static command_context_t* context_create(command_context_t *context, int transac
             }
 
             char* args = (char*) malloc(size);
- 
+
             if (args != NULL) {
                 /* Where the pointers are stored */
                 context->argv = (const char**) args;
@@ -818,7 +822,7 @@ static command_context_t* context_create(command_context_t *context, int transac
                 }
 
                 /* Store terminating NULL */
-                context->argv[eff_argc] = NULL; 
+                context->argv[eff_argc] = NULL;
             }
         } else {
             context->argv = argv;
@@ -827,7 +831,7 @@ static command_context_t* context_create(command_context_t *context, int transac
             context->input_queue = NULL;
         }
 
-        context->argc = argc;       
+        context->argc = argc;
     }
 
     return context;
@@ -876,6 +880,7 @@ char* command_read_more(command_context_t* context)
 }
 
 
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
 static void contexts_command(command_context_t* context)
 {
     if (context->argc == 0) {
@@ -895,8 +900,9 @@ static void contexts_command(command_context_t* context)
         }
     }
 }
+#endif
 
-   
+
 void CommandProcessor(void* params)
 {
     if (params != NULL) {
@@ -938,12 +944,12 @@ void CommandProcessor(void* params)
                 if (*p == ':' || *p == ' ') {
                     ++p;
                 }
-    
+
                 /* Fetch command field  */
                 const int transaction_command = *p++;
                 if (*p == ':' || *p == ' ') {
                     ++p;
-                } 
+                }
 
                 /* Prepare a context for replying in case no real context or if running a 'once' program */
                 command_context_t once_context = {
@@ -955,7 +961,7 @@ void CommandProcessor(void* params)
                  * If not found, we can only launch a new command.
                  */
                 command_context_t* context = find_context(transaction_id);
-        
+
                 switch (transaction_command) {
                     /* Special command */
                     case 'c':
@@ -1008,7 +1014,7 @@ void CommandProcessor(void* params)
                                             if (context->thread_id == NULL) {
                                                 context->results = -1;
                                                 context_release(context);
-                                            } 
+                                            }
                                         }
                                     }
 
@@ -1035,14 +1041,14 @@ void CommandProcessor(void* params)
                             }
                         } else {
                             command_reply(&once_context, "E", "id");
-                        }      
+                        }
                     }
                 }
 
                 if (transaction_id == 0) {
                     command_reply(&once_context, "E", "id");
                 }
-            } else { 
+            } else {
                 command_reply(NULL, "E", "id");
             }
         }
@@ -1052,58 +1058,74 @@ void CommandProcessor(void* params)
     /* Simple command-line processor */
 
     /* Singleton context - only one command at a time */
-    command_context_t context = {0};
+    command_context_t spawn_context = {0};
+    command_context_t once_context = {0};
 
     while (running) {
         char buffer[100];
 
         /* Print prompt depending on mode of operation */
-        printf(context.transaction_id == 0 ? ">> " : "?? ");
+        printf(spawn_context.transaction_id == 0 ? ">> " : "?? ");
 
         /* Simple command-line action */
         int len = command_read(buffer, sizeof(buffer));
 
+        char *bufp = buffer;
+
         /* When the spawned thread 'releases' the context, the transaction_id will go to 0 thus allowing for another command */
-        if (context.transaction_id == 0) {
+        if (spawn_context.transaction_id == 0 || (len > 0 && *bufp == '!')) {
             if (len > 0) {
+                if (*bufp == '!') {
+                    ++bufp;
+                    --len;
+                }
+
                 /* New command  - look it up, create a context and issue the command */
                 const char* argv[MAX_ARGS];
-                int argc = tokenize(buffer, argv, MAX_ARGS);
+                int argc = tokenize(bufp, argv, MAX_ARGS);
 
                 if (argc >= 1) {
                     command_entry_t *command = find_command(argv[0]);
 
                     if (command != NULL) {
-                        (void) context_create(&context, SIMPLE_TRANSACTION_ID, command->mode == COMMAND_SPAWN, argc, argv);
-
-                        os_acquire_recursive_mutex(command_lock);
-    
-                        if (context.spawned) {
-                            /* A 'spawned' command expects to be durable and run for a while with input
-                             * coming from the command processor.  Launch as a thread.
-                             */
-                            context.thread_id = os_create_thread((void (*)(void*)) command->function, argv[0], 8192, 0, (void*) &context);
-
+                        if (command->mode == COMMAND_SPAWN && spawn_context.transaction_id != 0) {
+                            command_reply(NULL, "E", "command busy");
                         } else {
-                            (*command->function)(&context);
-                            context_release(&context);
+                            command_context_t* context = command->mode == COMMAND_SPAWN ? &spawn_context : &once_context;
+
+                            (void) context_create(context, SIMPLE_TRANSACTION_ID, command->mode == COMMAND_SPAWN, argc, argv);
+
+                            os_acquire_recursive_mutex(command_lock);
+
+                            if (context->spawned) {
+                                /* A 'spawned' command expects to be durable and run for a while with input
+                                 * coming from the command processor.  Launch as a thread.
+                                 */
+                                context->thread_id = os_create_thread((void (*)(void*)) command->function, argv[0], 8192, 0, (void*) context);
+
+                            } else {
+                                (*command->function)(context);
+                                context_release(context);
+                            }
                         }
 
                         os_release_recursive_mutex(command_lock);
+                    } else {
+                        command_reply(NULL, "E", "not found: %s", argv[0]);
                     }
                 }
             }
         } else if (len == -2) {
             char* eof = NULL;
-            if (!os_put_queue_with_timeout(context.input_queue, (os_queue_item_t) &eof, 0)) {
-                command_reply(&context, "E", "input full");
+            if (!os_put_queue_with_timeout(spawn_context.input_queue, (os_queue_item_t) &eof, 0)) {
+                command_reply(&spawn_context, "E", "input full");
             }
         } else if (len > 0) {
             /* Data mode - send data to spawned task */
             char *copy = strdup(buffer);
 
-            if (!os_put_queue_with_timeout(context.input_queue, (os_queue_item_t) &copy, 0)) {
-                command_reply(&context, "E", "input full");
+            if (!os_put_queue_with_timeout(spawn_context.input_queue, (os_queue_item_t) &copy, 0)) {
+                command_reply(&spawn_context, "E", "input full");
                 free((void*) copy);
             }
         }
@@ -1189,7 +1211,9 @@ void init_commands(void)
 #ifdef NOTUSED
     add_command("spawn",       spawn_command,                   COMMAND_SPAWN);
 #endif
+#ifdef CONFIG_LASTLINK_CHECKSUMMED_COMMAND_INTERFACE
     add_command("contexts",    contexts_command,                COMMAND_ONCE);
+#endif
 #ifdef CONFIG_DHT_ENABLE
     add_command("dht",         dht_command,                     COMMAND_ONCE);
 #endif

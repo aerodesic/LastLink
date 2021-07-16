@@ -224,9 +224,9 @@ typedef struct handler_queue_event {
         HQI_INTERRUPT=1,   /* A hardware interrupt */
         HQI_RESET,         /* Reset from hung software */
         HQI_WINDOW,        /* A window */
-    } type; 
+    } type;
     union {
-        handler_state_t state;  
+        handler_state_t state;
         int             window;
     };
 } handler_queue_event_t;
@@ -246,7 +246,7 @@ static void handler_wakeup_timer(os_timer_t timer_id)
     } else {
         if (data->cad_last_interrupts == data->cad_interrupts) {
             /* No CAD interrupts detected in the past few cycles, so reset state via event */
-    
+
             handler_queue_event_t event = {
                 .type = HQI_RESET,
                 .radio = radio,
@@ -501,7 +501,7 @@ static void rx_handle_interrupt(radio_t* radio, sx127x_private_data_t *data)
 int measured = (int) (data->rx_end_time - data->rx_start_time);
 printf("%s: rx msg time: calc %d measured %d delta %d\n", __func__, time_of_flight, measured, time_of_flight - measured);
 #endif /* MEASURE_RX_TIME */
-             
+
                 /* Synchronize window to align to next assumed slot (it is reset inside interval handler) */
                 os_stop_timer(data->window_timer_id);
                 data->window_number = window;
@@ -586,7 +586,7 @@ static bool tx_handle_interrupt(radio_t *radio, sx127x_private_data_t *data)
 
     /* Discard current queue entry */
     if (data->current_packet != NULL) {
-        
+
         priority = (get_uint_field(data->current_packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_PRIORITY) != 0;
 
         data->current_packet->transmitting--;
@@ -875,7 +875,7 @@ static void global_interrupt_handler(void* param)
                                 data->irq_flags &= ~(SX127x_IRQ_RX_TIMEOUT);
                                 data->handler_state = HS_CAD_RESTART;
                             }
-                                 
+
                             break;
                         }
 
@@ -1756,7 +1756,7 @@ static int get_message_time(radio_t* radio, int length)
  * All interrupts come here and are queued for later processing by a global handling thread.
  */
 static void catch_interrupt(void *param)
-{            
+{
     radio_t *radio = (radio_t*) param;
 
     bool awakened;

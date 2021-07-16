@@ -16,13 +16,13 @@
  * Control packets are duplicated, but this could be relaxed by using a holder for the packet
  * until transmitted and retransmissions would just use the same packet and not requeue
  * if not yet transmitted.
- * 
+ *
  * All packets have a 'queued' flag so we can use this to detemine if they are on any radio
  * queue.
  *
  * This needs thought...
  */
- 
+
  /*
  * lsocket.c
  *
@@ -100,6 +100,10 @@
 #include "routes.h"
 #include "packet_window.h"
 #include "tokenize.h"
+
+#ifdef CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
+#include "service_names.h"
+#endif
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
@@ -785,7 +789,7 @@ static ls_socket_t *find_socket_from_packet(const packet_t *packet, ls_socket_ty
             // ESP_LOGI(TAG, "%s: socket src_port %d dest_port %d", __func__, socket_table[index].src_port, dest_port);
             // ESP_LOGI(TAG, "%s: socket dest_port %d src_port %d socket dest_addr %d", __func__, socket_table[index].dest_port, src_port, socket_table[index].dest_addr);
             // ESP_LOGI(TAG, "%s: test 1 %d", __func__, (socket_table[index].src_port == dest_port));
-            // ESP_LOGI(TAG, "%s: test 2 %d", __func__, (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port || socket_table[index].dest_addr == BROADCAST_ADDRESS)); 
+            // ESP_LOGI(TAG, "%s: test 2 %d", __func__, (socket_table[index].dest_port == 0 || socket_table[index].dest_port == src_port || socket_table[index].dest_addr == BROADCAST_ADDRESS));
 
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
             if ( !(socket_table[index].state == LS_STATE_LISTENING) &&
@@ -877,7 +881,9 @@ static bool datagram_packet_process(packet_t *packet)
 
                 /* Send the packet to the datagram input queue */
                 ref_packet(packet);
-                if (!os_put_queue(socket->datagram_packets, (os_queue_item_t) &packet)) {
+
+                /* If no connection (yet) or failed to queue, release the packet. */
+                if (socket->datagram_packets == NULL || !os_put_queue(socket->datagram_packets, (os_queue_item_t) &packet)) {
                     release_packet(packet);
                 }
                 UNLOCK_SOCKET(socket);
@@ -989,7 +995,7 @@ static packet_t *stream_packet_create_from_socket_cached(ls_socket_t *socket, ui
 
         /* Create a new one */
         socket->packet_cache[cmd] = stream_packet_create_from_socket(socket, flags, sequence);
-        
+
         packet_set_transmitted_callback(socket->packet_cache[flags & STREAM_FLAGS_CMD], stream_control_packet_transmit_complete, (void*) socket);
     } else {
         /* Add flags and sequence to this packet */
@@ -1009,7 +1015,7 @@ static packet_t *stream_packet_create_from_socket_cached(ls_socket_t *socket, ui
 
     return ref_packet(socket->packet_cache[cmd]);
 }
-  
+
 static void stream_shutdown_windows(ls_socket_t *socket)
 {
     packet_window_shutdown_window(socket->input_window);
@@ -1055,7 +1061,7 @@ static void stream_send_keepalive(ls_socket_t *socket)
 static void stream_send_connect_ack(ls_socket_t *socket)
 {
     packet_t * packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_CONNECT_ACK, 0);
-    linklayer_route_packet(packet); 
+    linklayer_route_packet(packet);
     packet_unlock(packet);
 }
 
@@ -1063,7 +1069,7 @@ static void stream_send_connect_ack(ls_socket_t *socket)
 static void stream_send_disconnect(ls_socket_t *socket)
 {
     packet_t *packet =stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECT, 0);
-    linklayer_route_packet(packet); 
+    linklayer_route_packet(packet);
     packet_unlock(packet);
 }
 #endif /* NOTUSED */
@@ -1071,7 +1077,7 @@ static void stream_send_disconnect(ls_socket_t *socket)
 static void stream_send_disconnected(ls_socket_t *socket)
 {
     packet_t * packet = stream_packet_create_from_socket_cached(socket, STREAM_FLAGS_CMD_DISCONNECTED, 0);
-    linklayer_route_packet(packet); 
+    linklayer_route_packet(packet);
     packet_unlock(packet);
 }
 
@@ -2132,7 +2138,7 @@ ls_error_t ls_connect(int s, ls_address_t address, ls_port_t port)
                                     -1,                                     /* Use action time to calculate delay */
                                     STREAM_CONNECT_RETRIES);                /* Try this many times */
 
-    
+
                 UNLOCK_SOCKET(socket);
 
                 /* A response of some kind will be forthcoming.  It will be NO_ERROR or some other network error */
@@ -3209,7 +3215,7 @@ ls_error_t ls_get_src_port(int s)
         err = LSE_INVALID_SOCKET;
     }
 
-    return err; 
+    return err;
 }
 
 static ls_error_t ls_dump_socket_ptr(command_context_t* context, const char* msg, const ls_socket_t *socket)
@@ -3323,7 +3329,7 @@ static void socket_scanner_thread(void* param)
     while (true) {
 
         socket_scanner_running++;
- 
+
         uint32_t next_time = SOCKET_SCANNER_DEFAULT_INTERVAL;
 
         for (int socket_index = 0; socket_index < ELEMENTS_OF(socket_table); ++socket_index) {
@@ -3922,7 +3928,7 @@ static void datagram_reader(void* param)
             buffer[len] = '\0';
             const char *p = buffer;
             while (p != NULL) {
-                const char *pend = strchr(p, '\n');            
+                const char *pend = strchr(p, '\n');
                 const char *nextp;
 
                 if (pend == NULL) {
@@ -3949,22 +3955,22 @@ static void datagram_reader(void* param)
 /*
  * This command is spawned.
  *
- * socket 'd'
+ * connect 'd'
  *    Open a socket listener and send to specific host/port values.
  *
- * socket 'd' <host> <port>
+ * connect 'd' <host> <port>
  *    Open a socket to a specific port/host and listen.
  *    Outbound data goes to specific destination.
  *
  * Note: these are not implemented.
- * socket 's' port
+ * connect 's' port
  *    Open a listening socket on port <port>
  *
- * socket 's' host port
+ * connect 's' host port
  *    Connect to host/port
  *
  */
-static void socket_command(command_context_t* context)
+static void connect_command(command_context_t* context)
 {
     if (context->argc == 0) {
         show_help(context, "d",                               "Connect to steerable datagram socket");
@@ -3974,27 +3980,57 @@ static void socket_command(command_context_t* context)
 #endif
     } else if (context->argc >= 2 && tolower(context->argv[1][0]) == 'd') {
         /* Create dgcon data instance for connection */
-        socket_data_t* socket_data = (socket_data_t*) malloc(sizeof(socket_data_t));
-        if (socket_data == NULL) {
-            command_reply(context, "E", "out of memory");
+        socket_data_t socket_data = {0};
+
+        context->param = (void*) &socket_data;
+
+        socket_data.node   = context->argc > 2 ? strtol(context->argv[2], NULL, 10) : 0;
+        socket_data.port   = context->argc > 3 ? strtol(context->argv[3], NULL, 10) : 0;
+        int listen_port    = context->argc > 4 ? strtol(context->argv[4], NULL, 10) : 0;
+
+#ifdef CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
+        const char* service = context->argc > 5 ? context->argv[5] : NULL;
+        if (service != NULL) {
+            command_reply(context, "I", "node %d port %d listen port %d service %s", socket_data.node, socket_data.port, listen_port, service);
         } else {
-            context->param = (void*) socket_data;
+            command_reply(context, "I", "node %d port %d listen port %d", socket_data.node, socket_data.port, listen_port);
+        }
+#else
+        command_reply(context, "I", "node %d port %d listen port %d", socket_data.node, socket_data.port, listen_port);
+#endif
 
-            socket_data->node = context->argc > 2 ? strtol(context->argv[2], NULL, 10) : 0;
-            socket_data->port = context->argc > 3 ? strtol(context->argv[3], NULL, 10) : 0;
-            int listen_port   = context->argc > 4 ? strtol(context->argv[4], NULL, 10) : 0;
 
-            socket_data->socket = ls_socket(LS_DATAGRAM);
-            socket_data->context = context;
+        socket_data.socket = ls_socket(LS_DATAGRAM);
+        socket_data.context = context;
 
-            if (socket_data->socket >= 0) {
-                int ret = ls_bind(socket_data->socket, listen_port);
+        if (socket_data.socket >= 0) {
+            int ret = ls_bind(socket_data.socket, listen_port);
+            if (ret >= 0) {
+                /* Spawn a reader socket to echo back input packets to the control */
+                char reader_name[30];
+                snprintf(reader_name, sizeof(reader_name), "datagram_reader_%d", context->transaction_id);
+                socket_data.thread_id = os_create_thread(datagram_reader, reader_name, 4095, 0, (void*) &socket_data);
+
+                /* If we have a node or port, do the connect now */
+                if (socket_data.node != 0 || socket_data.port != 0) {
+                    ret = ls_connect(socket_data.socket, socket_data.node, socket_data.port);
+                    if (ret < 0) {
+                        command_reply(context, "E", "connect failed %d", ret);
+                    } else {
+                        command_reply(context, "I", "connected to %d/%d", socket_data.node, socket_data.port);
+                    }
+                }
+#ifdef CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
+                if (service != NULL) {
+                     if (register_service(service, socket_data.socket, 120)) {
+                         command_reply(context, "I", "service registered");
+                     } else {
+                         command_reply(context, "E", "service not registered");
+                     }
+                }
+#endif
+
                 if (ret >= 0) {
-                    /* Spawn a reader socket to echo back input packets to the control */
-                    char reader_name[30];
-                    snprintf(reader_name, sizeof(reader_name), "datagram_reader_%d", context->transaction_id);
-                    socket_data->thread_id = os_create_thread(datagram_reader, reader_name, 4095, 0, (void*) socket_data);
-
                     /* Enter read loop from command processor and decode commands */
                     while (!context_check_termination_request(context)) {
                         char *message = command_read_more_with_timeout(context, -1);
@@ -4003,33 +4039,37 @@ static void socket_command(command_context_t* context)
 //ESP_LOGI(TAG, "%s: message is '%s'", __func__, message);
 
                             char *data = message;
-                            int use_node;
-                            int use_port;
 
-                            if (socket_data->node != 0 && socket_data->port != 0) {
-                                /* If we have a node/port then treat enter message as data */
-                                data = message;
-                                use_node = socket_data->node;
-                                use_port = socket_data->port;
-                            } else {
+                            if ((socket_data.node == 0 && socket_data.port == 0) || service != NULL) {
                                 /* Else extract node/port from message */
                                 data = skip_blanks(data);
-                                use_node = strtol(data, &data, 10);
+                                int use_node = strtol(data, &data, 10);
+                                if (*data == ':') {
+                                    ++data;
+                                    }
                                 data = skip_blanks(data);
-                                use_port = strtol(data, &data, 10);
+                                int use_port = strtol(data, &data, 10);
+                                if (*data == ':') {
+                                    ++data;
+                                }
                                 data = skip_blanks(data);
+                                if (*data == ':') {
+                                    ++data;
+                                }
+                                ret = ls_connect(socket_data.socket, use_node, use_port);
+                                if (ret < 0) {
+                                    command_reply(context, "E", "connect failed %d; nothing written", ret);
+                                } else {
+                                    command_reply(context, "I", "writing to %d/%d: '%s'", use_node, use_port, data);
+                                }
                             }
-                    
-                            command_reply(context, "I", "writing to %d/%d: '%s'", use_node, use_port, data);
- 
-                            int rc = ls_connect(socket_data->socket, use_node, use_port);
-                    
-                            if (rc >= 0) {
-                                rc = ls_write(socket_data->socket, data, strlen(data));
-                            }                
-                     
-                            if (rc < 0) {
-                                command_reply(context, "E", "%d", rc);
+
+                            if (ret >= 0) {
+                                ret = ls_write(socket_data.socket, data, strlen(data));
+                            }
+
+                            if (ret < 0) {
+                                command_reply(context, "E", "%d", ret);
                             }
 
                             free((void*) message);
@@ -4038,30 +4078,30 @@ static void socket_command(command_context_t* context)
                             context->terminate = true;
                         }
                     }
-
-                    /* Close down connection server */
-                    socket_data->running = -1;
-                    while (socket_data->running != 0) {
-                        os_delay(100);
-                    }
-                    ls_close(socket_data->socket);
-                    socket_data->thread_id = NULL; 
-
-                    command_reply(context, "D", "closed");
-
-                    if (context->param != NULL) {
-                        free(context->param);
-                        context->param = NULL;
-                    }
-
-                } else {
-                    command_reply(context, "E", "bind failed");
                 }
-            } else {
-                command_reply(context, "E", "socket failed");
-            }
 
+                /* Close down connection server */
+                socket_data.running = -1;
+                while (socket_data.running != 0) {
+                    os_delay(100);
+                }
+                ls_close(socket_data.socket);
+                socket_data.thread_id = NULL;
+
+                command_reply(context, "D", "closed");
+                context->param = NULL;
+            } else {
+                command_reply(context, "E", "bind failed");
+            }
+        } else {
+            command_reply(context, "E", "socket failed");
         }
+
+#ifdef CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
+        if (service != NULL) {
+            deregister_service(service);
+        }
+#endif
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS
     } else if (context->argc == 4 && tolower(context->argv[1][0]) == 's') {
         command_reply(context, "E", "not implemented");
@@ -4132,7 +4172,7 @@ ls_error_t ls_socket_init(void)
         err = LSE_CANNOT_REGISTER;
     }
 
-    add_command("socket",     socket_command,       COMMAND_SPAWN);
+    add_command("connect",    connect_command,     COMMAND_SPAWN);
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
     add_command("dgsend",     dgsend_command,      COMMAND_SPAWN);
 #if CONFIG_LASTLINK_ENABLE_SOCKET_STREAMS

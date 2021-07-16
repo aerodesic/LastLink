@@ -271,7 +271,7 @@ const char* get_pathname_from_uri(const char *uri, const char *prefixdir, char *
         if (strchr(temp_buffer, '.') == NULL) {
             strcat(temp_buffer, ".html");
         }
- 
+
 ESP_LOGI(TAG, "%s: '%s' -> '%s'", __func__, uri, temp_buffer);
 
         int fd = open(temp_buffer, O_RDONLY);
@@ -306,7 +306,7 @@ const char *get_pathname_from_file(const char *filename, char *temp_buffer, size
         }
     }
 
-    return pathname; 
+    return pathname;
 }
 
 void release_text_buffer(text_buffer_t *text_buffer)
@@ -399,12 +399,12 @@ bool replace_text(text_buffer_t *text_buffer, size_t item_size, const char *repl
     bool ret = true;
 
     size_t replace_len = strlen(replaced);
-    
+
 //ESP_LOGI(TAG, "%s: replacing %d with %d characters at position %d", __func__, item_size, replace_len, text_buffer->current - text_buffer->base);
 
     /* We found a var to replace; replace the text here with var value */
     int needed = replace_len - item_size;
-    
+
     /* If needed > 0 then we may need to expand the area */
     if (needed > 0) {
         /* Difference between len and used is the room currently available */
@@ -427,7 +427,7 @@ bool replace_text(text_buffer_t *text_buffer, size_t item_size, const char *repl
 ESP_LOGI(TAG, "%s: resize failed", __func__);
             }
         }
-    
+
         /* Need to make room - make sure we succeeded if allocation was requred */
         if (needed <= (text_buffer->len - text_buffer->used)) {
             /* Move text down to make a bigger hole */
@@ -448,11 +448,11 @@ ESP_LOGI(TAG, "%s: resize failed", __func__);
     } else {
         /* Just right; nothing to move */
     }
-    
+
     if (ret) {
         memcpy(text_buffer->current, replaced, replace_len);
     }
- 
+
     return ret;
 }
 
@@ -497,7 +497,7 @@ static bool is_include_in_use(session_context_t *session, const char *filename)
         found = strcmp(item->filename, filename) == 0;
     }
 
-    return found; 
+    return found;
 }
 
 static void post_include_error(session_context_t *session, text_buffer_t *text_buffer, size_t item_size, const char* func, const char *msg, const char *filename)
@@ -507,7 +507,7 @@ static void post_include_error(session_context_t *session, text_buffer_t *text_b
     const char* current_file;
     if (NUM_IN_LIST(session->include_stack) == 0) {
         current_file = "NONE";
-    } else { 
+    } else {
         current_file = ((include_stack_item_t*) LAST_LIST_ITEM(session->include_stack))->filename;
     }
 
@@ -615,7 +615,7 @@ static bool do_commands(text_buffer_t *text_buffer, session_context_t *session)
                 /* Fetch keyword of the string */
                 const char *raw_argp = raw_args;
                 char temp_arg0[HTTPD_MAX_KEYWORD_LEN + 1];
-     
+
                 const char *argv0 = fetch_symbol(&raw_argp, temp_arg0, sizeof(temp_arg0));
 
                 command_item_t *command = find_command(argv0);
@@ -716,7 +716,7 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
                 if (! replace_text(text_buffer, item_size, local_text_buffer.base)) {
                     ESP_LOGI(TAG, "%s: replace failed", __func__);
                 }
-            
+
                release_text_buffer(&local_text_buffer);
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
@@ -730,7 +730,7 @@ bool read_template(text_buffer_t *text_buffer, size_t item_size, const char *fil
             post_include_error(session, text_buffer, item_size, __func__, "No file", filename);
         }
     }
- 
+
     return true;
 }
 
@@ -929,7 +929,7 @@ static bool command_if(text_buffer_t *text_buffer, size_t item_size, session_con
                     /* An elseif - change to 'if' */
                     char *elseif = find_string(if_boundaries.else_begin, "elseif");
                     if (elseif != NULL) {
-                        text_buffer->current = elseif;            
+                        text_buffer->current = elseif;
                         /* Turn elseif into if */
                         replace_text(text_buffer, 6, "if");
                         text_buffer->current = current;

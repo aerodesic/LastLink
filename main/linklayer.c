@@ -133,7 +133,7 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
 // #define SPI_GPIO_RESET     7
 // #define SPI_GPIO_ACTIVITY  8
 // #define SPI_NUM_GPIO       9
-// 
+//
 // #define MAX_RADIO_GPIO     SPI_NUM_GPIO
 
 #define RADIO_CONFIG_EXPAND(name_begin, radio, name_end) name_begin##_##radio##_##name_end
@@ -406,7 +406,7 @@ packet_t* beacon_packet_create(const char* name, bool reset_sequence)
             set_bits_field(packet, HEADER_FLAGS, FLAGS_LEN, HEADER_FLAGS_RESET_SEQUENCE);
         } else {
             /* Large metric so it doesn't get retransmitted */
-            set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC); 
+            set_int_field(packet, HEADER_METRIC, METRIC_LEN, MAX_METRIC);
         }
         set_str_field(packet, BEACON_NAME, length, name);
         //int moved = set_str_field(packet, BEACON_NAME, length, name);
@@ -1362,7 +1362,7 @@ static void linklayer_receive_packet(packet_t* packet)
     os_put_queue(receive_queue, (os_queue_item_t) &packet);
 }
 
-    
+
 static void linklayer_process_received_packets(void *param)
 {
     packet_t *packet;
@@ -1404,7 +1404,7 @@ static void linklayer_process_received_packets(void *param)
                     ((routeto == linklayer_node_address || routeto == BROADCAST_ADDRESS || dest == linklayer_node_address || dest == BROADCAST_ADDRESS)
                               && origin != linklayer_node_address)) {
 
-                    if ((get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_RESET_SEQUENCE) != 0) {    
+                    if ((get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN) & HEADER_FLAGS_RESET_SEQUENCE) != 0) {
                         /* Any sequence number will do for next sequence */
                         reset_duplicate(&duplicate_sequence_numbers, origin);
                     }
@@ -1424,7 +1424,7 @@ if (debug_flag) {
     linklayer_print_packet("IN", packet);
 }
                         bool handled = false;
-    
+
                         /* Update route table */
                         update_route(packet->radio_num,
                                      origin,                                                               /* This is the destination */
@@ -1433,19 +1433,19 @@ if (debug_flag) {
                                      origin,                                                               /* Route provided by this node */
                                      get_uint_field(packet, HEADER_SEQUENCE_NUMBER, SEQUENCE_NUMBER_LEN),  /* Suppliers sequence number */
                                      get_uint_field(packet, HEADER_FLAGS, FLAGS_LEN));                     /* Suppliers flags */
-    
+
                         /* Try to process the packet by the protocol field */
                         int protocol = get_uint_field(touch_packet(packet), HEADER_PROTOCOL, PROTOCOL_LEN);
-    
+
                         /* Is it a valid protocol? */
                         if (protocol >= 0 && protocol < ELEMENTS_OF(protocol_table)) {
                             /* Does it have a process function? */
                             if (protocol_table[protocol].process != NULL) {
                                 ++packet_processed;  /* It is processed */
-    
+
                                 /* Perform the processing and remember if we did something local */
                                 handled = protocol_table[protocol].process(ref_packet(packet));
-    
+
                             } else {
                                 linklayer_print_packet("NOT REGISTERED", packet);
                                 //ESP_LOGE(TAG, "%s: protocol not registered: %d", __func__, protocol);
@@ -1456,7 +1456,7 @@ if (debug_flag) {
                             //ESP_LOGE(TAG, "%s: bad protocol: %d", __func__, protocol);
                             handled = true;
                         }
-    
+
                         /* If the packet was not handled, see how to forward on */
                         if (!handled) {
                             /* If routed to this node, then send onward by routing or rebroadcasting */
@@ -1465,7 +1465,7 @@ if (debug_flag) {
                                 if (routeto != BROADCAST_ADDRESS) {
                                     set_uint_field(touch_packet(packet), HEADER_ROUTETO_ADDRESS, ADDRESS_LEN, NULL_ADDRESS);
                                 }
-    
+
                                 (void) linklayer_route_packet_update_metric(ref_packet(packet));
                             }
                         }

@@ -81,7 +81,7 @@ bool set_var(var_list_t *varlist, const char *name, const char *value)
 void free_var_list(void *param)
 {
     var_list_t *varlist = (var_list_t*) param;
- 
+
     while (NUM_IN_LIST(varlist) != 0) {
        var_item_t *item = (var_item_t *) FIRST_LIST_ITEM(varlist);
        REMOVE_FROM_LIST(varlist, item);
@@ -100,7 +100,7 @@ var_list_t *create_var_list(void)
 {
     var_list_t *varlist = (var_list_t*) malloc(sizeof(var_list_t));
     if (varlist != NULL) {
-        INIT_LIST(varlist); 
+        INIT_LIST(varlist);
     }
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK

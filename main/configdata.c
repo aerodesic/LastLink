@@ -113,7 +113,7 @@ static esp_err_t release_config(configitem_t* item)
             if (item->owner->head == item) {
                 item->owner->head = NULL;
             }
-        } 
+        }
 
         /* Free the name */
 //ESP_LOGI(TAG, "%s: releasing %s", __func__, item->name);
@@ -507,11 +507,11 @@ static configitem_t* find_config_entry(const char* name, configitem_t* section, 
                 field = NULL;
             }
         } while (field != NULL);
-             
+
         if (found != NULL) {
             /* Turn last found into a VALUE */
             found->type = CONFIG_VALUE;
-            found->value = strdup(""); 
+            found->value = strdup("");
         }
     }
 
@@ -557,7 +557,7 @@ int get_config_int(const char* field, int defvalue)
 bool set_config_str(const char* field, const char* value)
 {
     configitem_t* item = find_config_entry(field, &config_table, true);
-    
+
     if (item != NULL) {
         if (strcmp(item->value, value) != 0) {
             free((void*) (item->value));
@@ -566,7 +566,7 @@ bool set_config_str(const char* field, const char* value)
 //dump_cells("after set", &config_table, 0);
         }
     }
-  
+
     return item != NULL;
 }
 

@@ -85,7 +85,7 @@ int main(int argc, char** argv)
             printf("arg[%d] = '%s'\n", arg, args[arg]);
         }
     }
- 
+
     return 0;
 }
 #endif /*TESTING*/

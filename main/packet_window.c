@@ -183,7 +183,7 @@ void packet_window_release(packet_window_t *window)
         }
 
         packet_window_unlock(window);
-    
+
         os_delete_mutex(window->lock);
 
         free((void*) window);
@@ -233,7 +233,7 @@ bool packet_window_add_sequential_packet(packet_window_t *window, packet_t *pack
 
             /* And the slot is not in use */
             assert(!window->queue[window->next_in_queue].inuse);
-        
+
             /* Allocate a sequence number for this packet */
             int sequence = window->sequence + window->next_in_queue;
 
@@ -252,7 +252,7 @@ bool packet_window_add_sequential_packet(packet_window_t *window, packet_t *pack
 
             /* Keep track of how many packets are in queue */
             window->num_in_queue++;
- 
+
             packet_window_unlock(window);
 
             success = true;
@@ -467,7 +467,7 @@ bool packet_window_get_processed_packets(packet_window_t *window, int *sequence,
             bit <<= 1;
             ++slot;
         }
-    
+
         packet_window_unlock(window);
     }
 
@@ -490,13 +490,13 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
     if (window != NULL) {
 
         packet_window_lock(window);
-    
+
         /* Remove all directly acknowledged packets */
         while (window->queue[0].inuse && window->queue[0].sequence < sequence) {
 //printf("%s: removed from slot 0: %d\n", __func__, window->queue[0].sequence);
             packet_window_discard_top_packet(window);
         }
-   
+
         /* Go through the remaining inuse items and acknowledge them according to the packet mask */
         int ack_sequence = sequence;
         while (packet_mask != 0) {
@@ -505,7 +505,7 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
                 bool found = false;
 
                 /* TODO: It might be smarter to go through this sequentially rather than starting from the top each time... */
-                for (int slot = 1; !found && slot < window->length; ++slot) {        
+                for (int slot = 1; !found && slot < window->length; ++slot) {
 
                     if (window->queue[slot].inuse && window->queue[slot].sequence == ack_sequence) {
                         found = true;
@@ -514,7 +514,7 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
                         if (window->queue[slot].packet != NULL) {
 //printf("%s: removed from slot %d: %d\n", __func__, slot, window->queue[slot].sequence);
                             release_packet(window->queue[slot].packet);
-    
+
                             /* Count the packet as processed (but leave slot 'in use') */
                             window->queue[slot].packet = NULL;
 
@@ -539,7 +539,7 @@ int packet_window_release_processed_packets(packet_window_t *window, int sequenc
         }
 
         assert(packet_mask == 0);
-    
+
         packet_window_unlock(window);
     }
 
@@ -733,7 +733,7 @@ int run_packet_window_test(command_context_t* context)
                     set_uint_field(packet, STREAM_SEQUENCE, SEQUENCE_NUMBER_LEN, sequence);
                     packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", sequence);
 
-                    
+
                     int pwa_results = packet_window_add_random_packet(window, packet);
 
                     if (pwa_results < 0) {
@@ -771,7 +771,7 @@ int run_packet_window_test(command_context_t* context)
                     set_uint_field(packet, HEADER_PROTOCOL, PROTOCOL_LEN, STREAM_PROTOCOL);
                     packet->length += sprintf((char*) (packet->buffer + packet->length), "Packet %d", count);
 
-                    
+
                     if (!packet_window_add_sequential_packet(window, packet, -1)) {
                         printf("%s: failed to insert sequential  %d\n", __func__, count);
                     } else {

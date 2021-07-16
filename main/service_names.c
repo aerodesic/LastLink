@@ -318,7 +318,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
  *    src_port             pointer to return port number of service
  *    dest_addr            pointer to return node address receiving service notifications
  *    dest_port            pointer to return port address receiving service notifications
- *                        
+ *
  * Returns LSE_NO_ERROR if found and values returned otherwise ls_error_t.
  */
 ls_error_t find_service(const char* name, ls_address_t src_addr, ls_socket_type_t *socket_type, ls_port_t* src_port, ls_address_t* dest_addr, ls_port_t* dest_port)
@@ -483,7 +483,7 @@ static void service_table_commands(command_context_t* context)
             if (find_service(context->argv[1], addresses[index], &socket_type, &src_port, &dest_addr, &dest_port) == LSE_NO_ERROR) {
                 command_reply(context, "D", "Service %s found source %d/%d dest %d/%d type %d", context->argv[1], addresses[index], src_port, dest_addr, dest_port, socket_type);
             } else {
-                command_reply(context, "D", "Service %s not found", context->argv[1]);
+                command_reply(context, "E", "Service %s not found", context->argv[1]);
             }
 
             if (addresses_found > MAX_ADDRESSES_IN_SEARCH) {

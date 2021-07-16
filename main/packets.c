@@ -422,7 +422,7 @@ bool packet_lock(packet_t *packet)
         }
 
         success = packet->locked == os_current_thread();
-            
+
         packet_global_unlock();
 
     } else {

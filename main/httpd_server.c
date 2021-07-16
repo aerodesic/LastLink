@@ -52,7 +52,7 @@ typedef list_head_t  authtoken_list_t;
 
 authtoken_list_t     authtoken_list;
 os_mutex_t           authtoken_lock;
-    
+
 static authtoken_t *check_authtoken_expired(authtoken_t *token)
 {
     if (token != NULL && simpletimer_is_expired(&token->expiretime)) {
@@ -105,7 +105,7 @@ static void release_authtoken_list(void)
         authtoken_t *token = (authtoken_t*) FIRST_LIST_ITEM(&authtoken_list);
         REMOVE_FROM_LIST(&authtoken_list, token);
         free((void*) token);
-    } 
+    }
 
     os_release_recursive_mutex(authtoken_lock);
 }
@@ -289,14 +289,14 @@ ESP_LOGI(TAG, "%s: authtoken '%s' new '%s' for username '%s'", __func__, session
                 if (session->private_context != NULL) {
                     free((void*) session->private_context);
                 }
-           
+
                 /* This might not be necessary ... */
                 session->private_context = strdup(authtoken->token);
 
                 set_session_var(session, "authtoken", authtoken->token);
             }
 
-            set_session_var(session, "username", authtoken->username);  
+            set_session_var(session, "username", authtoken->username);
         }
     }
 
@@ -468,7 +468,7 @@ ESP_LOGI(TAG, "%s: uri '%s'", __func__, req->uri);
 
         if (authenticate(username, password, user_token)) {
 
-            set_session_var(session, "username", username);  
+            set_session_var(session, "username", username);
 
             delete_session_var(session, "error");
 
@@ -493,7 +493,7 @@ ESP_LOGD(TAG, "%s: user_token %s", __func__, user_token);
   #endif
         httpd_resp_set_hdr(req, "Set-Cookie", cookie);
 
-        next_uri = "/"; 
+        next_uri = "/";
     } else {
         cookie = NULL;
         next_uri = "/login";
