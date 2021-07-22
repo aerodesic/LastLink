@@ -31,7 +31,8 @@ static bool spi_deinit(radio_t* radio);
 static bool spi_write_register(radio_t* radio, int reg, int data);
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len);
 static int spi_read_register(radio_t* radio, int reg);
-static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* bufer, int len);
+static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len);
+static bool spi_transact(radio_t* radio, uint8_t command, int address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
 
 #define NUM_PER_LINE 32
 void dump_buffer(const char* ident, const uint8_t* buffer, int len)
@@ -73,6 +74,7 @@ bool io_init(radio_t* radio, const radio_config_t* config)
     radio->transmit_windows = config->transmit_windows;
     radio->window_width_percent = config->window_width_percent;
     radio->cad_restart_delay = config->cad_restart_delay;
+    radio->model = config->model;
 
     /* Do specific I/O initialization */
     if (strcmp(config->type, "spi") == 0) {
@@ -131,6 +133,7 @@ static bool spi_init(radio_t* radio, const radio_config_t* config)
             radio->write_register = spi_write_register;
             radio->read_buffer = spi_read_buffer;
             radio->write_buffer = spi_write_buffer;
+            radio->io_transact = spi_transact;
             radio->bus_deinit = spi_deinit;
 
             ESP_LOGI(TAG, "%s spi is %p", __func__, spi);
@@ -251,6 +254,34 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
     //if (ok) {
     //    dump_buffer("Read", buffer, len);
     //}
+
+    return ok;
+}
+
+static bool spi_transact(radio_t* radio, uint8_t command, int address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
+{
+    bool ok;
+
+    spi_transaction_ext_t t;
+
+    memset(&t, 0, sizeof(t));
+    t.base.addr = command,
+    t.base.length = 8*outlen;
+    t.base.rxlength = 8*inlen;
+    t.base.tx_buffer = outbuffer;
+    t.base.rx_buffer = inbuffer;
+
+    if (address >= 0) {
+        /* When supplying an extra address, we make it variable mode and change
+         * the addr to a 24 bit number, adding the address field as the second 8 bit
+         * field and the remaining 8 bits dummy.
+         */
+        t.base.flags |= SPI_TRANS_VARIABLE_ADDR;
+        t.base.addr = t.base.addr << 16 | address << 8;
+        t.address_bits = 8*24;
+    }
+
+    ok = spi_device_transmit(radio->spi, (spi_transaction_t*) &t) == ESP_OK;
 
     return ok;
 }

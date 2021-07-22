@@ -138,10 +138,11 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
 
 #define RADIO_CONFIG_EXPAND(name_begin, radio, name_end) name_begin##_##radio##_##name_end
 
-#define RADIO_CONFIG_SPI(radio, module) \
+#define RADIO_CONFIG_SPI(radio, module, model_name) \
     { \
     .type                            = "spi",                                                                            \
     .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .model                           = model_name,                                                                       \
     .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
     .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
     .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
@@ -163,10 +164,11 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dma_chan                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DMA_CHAN),                      \
    },
 
-#define RADIO_CONFIG_I2C(radio, module) \
+#define RADIO_CONFIG_I2C(radio, module, model_name) \
     { \
     .type                            = "i2c",                                                                            \
     .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .model                           = model_name,                                                                       \
     .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
     .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
     .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
@@ -182,10 +184,11 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .i2c_blah2                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),                     \
    },
 
-#define RADIO_CONFIG_SERIAL(radio, module) \
+#define RADIO_CONFIG_SERIAL(radio, module, model_name) \
     { \
     .type                            = "serial",                                                                         \
     .radio_type                      = RADIO_CONFIG_EXPAND(RADIO_IS, module, DEVICE),                                    \
+    .model                           = model_name                                                                        \
     .crystal                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CRYSTAL),                       \
     .channel                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, CHANNEL),                       \
     .datarate                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, DATARATE),                      \
@@ -201,61 +204,76 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
    },
 
 static const radio_config_t radio_config[] = {
-
 #if defined(CONFIG_LASTLINK_RADIO_1_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_1_SX126x_SPI)
-    RADIO_CONFIG_SPI(1, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_1_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_1_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_1_SX127x_SPI)
-    RADIO_CONFIG_SPI(1, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_2_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_2_SX126x_SPI)
-    RADIO_CONFIG_SPI(2, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_2_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_2_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_2_SX127x_SPI)
-    RADIO_CONFIG_SPI(2, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_3_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_3_SX126x_SPI)
-    RADIO_CONFIG_SPI(3, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_3_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_3_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_3_SX127x_SPI)
-    RADIO_CONFIG_SPI(3, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_4_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_4_SX126x_SPI)
-    RADIO_CONFIG_SPI(4, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_4_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_4_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_4_SX127x_SPI)
-    RADIO_CONFIG_SPI(4, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_5_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_5_SX126x_SPI)
-    RADIO_CONFIG_SPI(5, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_5_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_5_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_5_SX127x_SPI)
-    RADIO_CONFIG_SPI(5, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_6_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_6_SX126x_SPI)
-    RADIO_CONFIG_SPI(6, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_6_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_6_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_6_SX127x_SPI)
-    RADIO_CONFIG_SPI(6, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_7_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_7_SX126x_SPI)
-    RADIO_CONFIG_SPI(7, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_7_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_7_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_7_SX127x_SPI)
-    RADIO_CONFIG_SPI(7, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 #if defined(CONFIG_LASTLINK_RADIO_8_ENABLED)
-  #if defined(CONFIG_LASTLINK_RADIO_8_SX126x_SPI)
-    RADIO_CONFIG_SPI(8, SX126x)
+  #if defined(CONFIG_LASTLINK_RADIO_8_SX1261_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1261")
+  #elif defined(CONFIG_LASTLINK_RADIO_8_SX1262_SPI)
+    RADIO_CONFIG_SPI(1, SX126x, "1262")
   #elif defined(CONFIG_LASTLINK_RADIO_8_SX127x_SPI)
-    RADIO_CONFIG_SPI(8, SX127x)
+    RADIO_CONFIG_SPI(1, SX127x, "127x")
   #endif
 #endif
 };

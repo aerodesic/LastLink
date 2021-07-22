@@ -10,7 +10,7 @@
 COMPONENT_EXTRA_CLEAN := $(COMPONENT_PATH)/*_table.h
 
 %_table.h:
-	# echo "Buildint channel table for $(notdir $(patsubst %_table.h,%,$(@)))"
+	echo ${COMPONENT_PATH}/generate_channel_table.py ${COMPONENT_PATH}/${CONFIG_LASTLINK_CHANNEL_TABLE}.channels -d $(notdir $(patsubst %_table.h,%,$(@))) -o $@
 	${COMPONENT_PATH}/generate_channel_table.py ${COMPONENT_PATH}/${CONFIG_LASTLINK_CHANNEL_TABLE}.channels -d $(notdir $(patsubst %_table.h,%,$(@))) -o $@
 
 

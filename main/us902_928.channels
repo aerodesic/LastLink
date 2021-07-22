@@ -7,7 +7,7 @@
 # Define the device to be configured (overriden with -d parameter)
 # At the moment, this simply ends up as a string in the channel table.
 #
-device sx127x
+# device sx127x
 
 #
 # Crystal frequency of the device.  Used to calculate pll step value for the channel frequency

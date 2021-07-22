@@ -146,6 +146,7 @@ typedef enum {
 typedef struct radio_config {
     const char* type;
     radio_type_t radio_type;
+    const char* model;
     int crystal;
     uint8_t channel;
     uint8_t datarate;

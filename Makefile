@@ -67,7 +67,7 @@ COMPONENTS += vfs
 COMPONENTS += xtensa
 COMPONENTS += platform_include
 
-EXTRA_CFLAGS = -s
+EXTRA_CFLAGS = -s -Wimplicit-fallthrough=3
 
 include $(IDF_PATH)/make/project.mk
 

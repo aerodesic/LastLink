@@ -13,7 +13,8 @@ class GenerateChannelTable:
         self.hfile_name = hfile_name
         self.hfile = None
         self.output_name = output_name
-        self.device = "sample"
+        # self.device = "sample"
+        self.device = device
         self.debug = debug
         self.channels = {}
         self.datarates = {}
@@ -26,14 +27,21 @@ class GenerateChannelTable:
 
     def calc_freq(self, freq):
         frf = int(round(freq / self.pll_step));
-        msb = (frf >> 16) & 0xFF
-        mid = (frf >> 8) & 0xFF
-        lsb = frf & 0xFF
-        return [ msb, mid, lsb ]
+        if self.device == "sx126x":
+            return frf
+        else:
+            msb = (frf >> 16) & 0xFF
+            mid = (frf >> 8) & 0xFF
+            lsb = frf & 0xFF
+            return [ msb, mid, lsb ]
 
     def process_crystal(self, line, lines):
         self.crystal = int(lines[line][1])
-        self.pll_step = round(self.crystal / 2**19, 3)
+        if self.device == "sx126x":
+            self.pll_step = round(self.crystal / 2**25, 3)
+        else:
+            # Default for sx127x
+            self.pll_step = round(self.crystal / 2**19, 3)
 
         if self.debug:
             print("process_crystal: crystal %.f pll_step %.f" % (self.crystal, self.pll_step), file=sys.stderr)
@@ -44,7 +52,7 @@ class GenerateChannelTable:
         if self.debug:
             print("process_device: %s" % lines[line], file=sys.stderr)
 
-        self.device = lines[line][1]
+        # self.device = lines[line][1]
 
         return line + 1
 
@@ -243,9 +251,12 @@ class GenerateChannelTable:
                 print("#define __%s_included__"                     % self.hfile_name,                                              file=self.hfile)
             print("",                                                                                                               file=self.hfile)
             print("typedef struct channel_entry_%s_struct {"        % self.device,                                                  file=self.hfile)
-            print("    uint8_t  freq_high;",                                                                                        file=self.hfile)
-            print("    uint8_t  freq_mid;",                                                                                         file=self.hfile)
-            print("    uint8_t  freq_low;",                                                                                         file=self.hfile)
+            if self.device == "sx126x":
+                print("    uint32_t freq;",                                                                                         file=self.hfile)
+            else:
+                print("    uint8_t  freq_high;",                                                                                    file=self.hfile)
+                print("    uint8_t  freq_mid;",                                                                                     file=self.hfile)
+                print("    uint8_t  freq_low;",                                                                                     file=self.hfile)
             print("    uint8_t  datarate_group;",                                                                                   file=self.hfile)
             print("} channel_entry_%s_t;"                           % self.device,                                                  file=self.hfile)
             print("",                                                                                                               file=self.hfile)
@@ -268,6 +279,9 @@ class GenerateChannelTable:
             print("} channel_table_%s_t;"                           % self.device,                                                  file=self.hfile)
             print("",                                                                                                               file=self.hfile)
             print("",                                                                                                               file=self.hfile)
+            print("/* Define bandwidth index values */",                                                                            file=self.hfile)
+            for bw in self.bandwidth_bins:
+                print("#define %-12s %d"                            % ("BW%d" % int(bw), self.bandwidth_bins.index(bw)),            file=self.cfile)
             if self.hfile_name != None:
                 print("#endif /* __%s_included__ */"                % self.hfile_name,                                              file=self.hfile)
 
@@ -285,9 +299,12 @@ class GenerateChannelTable:
                 group = chinfo["group"]
                 datarates = self.datarates[chinfo["group"]]
                 print("    .channels[%d] = { /* %d Hz */"           % (channel, chinfo['hz']),                                      file=self.cfile)
-                print("        .freq_high = %d,"                    % (chinfo["freq"][0]),                                          file=self.cfile)
-                print("        .freq_mid  = %d,"                    % (chinfo["freq"][1]),                                          file=self.cfile)
-                print("        .freq_low  = %d,"                    % (chinfo["freq"][2]),                                          file=self.cfile)
+                if self.device == "sx126x":
+                    print("        .freq = %d,"                     % (chinfo["freq"]),                                             file=self.hfile)
+                else:
+                    print("        .freq_high = %d,"                % (chinfo["freq"][0]),                                          file=self.cfile)
+                    print("        .freq_mid  = %d,"                % (chinfo["freq"][1]),                                          file=self.cfile)
+                    print("        .freq_low  = %d,"                % (chinfo["freq"][2]),                                          file=self.cfile)
                 print("        .datarate_group = %d,"               % (self.groups.index(group)),                                   file=self.cfile)
                 print("    },",                                                                                                     file=self.cfile)
     
