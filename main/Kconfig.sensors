@@ -1,0 +1,97 @@
+menu "Sensors"
+    config LASTLINK_SENSORS_ENABLE
+        bool "Enable sensor support"
+        default true
+        help
+            Enables published and poll sensors.
+
+    config LASTLINK_SENSORS_PLATFORM_NAME
+        string "Sensors platform name"
+        depends on LASTLINK_SENSORS_ENABLE
+        default "sensors"
+        help
+            This specifies the name of the 'sensors' list for this platform.
+
+    config LASTLINK_SENSORS_WELL_KNOWN_PORT
+        int "Port broadcasting sensor information"
+        depends on LASTLINK_SENSORS_ENABLE
+        default 2
+        range 2 5000
+        help
+            New sensor data is broadcast on this port.  Each platform may choose
+            a different port to disambiguate requests.
+
+    config LASTLINK_SENSORS_SERVICE_LIFETIME
+        int "Sensor service lifetime"
+        depends on LASTLINK_SENSORS_ENABLE
+        default 120
+        range 60 3600
+        help
+            Defines update interval for republishing sensor service.
+
+    config LASTLINK_SENSORS_MAX_NAME_LENGTH
+        int "Maximum length of a sensor name"
+        depends on LASTLINK_SENSORS_ENABLE
+        default 16
+        range 16 64
+        help
+            Maximum character length of a sensor name.
+
+    config LASTLINK_SENSORS_MAX_SCON_CONNECTIONS
+        int "Maximum scon command connections"
+        depends on LASTLINK_SENSORS_ENABLE
+        default 5
+        range 3 16
+        help
+            Maximum number of command interface connections to SCON interface.
+
+    config LASTLINK_SENSORS_MAX_VALUE_LENGTH
+        int "Maximum length of a sensor value"
+        depends on LASTLINK_SENSORS_ENABLE
+        default 16
+        range 16 64
+        help
+            Maximum character length of a sensor value.
+
+    config LASTLINK_SENSORS_DHT_ENABLE
+        depends on LASTLINK_SENSORS_ENABLE
+        bool "Report DHT sensor values"
+        select DHT_ENABLE
+        default false
+        help
+            Add DHT (Humidity and Temperature) sensor to reported list.
+
+    menuconfig LASTLINK_SENSORS_GPS_ENABLE
+        depends on LASTLINK_SENSORS_ENABLE
+        bool "Report GPS"
+        default false
+        help
+            Add GPS to available sensors
+
+    if LASTLINK_SENSORS_GPS_ENABLE
+        config LASTLINK_SENSORS_GPS_PORT_NUMBER
+            depends on LASTLINK_SENSORS_GPS_ENABLE
+            int "GPS UART port number"
+            default 2
+            help
+                UART Port number connected to GPS device.
+    
+        config LASTLINK_SENSORS_GPS_RX_PIN
+            depends on LASTLINK_SENSORS_GPS_ENABLE
+            int "GPS UART RX pin"
+            default 34
+            help
+                UART RX GPIO Pin
+    
+        config LASTLINK_SENSORS_GPS_TX_PIN
+            depends on LASTLINK_SENSORS_GPS_ENABLE
+            int "GPS UART TX pin"
+            default 12
+            help
+                UART TX GPIO Pin
+    
+        source "main/Kconfig.nmea"
+    endif
+
+endmenu
+

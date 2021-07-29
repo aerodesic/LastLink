@@ -350,6 +350,11 @@ os_thread_t os_current_thread(void)
     return (os_thread_t) xTaskGetCurrentTaskHandle();
 }
 
+const char* os_thread_name(os_thread_t threadid)
+{
+    return pcTaskGetName(threadid);
+}
+
 bool os_exit_thread(void)
 {
     vTaskDelete(NULL);
@@ -406,7 +411,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
 {
     bool ok = true;
 
-    // ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
+    ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
 
     gpio_config_t     io;
 

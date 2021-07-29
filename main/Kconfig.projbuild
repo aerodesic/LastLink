@@ -224,11 +224,53 @@ menu "LastLink Configuration"
         help
             Max number of the STA connects to AP.
 
+    config LASTLINK_GLOBAL_ACTIVITY_LED_ENABLE
+        bool "Enable global radio 'activity' LED"
+        default n
+        help
+            Enables a single global led that will track the
+            radio subsystem 'sending packet' activity.
+
     config LASTLINK_GLOBAL_LED_ACTIVITY_GPIO
         int "Activity (TRANSMIT) led GPIO (-1 to disable)"
-        default -1
+        depends on LASTLINK_GLOBAL_ACTIVITY_LED_ENABLE
+        default 4
         help
             A global activity indicator that comes on for any traffic in progress.
+
+    config LASTLINK_GLOBAL_LED_ACTIVITY_INVERT
+        bool "Invert GPIO state of global activity led"
+        default n
+        depends on LASTLINK_GLOBAL_ACTIVITY_LED_ENABLE
+        help
+            By default, the global activity led GPIO is set to TRUE
+            when activity is present.  This inverts the value to FALSE
+            when any radio is transmitting.
+
+    config LASTLINK_ENABLE_POWER_MANAGEMENT
+        default n
+        select AXP192_ENABLE
+        bool "Enable axp192 power management IC"
+
+    config LASTLINK_AXP192_I2C_NUM
+        depends on LASTLINK_ENABLE_POWER_MANAGEMENT
+        default 2
+        int "I2C channel number"
+
+    config LASTLINK_AXP192_SDA_PIN
+        depends on LASTLINK_ENABLE_POWER_MANAGEMENT
+        default 21
+        int "SDA gpio"
+
+    config LASTLINK_AXP192_SCL_PIN
+        depends on LASTLINK_ENABLE_POWER_MANAGEMENT
+        default 22
+        int "SCL gpio"
+
+    config LASTLINK_AXP192_SPEED
+        depends on LASTLINK_ENABLE_POWER_MANAGEMENT
+        default 20000
+        int "Max i2c bus speed"
 
     menu "Radio configuration"
         config LASTLINK_RADIO_SX126x_ENABLED

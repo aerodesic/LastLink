@@ -53,6 +53,9 @@
 
 #ifdef CONFIG_LASTLINK_SENSORS_ENABLE
 #include "sensors.h"
+#ifdef CONFIG_LASTLINK_SENSORS_GPS_ENABLE
+#include "gps.h"
+#endif
 #endif
 
 #ifdef CONFIG_DHT_ENABLE
@@ -69,6 +72,10 @@
 #define DEFAULT_PS_MODE WIFI_PS_NONE
 #endif /*CONFIG_POWER_SAVE_MODEM*/
 #include "uuid.h"
+
+#ifdef CONFIG_LASTLINK_ENABLE_POWER_MANAGEMENT
+#include "power_manager.h"
+#endif
 
 const char* TAG = "lastlink";
 
@@ -173,6 +180,10 @@ void app_main(void)
     /* load config file */
     init_configuration(CONFIG_LASTLINK_CONFIG_FILE);
 
+#ifdef CONFIG_LASTLINK_ENABLE_POWER_MANAGEMENT
+    start_axp192();
+#endif
+
     linklayer_set_debug(get_config_int("lastlink.debug_flag", 0) != 0);
     bool listen_only = get_config_int("lastlink.listen_only", 0) != 0;
 
@@ -202,6 +213,11 @@ void app_main(void)
 
 #ifdef CONFIG_LASTLINK_SENSORS_ENABLE
     init_sensors();
+  #ifdef CONFIG_LASTLINK_SENSORS_GPS_ENABLE
+    if (!start_gps()) {
+        ESP_LOGE(TAG, "%s: GPS Failed to start", __func__);
+    }
+  #endif
 #endif
 
 #endif /* DISABLED_WHILE_LOOKING_FOR_CRASH */
@@ -256,6 +272,7 @@ void app_main(void)
 #endif /* CONFIG_LASTLINK_WEB_SERVER_ENABLED */
 
     printf("Node address %d\n", linklayer_node_address);
+
 
 #ifdef NOTUSED
     if (listen_only) {

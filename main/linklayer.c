@@ -1504,9 +1504,8 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
 {
 //ESP_LOGI(TAG, "%s: active %s", __func__, active ? "TRUE" : "FALSE");
 
-
     if (activity_count < 0) {
-#if defined(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO) && CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO >= 0
+#ifdef CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_ENABLED
 //ESP_LOGI(TAG, "%s: initialize activity GPIO %d", __func__, CONFIG_LASTLINK_LED_ACTIVITY_GPIO);
 
         /* Configure per-radio activity indicator */
@@ -1531,8 +1530,12 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
         ESP_LOGE(TAG, "%s: trying to set activity_count < 0", __func__);
     }
 
-#if defined(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO) && CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO >= 0
+#if CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_ENABELD
+  #if CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_INVERTED
+    gpio_set_level(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO, activity_count == 0);
+  #else
     gpio_set_level(CONFIG_LASTLINK_GLOBAL_LED_ACTIVITY_GPIO, activity_count != 0);
+  #endif
 #endif
 
     /* Turn on individual radio activity is present */

@@ -12,7 +12,7 @@ else
     else
         for dev in $devices; do
             echo Starting flash on $dev
-            gnome-terminal --window-with-profile=default --geometry 50x10 --hide-menubar -- bash -c "
+            gnome-terminal --window-with-profile=default --geometry 60x10 --hide-menubar -- bash -c "
                 setterm -term linux -back blue -fore white -clear all
                 echo -ne '\033]0;Flashing to $dev\007'
                 if ! ESPPORT=$dev make flash; then

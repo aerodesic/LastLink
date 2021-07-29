@@ -35,12 +35,14 @@ static void ssd1306_i2c_reset(display_t *display)
 
     ssd1306_i2c_driver_info* driver_info = (ssd1306_i2c_driver_info*) (display->driver_info);
 
+    if (driver_info->reset_pin >= 0) {
 ESP_LOGI(TAG, "%s: reset_pin %d", __func__, driver_info->reset_pin);
 
-    gpio_set_level(driver_info->reset_pin, 0);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    gpio_set_level(driver_info->reset_pin, 1);
-    vTaskDelay(pdMS_TO_TICKS(10));
+        gpio_set_level(driver_info->reset_pin, 0);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        gpio_set_level(driver_info->reset_pin, 1);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 
     display->_unlock(display);
 }
@@ -59,24 +61,27 @@ ESP_LOGI(TAG, "%s: i2c_num %d  sda_pin %d  scl_pin %d  reset_pin %d  clk_speed %
         .scl_io_num = scl_pin,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master.clk_speed = clk_speed,
-        .clk_flags = I2C_SCLK_SRC_FLAG_LIGHT_SLEEP,
+//        .clk_flags = I2C_SCLK_SRC_FLAG_LIGHT_SLEEP,
     };
 
     ESP_ERROR_CHECK(i2c_param_config(i2c_num, &i2c_config));
 
-    ESP_ERROR_CHECK(i2c_driver_install(i2c_num, I2C_MODE_MASTER, 0, 0, 0));
+    // ESP_ERROR_CHECK(i2c_driver_install(i2c_num, I2C_MODE_MASTER, 0, 0, 0));
+    i2c_driver_install(i2c_num, I2C_MODE_MASTER, 0, 0, 0);
 
     driver_info->i2c_num = i2c_num;
 
-    gpio_config_t io = {
-        .intr_type = GPIO_PIN_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << reset_pin,
-        .pull_down_en = 0,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-    };
+    if (reset_pin >= 0) {
+        gpio_config_t io = {
+            .intr_type = GPIO_PIN_INTR_DISABLE,
+            .mode = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << reset_pin,
+            .pull_down_en = 0,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+        };
 
-    ESP_ERROR_CHECK(gpio_config(&io));
+        ESP_ERROR_CHECK(gpio_config(&io));
+    }
 
     driver_info->reset_pin = reset_pin;
 

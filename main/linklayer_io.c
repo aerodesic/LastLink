@@ -32,7 +32,7 @@ static bool spi_write_register(radio_t* radio, int reg, int data);
 static bool spi_write_buffer(radio_t* radio, int reg, const uint8_t* buffer, int len);
 static int spi_read_register(radio_t* radio, int reg);
 static bool spi_read_buffer(radio_t* radio, int reg, uint8_t* buffer, int len);
-static bool spi_transact(radio_t* radio, uint8_t command, int address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
+static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
 
 #define NUM_PER_LINE 32
 void dump_buffer(const char* ident, const uint8_t* buffer, int len)
@@ -258,30 +258,47 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
     return ok;
 }
 
-static bool spi_transact(radio_t* radio, uint8_t command, int address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
+static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
 {
     bool ok;
 
     spi_transaction_ext_t t;
 
     memset(&t, 0, sizeof(t));
+
+//ESP_LOGI(TAG, "%s: command 0x%x extra_address_bits %d address 0x%x outbuffer %p outlen %d inbuffer %p inlen %d", __func__, command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
+
+//if (outbuffer != NULL) {
+//    dump_buffer("output", outbuffer, outlen);
+//}
+
+    /* Writing this many real bits  */
+    if (outlen != 0) {
+        t.base.length = 8*outlen;
+    } else {
+        t.base.length = 8*inlen;
+    }
     t.base.addr = command,
-    t.base.length = 8*outlen;
-    t.base.rxlength = 8*inlen;
     t.base.tx_buffer = outbuffer;
     t.base.rx_buffer = inbuffer;
 
-    if (address >= 0) {
-        /* When supplying an extra address, we make it variable mode and change
-         * the addr to a 24 bit number, adding the address field as the second 8 bit
-         * field and the remaining 8 bits dummy.
-         */
+    /* If there are extra address bits to send, shift the current address by the extra amount
+     * and 'or in' the extra address field.
+     */
+    if (extra_address_bits != 0) {
         t.base.flags |= SPI_TRANS_VARIABLE_ADDR;
-        t.base.addr = t.base.addr << 16 | address << 8;
-        t.address_bits = 8*24;
+        t.base.addr <<= extra_address_bits;
+        t.base.addr |= address;
+        t.address_bits = 8 + extra_address_bits;
     }
 
     ok = spi_device_transmit(radio->spi, (spi_transaction_t*) &t) == ESP_OK;
+
+//if (ok && inbuffer != NULL) {
+//   dump_buffer("input", inbuffer, inlen);
+//}
+
+//    ESP_LOGI(TAG, "%s: finished %s", __func__, ok ? "Success": "Fail");
 
     return ok;
 }

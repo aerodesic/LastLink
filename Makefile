@@ -10,6 +10,7 @@ COMPONENTS := main
 # Local components
 COMPONENTS += dht
 COMPONENTS += ssd1306-esp-idf-i2c
+COMPONENTS += axp192
 
 # sdk components
 COMPONENTS += app_trace

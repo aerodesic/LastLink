@@ -14,36 +14,65 @@ COMPONENT_EXTRA_CLEAN := $(COMPONENT_PATH)/*_table.h
 	${COMPONENT_PATH}/generate_channel_table.py ${COMPONENT_PATH}/${CONFIG_LASTLINK_CHANNEL_TABLE}.channels -d $(notdir $(patsubst %_table.h,%,$(@))) -o $@
 
 
-sx126x_driver.o:	$(COMPONENT_PATH)/sx126x_driver.c $(COMPONENT_PATH)/sx126x_table.h
+commands.o:           $(COMPONENT_PATH)/commands.c
 
-sx127x_driver.o:	$(COMPONENT_PATH)/sx127x_driver.c $(COMPONENT_PATH)/sx127x_table.h
+configdata.o:         $(COMPONENT_PATH)/configdata.c
 
-commands.o:         $(COMPONENT_PATH)/commands.c
+crc16.o:              $(COMPONENT_PATH)/crc16.c
 
-configdata.o:       $(COMPONENT_PATH)/configdata.c
+duplicate_sequence.o: $(COMPONENT_PATH)/duplicate_sequence.c
 
-lastlink_main.o:    $(COMPONENT_PATH)/lastlink_main.c
+expressions.o:        $(COMPONENT_PATH)/expressions.c
 
-linklayer.o:        $(COMPONENT_PATH)/linklayer.c
+gps.o:                $(COMPONENT_PATH)/gps.c
 
-linklayer_io.o:     $(COMPONENT_PATH)/linklayer_io.c
+httpd_server.o:       $(COMPONENT_PATH)/httpd_server.c
 
-lsocket.o:          $(COMPONENT_PATH)/lsocket.c
+http_template.o:      $(COMPONENT_PATH)/http_templates.c
 
-nvs_suppert.o:      $(COMPONENT_PATH)/nvs_support.c
+lastlink_main.o:      $(COMPONENT_PATH)/lastlink_main.c
 
-os_freertos.o:      $(COMPONENT_PATH)/os_freertos.c
+linklayer.o:          $(COMPONENT_PATH)/linklayer.c
 
-packets.o:          $(COMPONENT_PATH)/packets.c
+linklayer_io.o:       $(COMPONENT_PATH)/linklayer_io.c
 
-routes.o:           $(COMPONENT_PATH)/routes.c
+lsocket.o:            $(COMPONENT_PATH)/lsocket.c
 
-spiffs.o:           $(COMPONENT_PATH)/spiffs.c
+mdns_config.o:        $(COMPONENT_PATH)/mdns_config.c
 
-vfs_lastlink.o:     $(COMPONENT_PATH)/vfs_lastlink.c
+network_connect.o:    $(COMPONENT_PATH)/network_connect.c
 
-wifi_init.o:        $(COMPONENT_PATH)/wifi_init.c
+nmea_parser.o:        $(COMPONENT_PATH)/nmea_parser.c
 
+nvs_support.o:        $(COMPONENT_PATH)/nvs_support.c
+
+os_specific.o:        $(COMPONENT_PATH)/os_specific.c
+
+packets.o:            $(COMPONENT_PATH)/packets.c
+
+packet_window.o:      $(COMPONENT_PATH)/packet_window.c
+
+power_manager.o:      $(COMPONENT_PATH)/power_manager.c
+
+routes.o:             $(COMPONENT_PATH)/routes.c
+
+sensors.o:            $(COMPONENT_PATH)/sensors.c
+
+service_names.o:      $(COMPONENT_PATH)/service_names.c
+
+spiffs.o:             $(COMPONENT_PATH)/spiffs.c
+
+sx126x_driver.o:	  $(COMPONENT_PATH)/sx126x_driver.c $(COMPONENT_PATH)/sx126x_table.h
+
+sx127x_driver.o:	  $(COMPONENT_PATH)/sx127x_driver.c $(COMPONENT_PATH)/sx127x_table.h
+
+tokenize.o:           $(COMPONENT_PATH)/tokenize.c
+
+uuid.o:               $(COMPONENT_PATH)/uuid.c
+
+varlist.o:            $(COMPONENT_PATH)/varlist.c
+
+vfs_lastlink.o:       $(COMPONENT_PATH)/vfs_lastlink.c
 
 
 #

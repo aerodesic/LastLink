@@ -84,7 +84,7 @@ typedef struct radio {
     bool (*write_register)(radio_t* radio, int reg, int value);
     bool (*write_buffer)(radio_t* radio, int reg, const uint8_t* buffer, int length);
     bool (*read_buffer)(radio_t* radio, int reg, uint8_t* buffer, int bufsize);
-    bool (*io_transact)(radio_t* radio, uint8_t command, int address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
+    bool (*io_transact)(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
 
     /* linklayer functionality */
     bool (*attach_interrupt)(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));

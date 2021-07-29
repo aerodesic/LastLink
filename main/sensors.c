@@ -265,7 +265,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                              *   V:<sensor name>=<value>
                              *
                              * A reply will be generated for every 'set' request in the form:
-                             *   E:<sensor name>=<error message>
+                             *   E|<sensor name>=<error message>
                              * whenever an error occurs attempting to set the value.  If no error is
                              * detected, no response will be given.
                              ************************************************************************/
@@ -315,7 +315,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                             case SENSOR_TYPE_VALUE:              sensor_type = "value";      break;
                                             default:                             sensor_type = "?";          break;
                                         }
-                                        int moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "N:%s:%s:%s\n", sensor->name, sensor->units, sensor_type);
+                                        int moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "N|%s|%s|%s\n", sensor->name, sensor->units, sensor_type);
                                         reply_pointer += moved;
                                         reply_used += moved;
                                         sensor = NEXT_LIST_ITEM(sensor, &sensor_cache);
@@ -332,20 +332,20 @@ ESP_LOGI(TAG, "%s: running", __func__);
                                         if (value != NULL) {
                                             /* Setting value */
                                             if (write_sensor(sensor, value, sensor_buffer, sizeof(sensor_buffer))) {
-                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, value, sensor->units ? sensor->units : "");
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V|%s|%s|%s\n", sensor->name, value, sensor->units ? sensor->units : "");
                                             } else {
-                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E|%s|%s\n", sensor->name, sensor_buffer);
                                             }
                                         } else {
                                             /* Reading value */
                                             if (read_sensor(sensor, sensor_buffer, sizeof(sensor_buffer))) {
-                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V:%s:%s:%s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "V|%s|%s|%s\n", sensor->name, sensor_buffer, sensor->units ? sensor->units : "");
                                             } else {
-                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E:%s:%s\n", sensor->name, sensor_buffer);
+                                                moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "E|%s|%s\n", sensor->name, sensor_buffer);
                                             }
                                         }
                                     } else {
-                                        moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "U:%s\n", item);
+                                        moved = snprintf(reply_pointer, sizeof(reply_buffer) - reply_used, "U|%s\n", item);
                                     }
                                 }
 
