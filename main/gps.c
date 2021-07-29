@@ -69,7 +69,35 @@ static bool process_gps_location(sensor_transaction_t transaction, const char* n
         os_release_recursive_mutex(gps_lock);
 
         // snprintf(reply_buffer, reply_len, "%.05f°N %.05f°E", latitude, longitude);
-        snprintf(reply_buffer, reply_len, "%.05fN %.05fE", latitude, longitude);
+        snprintf(reply_buffer, reply_len, "%.05f, %.05f", latitude, longitude);
+        ok = true;
+    }
+    return ok;
+}
+
+static bool process_gps_sats(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
+{
+    bool ok = false;
+    if (transaction == SENSOR_READ) {
+        os_acquire_recursive_mutex(gps_lock);
+        uint8_t sats_in_use = gps_data.sats_in_use;
+        uint8_t sats_id_in_use[GPS_MAX_SATELLITES_IN_USE];
+        memcpy(sats_id_in_use, gps_data.sats_id_in_use, sats_in_use);
+        os_release_recursive_mutex(gps_lock);
+
+        char* p = reply_buffer;
+        size_t r = reply_len;
+        for (int sat = 0; sat < sats_in_use; ++sat) {
+            int used = snprintf(p, r, "%d ", sats_id_in_use[sat]);
+            p += used;
+            r -= used;
+        } 
+        /* Remove last blank appended */
+        if (p != reply_buffer) {
+            --p;
+        }
+        /* NUL terminate buffer */
+        p[0] = '\0';
         ok = true;
     }
     return ok;
@@ -86,7 +114,7 @@ static bool process_gps_datetime(sensor_transaction_t transaction, const char* n
 
         /* Answer in ISO-8601 format */
         snprintf(reply_buffer, reply_len, "%04d-%02d-%02dT%02d:%02d:%02d +0000",
-                 date.year, date.month, date.day,
+                 date.year + YEAR_BASE, date.month, date.day,
                  tim.hour, tim.minute, tim.second);
 
         ok = true;
@@ -127,6 +155,7 @@ static bool process_gps_fix(sensor_transaction_t transaction, const char* name, 
         os_acquire_recursive_mutex(gps_lock);
         gps_fix_t      fixtype = gps_data.fix;
         gps_fix_mode_t fixmode = gps_data.fix_mode;
+        bool           fixvalid = gps_data.valid;
         os_release_recursive_mutex(gps_lock);
 
         const char *type;
@@ -144,7 +173,22 @@ static bool process_gps_fix(sensor_transaction_t transaction, const char* name, 
             default:           mode = "";       break;
         }
 
-        snprintf(reply_buffer, reply_len, "%s%s", type, mode);
+        snprintf(reply_buffer, reply_len, "%s%s%s", type, mode, fixvalid ? "" : " invalid");
+
+        ok = true;
+    }
+    return ok;
+}
+
+static bool process_gps_cog(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
+{
+    bool ok = false;
+    if (transaction == SENSOR_READ) {
+        os_acquire_recursive_mutex(gps_lock);
+        float cog = gps_data.cog;
+        os_release_recursive_mutex(gps_lock);
+
+        snprintf(reply_buffer, reply_len, "%.2f", cog);
 
         ok = true;
     }
@@ -192,6 +236,10 @@ bool start_gps(void)
             if (! register_sensor("speed",    SENSOR_TYPE_INPUT, "M/S",      process_gps_speed,    NULL)) {
             }
             if (! register_sensor("fix",      SENSOR_TYPE_INPUT, "",         process_gps_fix,      NULL)) {
+            }
+            if (! register_sensor("sats",     SENSOR_TYPE_INPUT, "in view",  process_gps_sats,     NULL)) {
+            }
+            if (! register_sensor("cog",      SENSOR_TYPE_INPUT, "degrees",  process_gps_cog,      NULL)) {
             }
         }
     }
