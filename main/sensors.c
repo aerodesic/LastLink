@@ -328,6 +328,7 @@ ESP_LOGI(TAG, "%s: running", __func__);
 
                                     if (sensor != NULL) {
                                        char sensor_buffer[CONFIG_LASTLINK_SENSORS_MAX_VALUE_LENGTH];
+                                       sensor_buffer[0] = '\0';
 
                                         if (value != NULL) {
                                             /* Setting value */

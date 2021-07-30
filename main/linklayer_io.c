@@ -258,6 +258,39 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
     return ok;
 }
 
+static void dump_spi_transaction(bool ok, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
+{
+    char buffer[120];
+    int   used;
+
+    used = snprintf(buffer, sizeof(buffer), "%02x", command);
+    if (extra_address_bits != 0) {
+        if (extra_address_bits == 32) {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " %02x %02x %02x %02x", (address >> 24) & 0xFF, (address >> 16) & 0xFF, (address >> 8) & 0xFF, address & 0xFF);
+        } else if (extra_address_bits == 24) {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " %02x %02x %02x", (address >> 16) & 0xFF, (address >> 8) & 0xFF, address & 0xFF);
+        } else if (extra_address_bits == 16) {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " %02x %02x", (address >> 8) & 0xFF, address & 0xFF);
+        } else if (extra_address_bits == 8) {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " %02x", address & 0xFF);
+        } else {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " [BAD ea %d]", extra_address_bits);
+        }
+    }
+    for (int c = 0; c < outlen; ++c) {
+        used += snprintf(buffer + used, sizeof(buffer) - used, " %02x", outbuffer[c]);
+    }
+    if (inbuffer != NULL && inlen != 0) {
+        used += snprintf(buffer + used, sizeof(buffer) - used, " ->");
+
+        for (int c = 0; c < inlen; ++c) {
+            used += snprintf(buffer + used, sizeof(buffer) - used, " %02x", inbuffer[c]);
+        }
+    }
+
+    ESP_LOGI(TAG, "SPI: %s%s", buffer, ok ? "" : " [Error]");
+}       
+
 static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
 {
     bool ok;
@@ -266,11 +299,7 @@ static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits
 
     memset(&t, 0, sizeof(t));
 
-//ESP_LOGI(TAG, "%s: command 0x%x extra_address_bits %d address 0x%x outbuffer %p outlen %d inbuffer %p inlen %d", __func__, command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
-
-//if (outbuffer != NULL) {
-//    dump_buffer("output", outbuffer, outlen);
-//}
+os_delay(20);
 
     /* Writing this many real bits  */
     if (outlen != 0) {
@@ -294,11 +323,9 @@ static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits
 
     ok = spi_device_transmit(radio->spi, (spi_transaction_t*) &t) == ESP_OK;
 
-//if (ok && inbuffer != NULL) {
-//   dump_buffer("input", inbuffer, inlen);
-//}
-
-//    ESP_LOGI(TAG, "%s: finished %s", __func__, ok ? "Success": "Fail");
+#if 1
+dump_spi_transaction(ok, command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
+#endif
 
     return ok;
 }

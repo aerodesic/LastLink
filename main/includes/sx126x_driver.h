@@ -75,6 +75,7 @@
 #define SX126x_Calibrate_ADC_bulkP                               0x20
 #define SX126x_Calibrate_Image                                   0x40
 #define SX126x_Calibrate_RFU                                     0x80
+#define SX126x_Calibrate_All                                     0x7F
 
 #define SX126x_CalibrateImage                            0x98
 #define SX126x_CalibrateImage_bytes                       2
@@ -112,32 +113,46 @@
 
 #define SX126x_ReadBuffer                                0x1E
 
-#define SX126x_REG_WhiteningInitialValueMSB              0x06B8
-#define SX126x_REG_WhiteningInitialValueLSB              0x06B9
+#define SX126x_REG_DIOx_OutputEnable                     0x0580
+#define SX126x_REG_DIOx_InputEnable                      0x0583
+#define SX126x_REG_DIOx_PullupControl                    0x0584
+#define SX126x_REG_DIOxPulldownControl                   0x0585
+#define SX126x_REG_Whitening_Initial_Value_MSB           0x06B8
+#define SX126x_REG_Whitening_Initial_Value_LSB           0x06B9
 #define SX126x_REG_CRC_MSB_InitialValue0                 0x06BC
 #define SX126x_REG_CRC_LSB_InitialValue1                 0x06BD
 #define SX126x_REG_CRC_MSB_polynomial_value0             0x06BE
 #define SX126x_REG_CRC_LSB_polynomial_value1             0x06BF
-#define SX126x_REG_SyncWord0                             0x06C0
-#define SX126x_REG_SyncWord1                             0x06C1
-#define SX126x_REG_SyncWord2                             0x06C2
-#define SX126x_REG_SyncWord3                             0x06C3
-#define SX126x_REG_SyncWord4                             0x06C4
-#define SX126x_REG_SyncWord5                             0x06C5
-#define SX126x_REG_SyncWord6                             0x06C6
-#define SX126x_REG_SyncWord7                             0x06C7
-#define SX126x_REG_NodeAddress                           0x06CD
-#define SX126x_REG_Broadcast_Address                     0x06CE
-#define SX126x_REG_LoRa_Sync_Word_MSB                    0x0740
+#define SX126x_REG_SyncWord0                             0x06C0 // (FSK Only)
+#define SX126x_REG_SyncWord1                             0x06C1 // (FSK Only)
+#define SX126x_REG_SyncWord2                             0x06C2 // (FSK Only)
+#define SX126x_REG_SyncWord3                             0x06C3 // (FSK Only)
+#define SX126x_REG_SyncWord4                             0x06C4 // (FSK Only)
+#define SX126x_REG_SyncWord5                             0x06C5 // (FSK Only)
+#define SX126x_REG_SyncWord6                             0x06C6 // (FSK Only)
+#define SX126x_REG_SyncWord7                             0x06C7 // (FSK Only)
+#define SX126x_REG_NodeAddress                           0x06CD // (FSK Only)
+#define SX126x_REG_Broadcast_Address                     0x06CE // (FSK Only)
+#define SX126x_REG_IQ_Polarity_Setup                     0x0736
+#define SX126x_REG_LoRa_Sync_Word_MSB                    0x0740 // (Set to 0x3444 for public network and 0x1424 for private network)
 #define SX126x_REG_LoRa_Sync_Word_LSB                    0x0741
+#define SX126x_REG_LoRa_Sync_Word_PUBLIC                   0x3444
+#define SX126x_REG_LoRa_Sync_Word_PRIVATE                  0x1424
 #define SX126x_REG_RandomNumberGen0                      0x0819
 #define SX126x_REG_RandomNumberGen1                      0x081A
 #define SX126x_REG_RandomNumberGen2                      0x081B
 #define SX126x_REG_RandomNumberGen3                      0x081C
+#define SX126x_REG_TxModulation                          0x0889
 #define SX126x_REG_Rx_Gain                               0x08AC
+#define SX126x_REG_TxClampConfig                         0x08D8  /* From app note */
 #define SX126x_REG_OCP_Configuration                     0x08E7
+#define SX126x_REG_OCP_Configuration_60mA                  0x18
+#define SX126x_REG_OCP_Configuration_140mA                 0x38
+#define SX126x_REG_RTC_Control                           0x0902
 #define SX126x_REG_XTA_trim                              0x0911
 #define SX126x_REG_XTB_trim                              0x0912
+#define SX126x_REG_DIO3_output_voltage_control           0x0920
+#define SX126x_REG_Event_Mask                            0x0944
 
 
 #define SX126x_SetDioIrqParams                           0x08
@@ -167,7 +182,7 @@
 #define SX126x_GetIrqStatus_Status                         0
 #define SX126x_GetIrqStatus_Status_bytes                     1
 #define SX126x_GetIrqStatus_Status_Chipmode                    0x70
-#define SX126x_GetIrqStatus_Status_Command                     0x0E
+#define SX126x_GetIrqStatus_Status_CommandStatus               0x0E
 #define SX126x_GetIrqStatus_IrqFlags                       1
 #define SX126x_GetIrqStatus_IrqFlags_bytes                   2
 
@@ -176,9 +191,29 @@
 #define SX126x_ClearIrqStatus_IrqFlags                       0
 #define SX126x_ClearIrqStatus_IrqFlags_bytes                   2
 
-#define SX126x_SetDIO2AsRfSwitchCtrl                     0x9D
+#define SX126x_SetDio2AsRfSwitchCtrl                     0x9D
+#define SX126x_SetDio2AsRfSwitchCtrl_bytes                 1
+#define SX126x_SetDio2AsRfSwitchCtrl_enable                  0
+#define SX126x_SetDio2AsRfSwitchCtrl_enable_bytes              1
+#define SX126x_SetDio2AsRfSwitchCtrl_enabled                     0x01
+#define SX126x_SetDio2AsRfSwitchCtrl_disabled                    0x00
+
+
 
 #define SX126x_SetDIO3AsTcxoCtrl                         0x97
+#define SX126x_SetDIO3AsTcxoCtrl_bytes                     4
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage                 0
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_bytes             1
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_6v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_7v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_8v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_2v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_4v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_7v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_0v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_3v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_delay                      1
+#define SX126x_SetDio3AsTcxoCtrl_delay_bytes                  3
 
 #define SX126x_SetRfFrequency                            0x86
 #define SX126x_SetRfFrequency_bytes                        3
@@ -197,7 +232,7 @@
 #define SX126x_GetPacketType_Status                          0
 #define SX126x_GetPacketType_Status_bytes                      1
 #define SX126x_GetPacketType_Status_Chipmode                     0x70
-#define SX126x_GetPacketType_Status_Command                      0x0E
+#define SX126x_GetPacketType_Status_CommandStatus                0x0E
 #define SX126x_GetPacketType_PacketType                      1
 #define SX126x_GetPacketType_PacketType_bytes                  1
 
@@ -228,8 +263,22 @@
 #define SX126x_SetModulationParams_SF_bytes                    1
 #define SX126x_SetModulationParams_BW                        1
 #define SX126x_SetModulationParams_BW_bytes                    1
+#define SX126x_SetModulationParams_BW7800                        0x00  /* Funny ... */
+#define SX126x_SetModulationParams_BW10400                       0x08  /*  these codes */
+#define SX126x_SetModulationParams_BW15600                       0x01  /*  are not the same */
+#define SX126x_SetModulationParams_BW20800                       0x09  /*  as the */
+#define SX126x_SetModulationParams_BW31250                       0x02  /*  external */
+#define SX126x_SetModulationParams_BW41700                       0x0A  /*  BW codes... */
+#define SX126x_SetModulationParams_BW62500                       0x03
+#define SX126x_SetModulationParams_BW125000                      0x04
+#define SX126x_SetModulationParams_BW250000                      0x05
+#define SX126x_SetModulationParams_BW500000                      0x06
 #define SX126x_SetModulationParams_CR                        2
 #define SX126x_SetModulationParams_CR_bytes                    1
+#define SX126x_SetModulationParams_CR5                           0x01
+#define SX126x_SetModulationParams_CR6                           0x02
+#define SX126x_SetModulationParams_CR7                           0x03
+#define SX126x_SetModulationParams_CR8                           0x04
 #define SX126x_SetModulationParams_LdOpt                     3
 #define SX126x_SetModulationParams_LdOpt_bytes                 1
 #define SX126x_SetModulationParams_LdOpt_OFF                     0
@@ -243,11 +292,13 @@
 #define SX126x_SetPacketParams_HeaderType_bytes                 1
 #define SX126x_SetPacketParams_HeaderType_Variable                0
 #define SX126x_SetPacketParams_HeaderType_Fixed                   1
-#define SX126x_SetPacketParams_CrcType                        3
+#define SX126x_SetPacketParams_PayloadLength                  3
+#define SX126x_SetPacketParams_PayloadLength_bytes              1
+#define SX126x_SetPacketParams_CrcType                        4
 #define SX126x_SetPacketParams_CrcType_bytes                    1
 #define SX126x_SetPacketParams_CrcType_Off                        0
 #define SX126x_SetPacketParams_CrcType_On                         1
-#define SX126x_SetPacketParams_InvertIQ                       4
+#define SX126x_SetPacketParams_InvertIQ                       5
 #define SX126x_SetPacketParams_InvertIQ_bytes                   1
 #define SX126x_SetPacketParams_InvertIQ_Off                       0
 #define SX126x_SetPacketParams_InvertIQ_On                        1
@@ -289,7 +340,21 @@
 #define SX126x_GetStatus_Status                              0
 #define SX126x_GetStatus_Status_bytes                          1
 #define SX126x_GetStatus_Status_Chipmode                         0x70
-#define SX126x_GetStatus_Status_Command                          0x0E
+#define SX126x_GetStatus_Status_Chipmode_unused                    0
+#define SX126x_GetStatus_Status_Chipmode_RFU                       1
+#define SX126x_GetStatus_Status_Chipmode_STBY_RC                   2
+#define SX126x_GetStatus_Status_Chipmode_STBY_XOSC                 3
+#define SX126x_GetStatus_Status_Chipmode_FS                        4
+#define SX126x_GetStatus_Status_Chipmode_RX                        5
+#define SX126x_GetStatus_Status_Chipmode_TX                        6
+#define SX126x_GetStatus_Status_CommandStatus                    0x0E
+#define SX126x_GetStatus_Status_CommandStatus_reserved             0
+#define SX126x_GetStatus_Status_CommandStatus_RFU                  1
+#define SX126x_GetStatus_Status_CommandStatus_DataAvailable        2
+#define SX126x_GetStatus_Status_CommandStatus_CommandTimeout       3
+#define SX126x_GetStatus_Status_CommandStatus_CommandError         4
+#define SX126x_GetStatus_Status_CommandStatus_CommandFailed        5
+#define SX126x_GetStatus_Status_CommandStatus_TXDone               6
 
 #define SX126x_GetRssiInst                               0x15
 
@@ -298,7 +363,7 @@
 #define SX126x_GetRxBufferStatus_Status                      0
 #define SX126x_GetRxBufferStatus_Status_bytes                  1
 #define SX126x_GetRxBufferStatus_Status_Chipmode                 0x70
-#define SX126x_GetRxBufferStatus_Status_Command                  0x0E
+#define SX126x_GetRxBufferStatus_Status_CommandStatus            0x0E
 #define SX126x_GetRxBufferStatus_PayloadLengthRx             1
 #define SX126x_GetRxBufferStatus_PayloadLengthRx_bytes         1
 #define SX126x_GetRxBufferStatus_RxStartBufferPointer        2
@@ -324,8 +389,25 @@
 #define SX126x_GetPacketStatus_SignalRssiPkt_bytes             1
 
 #define SX126x_GetDeviceErrors                           0x17
+#define SX126x_GetDeviceErrors_bytes                       3
+#define SX126x_GetDeviceErrors_Status                        0
+#define SX126x_GetDeviceErrors_Status_bytes                  1
+#define SX126x_GetDeviceErrors_Status_Chipmode                 0x70
+#define SX126x_GetDeviceErrors_Status_CommandStatus            0x0E
+#define SX126x_GetDeviceErrors_OpErrors                      1
+#define SX126x_GetDeviceErrors_OpErrors_bytes                  2
+#define SX126x_GetDeviceErrors_OpErrors_RC64K_CALIB_ERR          0x001 // RC64k calibration failed
+#define SX126x_GetDeviceErrors_OpErrors_RC13M_CALIB_ERR          0x002 // RC13M calibration failed
+#define SX126x_GetDeviceErrors_OpErrors_PLL_CALIB_ERR            0x004 // PLL calibration failed
+#define SX126x_GetDeviceErrors_OpErrors_ADC_CALIB_ERR            0x008 // ADC calibration failed
+#define SX126x_GetDeviceErrors_OpErrors_IMG_CALIB_ERR            0x010 // IMG calibration failed
+#define SX126x_GetDeviceErrors_OpErrors_XOSC_START_ERR           0x020 // XOSC failed to start
+#define SX126x_GetDeviceErrors_OpErrors_PLL_LOCK_ERR             0x040 // PLL failed to lock
+#define SX126x_GetDeviceErrors_OpErrors_RFU                      0x080 // RFU
+#define SX126x_GetDeviceErrors_OpErrors_PA_RAMP_ERR              0x100 // PA ramping failed
 
 #define SX126x_ClearDeviceErrors                         0x07
+#define SX126x_ClearDeviceErrors_bytes                     2
 
 #define SX126x_GetStats                                  0x10
 

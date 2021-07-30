@@ -74,6 +74,7 @@ static const  char* linklayer_packet_format(const packet_t* packet, int protocol
 
 /* Calls from radio driver to linklayer */
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
+static bool linklayer_test_gpio(radio_t* radio, int dio);
 static void linklayer_receive_packet(packet_t* packet);
 
 static void linklayer_activity_indicator(radio_t* radio, bool active);
@@ -991,6 +992,7 @@ static bool linklayer_init_radio(radio_t* radio)
     radio->activity_indicator = linklayer_activity_indicator;
     radio->reset_device = reset_device;
     radio->lock_transmit_queue = linklayer_lock_transmit_queue;
+    radio->test_gpio = linklayer_test_gpio;
 
     /* Initialize some gpios needed */
     if (radio_config[radio->radio_num].activity >= 0) {
@@ -999,6 +1001,19 @@ static bool linklayer_init_radio(radio_t* radio)
             .intr_type = GPIO_PIN_INTR_DISABLE,
             .mode = GPIO_MODE_OUTPUT,
             .pin_bit_mask = 1ULL << radio_config[radio->radio_num].activity,
+            .pull_down_en = 0,
+            .pull_up_en = 0,
+        };
+
+        gpio_config(&io);
+    }
+
+    /* Configure the dios as inputs, at least initially */
+    for (int dio = 0; dio < ELEMENTS_OF(radio_config[radio->radio_num].dios); ++dio) {
+        gpio_config_t io = {
+            .intr_type = GPIO_PIN_INTR_DISABLE,
+            .mode = GPIO_MODE_INPUT,
+            .pin_bit_mask = 1ULL << radio_config[radio->radio_num].dios[dio],
             .pull_down_en = 0,
             .pull_up_en = 0,
         };
@@ -1035,13 +1050,15 @@ static void reset_device(radio_t* radio)
             ESP_LOGE(TAG, "%s: ******************************* error setting reset low", __func__);
         }
 
-        os_delay(100);
+        os_delay(500);
 
         if (gpio_set_level(gpio, 1) != ESP_OK) {
            ESP_LOGE(TAG, "%s: ******************************* error setting reset high", __func__);
         }
 
         /* Leave configured as output with pulled up */
+    } else {
+        ESP_LOGE(TAG, "%s: no gpio for radio %d reset", __func__, radio->radio_num);
     }
 }
 
@@ -1343,6 +1360,15 @@ bool linklayer_unregister_protocol(int protocol)
     }
 
     return ok;
+}
+
+static bool linklayer_test_gpio(radio_t* radio, int dio)
+{
+    if (dio >= 0 && dio < ELEMENTS_OF(radio_config[radio->radio_num].dios)) {
+        return gpio_get_level(radio_config[radio->radio_num].dios[dio]);
+    } else {
+        return false;
+    }
 }
 
 static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p))

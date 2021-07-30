@@ -101,6 +101,7 @@ typedef struct radio {
 
     void (*reset_device)(radio_t* radio);
     void (*activity_indicator)(radio_t* radio, bool active);
+    bool (*test_gpio)(radio_t* radio, int dio);
 
 
     /************************************************/
