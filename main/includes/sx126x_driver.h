@@ -200,18 +200,18 @@
 
 
 
-#define SX126x_SetDIO3AsTcxoCtrl                         0x97
-#define SX126x_SetDIO3AsTcxoCtrl_bytes                     4
+#define SX126x_SetDio3AsTcxoCtrl                         0x97
+#define SX126x_SetDio3AsTcxoCtrl_bytes                     4
 #define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage                 0
 #define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_bytes             1
 #define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_6v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_7v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_8v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_2v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_4v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_7v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_0v                0x00
-#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_3v                0x00
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_7v                0x01
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_1_8v                0x02
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_2v                0x03
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_4v                0x04
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_2_7v                0x05
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_0v                0x06
+#define SX126x_SetDio3AsTcxoCtrl_tcxoVoltage_3_3v                0x07
 #define SX126x_SetDio3AsTcxoCtrl_delay                      1
 #define SX126x_SetDio3AsTcxoCtrl_delay_bytes                  3
 

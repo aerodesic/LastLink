@@ -64,6 +64,12 @@ typedef struct radio {
     /* Model name of radio IC */
     const char* model;
 
+    /* If >= 0 use this DIO as a busy indicator */
+    int busy_dio_num;
+
+    /* This contains the DIO to connect to for interrupt use */
+    int irq_dio_num;
+
 #if 0
     /* Deinit specific radio type (call into the radio module)  */
     bool (*radio_deinit)(radio_t* radio);

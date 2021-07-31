@@ -150,8 +150,11 @@ typedef struct radio_config {
     int crystal;
     uint8_t channel;
     uint8_t datarate;
-    uint8_t dios[MAX_DIOS];
+    int8_t dios[MAX_DIOS];
+    int8_t irq_dio_num;
+    int8_t busy_dio_num;
     int8_t activity;
+    bool activity_inverted;
     uint8_t reset;
     int transmit_windows;
     int window_width_percent;

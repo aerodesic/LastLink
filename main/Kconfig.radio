@@ -55,6 +55,10 @@ choice
         config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
             bool "TTGO T-Beam V1.0"
 
+        config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+            bool "TTGO T-Beam V1.1"
+            select LASTLINK_RADIO_$(RADIO_NUM)_GPIO_ACTIVITY_INVERTED
+
         config LASTLINK_RADIO_$(RADIO_NUM)_MODEL_HELTEC
             bool "HELTEC"
 
@@ -88,6 +92,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default -1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range -1 -1 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 26  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 26 26 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -103,6 +109,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 33  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 33 33 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -118,11 +126,33 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 32  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 32 32 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the DIO2 line
  
+    config LASTLINK_RADIO_$(RADIO_NUM)_IRQ_DIO_NUM
+        # depends on LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        int "DIO (not GPIO) # for IRQ"
+        default 1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 1 1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        default 0
+        range 0 0
+        help
+            The value of this item is the DIO slot number to be used for the IRQ signal.
+
+    config LASTLINK_RADIO_$(RADIO_NUM)_BUSY_DIO_NUM
+        # depends on LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        int "DIO  (not GPIO)# for BUSY"
+        default 2  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 2 2  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10 || LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        default -1
+        range -1 -1
+        help
+            The value of this item is the DIO slot number to be used for the busy cell
+
     config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_SCK
         int "SCK GPIO line"
         default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_CUSTOM
@@ -133,6 +163,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 5 5   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 14  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -148,6 +180,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 27  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 27 27 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 13  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 13 13 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -163,6 +197,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 19  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 19 19 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 12  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 12 12 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -178,6 +214,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 18  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 18 18 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 16  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 16 16 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -193,6 +231,8 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 14 14 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 23  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 23 23 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 23  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 23 23 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
@@ -208,10 +248,16 @@ menu "Radio $(RADIO_NUM) SPI configuration"
         range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO
         default 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
         range 0 0   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V10
+        default 4   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        range 4 4   if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
         default -1  if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         range -1 -1 if LASTLINK_RADIO_$(RADIO_NUM)_MODEL_SPARKFUN
         help
             Connection for the ACTIVITY LED indicator
+
+    config LASTLINK_RADIO_$(RADIO_NUM)_GPIO_ACTIVITY_INVERTED
+        depends on LASTLINK_RADIO_$(RADIO_NUM)_MODEL_TTGO_TBEAM_V11
+        bool "Inverted activity LED"
 
     config LASTLINK_RADIO_$(RADIO_NUM)_SPI_CLOCK_HZ
         int "SPI Clock speed"

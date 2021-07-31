@@ -153,7 +153,10 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO0),                     \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO1),                     \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_DIO2),                     \
+    .irq_dio_num                     = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, IRQ_DIO_NUM),                   \
+    .busy_dio_num                    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, BUSY_DIO_NUM),                  \
     .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_ACTIVITY),                 \
+    .activity_inverted               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_ACTIVITY_INVERTED),        \
     .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_RESET),                    \
     .spi_sck                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_SCK),                      \
     .spi_mosi                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, GPIO_MOSI),                     \
@@ -180,7 +183,10 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[0]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO0),                      \
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_DIO2),                      \
+    .irq_dio_num                     = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, IRQ_DIO_NUM),                   \
+    .busy_dio_num                    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, BUSY_DIO_NUM),                  \
     .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_ACTIVITY),                  \
+    .activity_inverted               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_ACTIVITY_INVERTED),         \
     .i2c_blah1                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah1),                     \
     .i2c_blah2                       = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, I2C_blah2),                     \
    },
@@ -200,6 +206,9 @@ duplicate_sequence_list_t         duplicate_sequence_numbers;
     .dios[1]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO1),                      \
     .dios[2]                         = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DIO2),                      \
     .activity                        = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_ACTIVITY),                  \
+    .irq_dio_num                     = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, IRQ_DIO_NUM),                   \
+    .busy_dio_num                    = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, BUSY_DIO_NUM),                  \
+    .activity_inverted               = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_ACTIVITY_INVERTED),         \
     .reset                           = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_RESET),                     \
     .dev                             = RADIO_CONFIG_EXPAND(CONFIG_LASTLINK_RADIO, radio, SER_DEV),                       \
    },
@@ -1010,15 +1019,17 @@ static bool linklayer_init_radio(radio_t* radio)
 
     /* Configure the dios as inputs, at least initially */
     for (int dio = 0; dio < ELEMENTS_OF(radio_config[radio->radio_num].dios); ++dio) {
-        gpio_config_t io = {
-            .intr_type = GPIO_PIN_INTR_DISABLE,
-            .mode = GPIO_MODE_INPUT,
-            .pin_bit_mask = 1ULL << radio_config[radio->radio_num].dios[dio],
-            .pull_down_en = 0,
-            .pull_up_en = 0,
-        };
+        if (radio_config[radio->radio_num].dios[dio] >= 0) {
+            gpio_config_t io = {
+                .intr_type = GPIO_PIN_INTR_DISABLE,
+                .mode = GPIO_MODE_INPUT,
+                .pin_bit_mask = 1ULL << radio_config[radio->radio_num].dios[dio],
+                .pull_down_en = 0,
+                .pull_up_en = 0,
+            };
 
-        gpio_config(&io);
+            gpio_config(&io);
+        }
     }
 
     return true;
@@ -1564,9 +1575,10 @@ static void linklayer_activity_indicator(radio_t* radio, bool active)
   #endif
 #endif
 
-    /* Turn on individual radio activity is present */
+    /* Turn on individual radio activity is present (invert if necessary) */
+    bool state = active != radio_config[radio->radio_num].activity_inverted;
     if (radio_config[radio->radio_num].activity >= 0) {
-        gpio_set_level(radio_config[radio->radio_num].activity, active);
+        gpio_set_level(radio_config[radio->radio_num].activity, state);
     }
 }
 
@@ -1746,7 +1758,7 @@ bool linklayer_init(int address, int flags, int announce)
 
         promiscuous_queue = NULL;
         sequence_number = UNDEFINED_SEQUENCE_NUMBER;
-        debug_flag = false;
+        //debug_flag = false;
         announce_interval = announce;
 
         transmit_lock = os_create_mutex();
