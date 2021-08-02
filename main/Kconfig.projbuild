@@ -166,7 +166,7 @@ menu "LastLink Configuration"
         default y
         help
             If enabled, adds a command API to serial port
-         
+
     config LASTLINK_COMMAND_MAX_CONTEXTS
         int "Number of command execution contexts"
         default 5
@@ -174,7 +174,7 @@ menu "LastLink Configuration"
         depends on LASTLINK_COMMAND_INTERFACE
         help
             Specifies the maximum number of 'in process' commands contexts
-            that can be active at a single time. 
+            that can be active at a single time.
 
     config LASTLINK_COMMAND_MAX_PENDING_REQUESTS
         int "Max requests to a spawned command"
@@ -276,6 +276,28 @@ menu "LastLink Configuration"
         config LASTLINK_RADIO_SX126x_ENABLED
             bool "Enable SX126x Driver"
             default n
+
+        config LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+            depends on LASTLINK_RADIO_SX126x_ENABLED
+            bool "Enable DUTY CYCLE receive"
+            default y
+            help
+                Enables a power-saving duty cycle receive mode at the expense
+                of (unlikely) missed packets.
+
+        config LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS
+            depends on LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+            int "Min symbols per message"
+            default 8
+                help
+                    Used in configuration of Duty Cycle receive.  Change at your own risk.
+
+        config LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
+            depends on !LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+            int "Timeout in ms for receive"
+            default 100
+                help
+                    Number ms to wait for a receive to finish
 
         config LASTLINK_RADIO_SX127x_ENABLED
             bool "Enable SX127x Driver"
@@ -479,20 +501,20 @@ menu "LastLink Configuration"
            default "LastLink"
            help
                Use this name for the beacon if none given in API.
-           
+
         config LASTLINK_DEFAULT_BEACON_INTERVAL
            int "Beacon transmit interval (0 to disable)"
            default 0
            help
                Transmit beacon every N seconds.
-           
+
         config LASTLINK_DEFAULT_BEACON_INTERVAL_RANDOMIZER
            int "Randomizer for beacon interval"
            depends on LASTLINK_DEFAULT_BEACON_INTERVAL != 0
            default 3
            help
                A number between -N and N is added to each beacon interval
-           
+
         config LASTLINK_BEACON_NAME_LENGTH
            int "Length of name in beacon packet"
            default 16

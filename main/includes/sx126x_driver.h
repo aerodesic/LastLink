@@ -216,9 +216,9 @@
 #define SX126x_SetDio3AsTcxoCtrl_delay_bytes                  3
 
 #define SX126x_SetRfFrequency                            0x86
-#define SX126x_SetRfFrequency_bytes                        3
-#define SX126x_SetRfFrequency_Hz                             0
-#define SX126x_SetRfFrequency_Hz_bytes                         3
+#define SX126x_SetRfFrequency_bytes                        4
+#define SX126x_SetRfFrequency_FREQ                           0
+#define SX126x_SetRfFrequency_FREQ_bytes                       4
 
 #define SX126x_SetPacketType                             0x8A
 #define SX126x_SetPacketType_bytes                         1

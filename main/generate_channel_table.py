@@ -38,10 +38,10 @@ class GenerateChannelTable:
     def process_crystal(self, line, lines):
         self.crystal = int(lines[line][1])
         if self.device == "sx126x":
-            self.pll_step = round(self.crystal / 2**25, 3)
+            self.pll_step = self.crystal / (2**25)
         else:
             # Default for sx127x
-            self.pll_step = round(self.crystal / 2**19, 3)
+            self.pll_step = self.crystal / (2**19)
 
         if self.debug:
             print("process_crystal: crystal %.f pll_step %.f" % (self.crystal, self.pll_step), file=sys.stderr)

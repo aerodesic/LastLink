@@ -41,28 +41,26 @@
 
 #define TAG "sx126x_driver"
 
+typedef struct sx126x_private_data sx126x_private_data_t;  // Forward ref
+
 static bool radio_stop(radio_t* radio);                              /* Stop and disassemble the radio */
 
 static bool set_sleep_mode(radio_t* radio);                          /* Set sleeping mode (low power) */
 static bool set_standby_mode(radio_t* radio);                        /* Set standby mode */
 static bool set_receive_mode(radio_t* radio);                        /* Request state change to receive mode */
 static bool activate_receive_mode(radio_t* radio);                   /* Activates receive mode */
-#ifdef ENABLE_CAD_MODE
-static bool set_cad_detect_mode(radio_t* radio);                     /* Request cad detect state */
-static bool activate_cad_detect_mode(radio_t* radio);                /* Set cad detect mode */
-#endif /* ENABLE_CAD_MODE */
 static bool set_inactive(radio_t* radio, bool inactive);             /* Set inactive/active mode */
 
 static bool set_txpower(radio_t* radio, int power);                  /* Set transmitter power level */
 static int get_txpower(radio_t* radio);                              /* Get current transmit power */
-static int set_channel(radio_t* radio, int channel);                 /* Set channel */
+static bool set_channel(radio_t* radio, int channel);                /* Request channel change */
 static int get_channel(radio_t* radio);                              /* Get channel */
-static int set_datarate(radio_t* radio, int datarate);               /* Set datarate */
+static bool change_channel(radio_t* radio, int channel);             /* Perform channel change */
+static bool set_datarate(radio_t* radio, int datarate);               /* Set datarate */
 static int get_datarate(radio_t* radio);                             /* Get datarate */
 
 static bool set_dio_irq_mask(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask);
 
-typedef struct sx126x_private_data sx126x_private_data_t;  // Forward ref
 
 
 static void catch_interrupt(void *param);
@@ -101,7 +99,7 @@ static bool set_hop_period(radio_t* radio, int hop_period);
 #endif
 static bool set_implicit_header(radio_t* radio, bool implicit_header);
 #ifdef NOTUSED
-static bool set_sync_word(radio_t* radio, uint8_t sync);
+static bool set_sync_word(radio_t* radio, uint16_t sync);
 #endif
 
 #include "sx126x_table.h"
@@ -109,19 +107,13 @@ static bool set_sync_word(radio_t* radio, uint8_t sync);
 #define RX_RECEIVE_TIME  5        /* 5 mS receive time */
 #define RX_IDLE_TIME     20       /* 20 mS idle time */
 
-#define SX_TIMER_INTERVAL  15.256    /* Microseconds per tick interval */
+#define SX_TIMER_INTERVAL  15.625    /* Microseconds per tick interval */
 
-#define SX_TIMER(ms) ((int) ((((ms * 1000)) / SX_TIMER_INTERVAL) + 0.5))
+#define SX_TIMER(ms) ((int) ((((ms * 1000.0)) / SX_TIMER_INTERVAL) + 0.5))
 
 typedef enum {
     HS_STARTUP,
-#ifdef ENABLE_CAD_MODE
-    HS_WAITING,                   /* Handler is waiting (default state) */
-    HS_WAITING_TIMER,             /* Handler is waiting for cad_restart timer */
-    HS_CAD_RESTART,               /* CAD timeout so restart */
-#endif /* ENABLE_CAD_MODE */
     HS_RECEIVING,                 /* Handler is receiving */
-    HS_RECEIVE_DONE,              /* Handler is finished receiving */
     HS_TRANSMIT_DONE,             /* Handler is finished transmitting */
     HS_TRANSMIT_DONE_PRIORITY,    /* Handler is finished transmitting priority packet */
     HS_WAIT_TX_INT,               /* Wait for TX to finish */
@@ -132,13 +124,7 @@ inline const char *handler_state_of(handler_state_t state)
 {
     switch (state) {
         case HS_STARTUP:                return "HS_STARTUP";
-#ifdef ENABLE_CAD_MODE
-        case HS_WAITING:                return "HS_WAITING";
-        case HS_WAITING_TIMER:          return "HS_WAITING_TIMER";
-        case HS_CAD_RESTART:            return "HS_CAD_RESTART";
-#endif /* ENABLE_CAD_MODE */
         case HS_RECEIVING:              return "HS_RECEIVING";
-        case HS_RECEIVE_DONE:           return "HS_RECEIVE_DONE";
         case HS_TRANSMIT_DONE:          return "HS_TRANSMIT_DONE";
         case HS_TRANSMIT_DONE_PRIORITY: return "HS_TRANSMIT_DONE";
         case HS_WAIT_TX_INT:            return "HS_WAIT_TX_INT";
@@ -149,12 +135,13 @@ inline const char *handler_state_of(handler_state_t state)
 
 typedef struct sx126x_private_data {
     radio_t*          radio;
-    uint8_t           sync_word;
+    uint16_t          sync_word;
     uint8_t           preamble_length;
     uint8_t           coding_rate;
     bool              implicit_header;
     bool              implicit_header_set;
     int               channel;
+    int               new_channel;
     uint8_t           datarate;
     uint8_t           bandwidth;
     int               bandwidth_bits;
@@ -165,14 +152,17 @@ typedef struct sx126x_private_data {
     uint8_t           tx_ramp;
     packet_t          *rx_next_packet;
     int               rx_interrupts;
+    bool              rx_busy;
     int               hqi_interrupts;
 #ifdef MEASURE_RX_TIME
     uint64_t          rx_start_time;
     uint64_t          rx_end_time;
 #endif
-#define RX_TIMEOUT_TIME  1000
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
+  #define RX_TIMEOUT_TIME CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
+#endif
     int               tx_interrupts;
-#define TX_TIMEOUT_TIME  10000
+#define TX_TIMEOUT_TIME  1000
 #ifdef USE_FHSS
     int               fhss_interrupts;
     int               hop_period;
@@ -187,16 +177,6 @@ typedef struct sx126x_private_data {
     packet_t         *current_packet;
     int               current_packet_window;          /* Calculated window number for this packet */
     int               packet_crc_errors;
-#ifdef ENABLE_CAD_MODE
-    int               cad_interrupts;
-    int               cad_last_interrupts;
-    int               cad_detected;
-    int               cad_timeouts;
-    os_timer_t        cad_restart_timer_id;           /* If used, is timer id of cad restart timer */
-#define HANDLER_WAKEUP_TIMER_PERIOD 1000              /* Once a second */
-    simpletimer_t     handler_wakeup_timer_status;    /* So we can check status of non-readble timer */
-    os_timer_t        handler_wakeup_timer_id;        /* ID of radio wakeup timer in case things hang */
-#endif /* ENABLE_CAD_MODE */
     int               tx_timeouts;
     int               rx_timeouts;
     int               wakeup_ticks;
@@ -223,10 +203,6 @@ static int          global_number_radios_active;
 
 #define MAX_IRQ_PENDING    50
 
-#define GPIO_DIO0         0
-//#define GPIO_DIO1         1
-#define GPIO_DIO2         2
-
 #define GLOBAL_IRQ_THREAD_STACK    8192
 #define GLOBAL_IRQ_THREAD_PRIORITY (configMAX_PRIORITIES-1)  /* Highest priority */
 
@@ -234,11 +210,7 @@ typedef struct handler_queue_event {
     radio_t *radio;
     enum {
         HQI_INTERRUPT=1,   /* A hardware interrupt */
-#ifdef ENABLE_CAD_MODE
-        HQI_RESET,         /* Reset from hung software */
-#else
         HQI_SET_STATE,     /* Set to a specific  state */
-#endif /* ENABLE_CAD_MODE */
         HQI_WINDOW,        /* A window */
     } type;
     union {
@@ -257,7 +229,7 @@ static bool busy_wait_debug(radio_t* radio, int line)
 
     int elapsed = get_milliseconds() - start;
 
-    if (elapsed >= 5) {
+    if (elapsed >= 10) {
         ESP_LOGI(TAG, "%s: elapsed %d: line %d", __func__, elapsed, line);
     }
 
@@ -266,44 +238,6 @@ static bool busy_wait_debug(radio_t* radio, int line)
 
 #define busy_wait(radio) busy_wait_debug(radio, __LINE__)
 
-#ifdef ENABLE_CAD_MODE
-/* Called when radio's wakeup timer fires - generates 'interrupt' to handler */
-static void handler_wakeup_timer(os_timer_t timer_id)
-{
-    radio_t* radio = (radio_t*) os_get_timer_data(timer_id);
-    sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
-
-    if (radio->inactive) {
-        /* inactive initiated */
-        ESP_LOGD(TAG, "%s: inactive detected", __func__);
-
-        /* Stop the periodic wakeup timer */
-        os_stop_timer(data->handler_wakeup_timer_id);
-    } else {
-        if (data->cad_last_interrupts == data->cad_interrupts) {
-            /* No CAD interrupts detected in the past few cycles, so reset state via event */
-
-            handler_queue_event_t event = {
-                .type = HQI_RESET,
-                .radio = radio,
-                .state = data->handler_state,
-            };
-
-    printf("%s: radio %d timeout\n", __func__, radio->radio_num);
-
-            os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
-
-        } else {
-            data->cad_last_interrupts = data->cad_interrupts;
-        }
-
-        data->wakeup_ticks++;
-
-        /* Restart the software timer that is used to indicate system timer status, which we cannot read. */
-        simpletimer_start(&data->handler_wakeup_timer_status, HANDLER_WAKEUP_TIMER_PERIOD);
-    }
-}
-#else
 static bool set_handler_state(radio_t* radio, handler_state_t state)
 {
     handler_queue_event_t event = {
@@ -313,8 +247,6 @@ static bool set_handler_state(radio_t* radio, handler_state_t state)
     };
     return  os_put_queue_with_timeout(global_interrupt_handler_queue, (os_queue_item_t) &event, 0);
 }
-
-#endif /* ENABLE_CAD_MODE */
 
 inline static int calculate_window_number(radio_t* radio, packet_t *packet)
 {
@@ -430,7 +362,7 @@ static bool dev_SetSleep(radio_t* radio, bool retain, bool rtc)
     if (retain) {
         SX_PUT(buffer, SX126x_SetSleep_Param, SX126x_SetSleep_WarmStart | rtc ? SX126x_SetSleep_Rtc : 0);
     }
-    
+
     return radio->io_transact(radio, SX126x_SetSleep, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetSleep, 0, 0, buffer, sizeof(buffer), NULL, 0);
 }
@@ -443,7 +375,7 @@ static bool dev_SetStandby(radio_t* radio, uint8_t mode)
     uint8_t buffer[SX126x_SetStandby_bytes] = {0};
 
     SX_PUT(buffer, SX126x_SetStandby_Param, mode);
-    
+
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetStandby, 0, 0, buffer, sizeof(buffer), NULL, 0);
     bool ok = radio->io_transact(radio, SX126x_SetStandby, 0, 0, buffer, sizeof(buffer), NULL, 0);
     if (ok) {
@@ -542,63 +474,11 @@ static bool dev_SetTx(radio_t* radio, uint32_t timeout)
 
     SX_PUT(buffer, SX126x_SetTx_Timeout, timeout);
 
-    //bool ok = radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    bool ok = busy_wait(radio)&& radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    bool ok = radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0);
 
     return ok;
 }
-
-/*
- * Place device into receive mode.
- */
-static bool dev_SetRx(radio_t* radio, uint32_t timeout)
-{
-    uint8_t buffer[SX126x_SetRx_bytes] = {0};
-
-    SX_PUT(buffer, SX126x_SetRx_Timeout, timeout);
-
-    return radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0);
-}
-
-/*
- * Place device into receive mode.
- */
-static bool dev_SetRxDutyCycle(radio_t* radio, int rx_period, int sleep_period)
-{
-    uint8_t buffer[SX126x_SetRxDutyCycle_bytes] = {0};
-
-    SX_PUT(buffer, SX126x_SetRxDutyCycle_rxPeriod, rx_period);
-    SX_PUT(buffer, SX126x_SetRxDutyCycle_sleepPeriod, sleep_period);
-
-    return radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0);
-}
-
-#ifdef ENABLE_CAD_MODE
-/*
- * Place device into CAD mode.
- */
-static bool dev_SetCad(radio_t* radio)
-{
-    return radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0);
-}
-
-static bool dev_SetCadParams(radio_t* radio, int symbol_num, int detect_peak, int detect_min, int exit_mode, int timeout)
-{
-    uint8_t buffer[SX126x_SetCadParams_bytes] = {0};
-
-    SX_PUT(buffer, SX126x_SetCadParams_cadSymbolNum, symbol_num);
-    SX_PUT(buffer, SX126x_SetCadParams_cadDetPeak, detect_peak);
-    SX_PUT(buffer, SX126x_SetCadParams_cadDetMin, detect_min);
-    SX_PUT(buffer, SX126x_SetCadParams_cadExitMode, exit_mode);
-    SX_PUT(buffer, SX126x_SetCadParams_cadTimeout, timeout);
-
-    return radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0);
-}
-#endif
 
 static bool dev_SetBufferBaseAddress(radio_t* radio, int txbase, int rxbase)
 {
@@ -627,7 +507,7 @@ static bool dev_SetRxTxFallbackMode(radio_t* radio, int mode)
 
     SX_PUT(buffer, SX126x_SetRxTxFallbackMode_Param, mode);
 
-    return radio->io_transact(radio, SX126x_SetLoRaSymbNumTimeout, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+    return radio->io_transact(radio, SX126x_SetRxTxFallbackMode, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRxTxFallbackMode, 0, 0, buffer, sizeof(buffer), NULL, 0);
 }
 
@@ -682,6 +562,24 @@ static bool dev_GetIrqStatus(radio_t* radio, uint8_t* chipmode, uint8_t* command
     return ok;
 }
 
+/*
+ *
+ * show_device_status - debug command
+ */
+static void show_irq_status(radio_t* radio, const char* caller)
+{
+    uint8_t chipmode;
+    uint8_t command;
+    uint16_t irq_flags;
+
+    if (dev_GetIrqStatus(radio, &chipmode, &command, &irq_flags)) {
+        sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
+        ESP_LOGI(TAG, "%s: chipmode 0x%x command 0x%x irq_flags hard %03x soft %03x", caller, chipmode, command, irq_flags, data->irq_flags);
+    } else {
+        ESP_LOGE(TAG, "%s: GetIrqStatus failed", caller);
+    }
+}
+
 static bool dev_ClearIrqStatus(radio_t* radio, uint16_t irqflags)
 {
     uint8_t buffer[SX126x_ClearIrqStatus_bytes] = {0};
@@ -710,11 +608,11 @@ static bool dev_Calibrate(radio_t* radio, uint8_t modules)
 /*
  * Perform transaction to set the frequency values.
  */
-static bool dev_SetFrequency(radio_t* radio, uint32_t hz)
+static bool dev_SetFrequency(radio_t* radio, uint32_t FREQ)
 {
     uint8_t buffer[SX126x_SetRfFrequency_bytes];
 
-    SX_PUT(buffer, SX126x_SetRfFrequency_Hz, hz);
+    SX_PUT(buffer, SX126x_SetRfFrequency_FREQ, FREQ);
 
     return radio->io_transact(radio, SX126x_SetRfFrequency, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRfFrequency, 0, 0, buffer, sizeof(buffer), NULL, 0);
@@ -796,7 +694,7 @@ static bool dev_SetTxParams(radio_t* radio, int tx_power, int tx_ramp)
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetTxParams, 0, 0, tx_params, sizeof(tx_params), NULL, 0);
 }
 
-static bool dev_UpdatePacketParams(radio_t* radio)
+static bool dev_UpdatePacketParams(radio_t* radio, uint8_t payload)
 {
     sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
 
@@ -804,7 +702,7 @@ static bool dev_UpdatePacketParams(radio_t* radio)
 
     SX_PUT(packet_params, SX126x_SetPacketParams_PreambleLength, data->preamble_length);
     SX_PUT(packet_params, SX126x_SetPacketParams_HeaderType, data->implicit_header ? SX126x_SetPacketParams_HeaderType_Fixed : SX126x_SetPacketParams_HeaderType_Variable);
-    SX_PUT(packet_params, SX126x_SetPacketParams_PayloadLength, CONFIG_LASTLINK_MAX_PACKET_LENGTH);
+    SX_PUT(packet_params, SX126x_SetPacketParams_PayloadLength, payload);
     SX_PUT(packet_params, SX126x_SetPacketParams_CrcType, data->enable_crc ? SX126x_SetPacketParams_CrcType_On : SX126x_SetPacketParams_CrcType_Off);
     SX_PUT(packet_params, SX126x_SetPacketParams_InvertIQ, SX126x_SetPacketParams_InvertIQ_Off);
 
@@ -812,11 +710,70 @@ static bool dev_UpdatePacketParams(radio_t* radio)
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetPacketParams, 0, 0, packet_params, sizeof(packet_params), NULL, 0);
 }
 
+/*
+ * Place device into receive mode.
+ */
+static bool dev_SetRx(radio_t* radio, uint32_t timeout)
+{
+    uint8_t buffer[SX126x_SetRx_bytes] = {0};
+
+//ESP_LOGI(TAG, "%s: timeout is %.3f (%u)", __func__, (timeout * (SX_TIMER_INTERVAL / 1000000.0)), timeout);
+
+    SX_PUT(buffer, SX126x_SetRx_Timeout, timeout);
+
+    bool ok = radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+ //   show_irq_status(radio, __func__);
+    return ok;
+    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0);
+}
+
+/*
+ * Place device into receive mode.
+ */
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+static bool dev_SetRxDutyCycle(radio_t* radio, int rx_period, int sleep_period)
+{
+    uint8_t buffer[SX126x_SetRxDutyCycle_bytes] = {0};
+
+    SX_PUT(buffer, SX126x_SetRxDutyCycle_rxPeriod, rx_period);
+    SX_PUT(buffer, SX126x_SetRxDutyCycle_sleepPeriod, sleep_period);
+
+    return radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0);
+}
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
+
+
+#ifdef ENABLE_CAD_MODE
+/*
+ * Place device into CAD mode.
+ */
+static bool dev_SetCad(radio_t* radio)
+{
+    return radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0) && busy_wait(radio);
+    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0);
+}
+
+static bool dev_SetCadParams(radio_t* radio, int symbol_num, int detect_peak, int detect_min, int exit_mode, int timeout)
+{
+    uint8_t buffer[SX126x_SetCadParams_bytes] = {0};
+
+    SX_PUT(buffer, SX126x_SetCadParams_cadSymbolNum, symbol_num);
+    SX_PUT(buffer, SX126x_SetCadParams_cadDetPeak, detect_peak);
+    SX_PUT(buffer, SX126x_SetCadParams_cadDetMin, detect_min);
+    SX_PUT(buffer, SX126x_SetCadParams_cadExitMode, exit_mode);
+    SX_PUT(buffer, SX126x_SetCadParams_cadTimeout, timeout);
+
+    return radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0);
+}
+#endif
+
 #ifdef ENABLE_CAD_MODE
 static bool dev_UpdateCadParams(radio_t* radio)
 {
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
-    
+
     int cadSymbolNum = SX126x_SetCadPraams_cadSymbolNum_CAD_ON_1_SYMB;
     int cadDetPeak;
     int cadDetMin;
@@ -898,13 +855,13 @@ static bool set_dio_irq_mask(radio_t* radio, int irq_mask, int dio0_mask, int di
     }
     if (dio0_mask >= 0) {
         data->dio_mask[0] = dio0_mask;
-    } 
+    }
     if (dio1_mask >= 0) {
         data->dio_mask[1] = dio1_mask;
-    } 
+    }
     if (dio2_mask >= 0) {
         data->dio_mask[2] = dio2_mask;
-    } 
+    }
 
     bool ok = dev_UpdateDioIrqMasks(radio);
     if (!ok) {
@@ -924,7 +881,8 @@ static bool dev_ReadBuffer(radio_t* radio, int address, uint8_t* buffer, int len
 
 static bool dev_WriteBuffer(radio_t* radio, int address, uint8_t* buffer, int len)
 {
-    bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0) && busy_wait(radio);
+    //bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0) && busy_wait(radio);
+    bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 16, address<<8, buffer, len, NULL, 0) && busy_wait(radio);
     //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0);
 
 #ifdef NOTUSED
@@ -1048,7 +1006,7 @@ static bool dev_UpdateModulationParams(radio_t* radio)
     }
 
     SX_PUT(buffer, SX126x_SetModulationParams_LdOpt, LdOpt);
-    
+
     return radio->io_transact(radio, SX126x_SetModulationParams, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
     //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetModulationParams, 0, 0, buffer, sizeof(buffer), NULL, 0);
 }
@@ -1076,11 +1034,7 @@ bool sx126x_create(radio_t* radio)
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
         radio->print_status     = print_status;
 #endif
-#ifdef ENABLE_CAD_MODE
-        radio->set_receive_mode = set_cad_detect_mode;
-#else
         radio->set_receive_mode = set_receive_mode;
-#endif /* ENABLE_CAD_MODE */
         radio->set_txpower      = set_txpower;
         radio->get_txpower      = get_txpower;
         radio->set_channel      = set_channel;
@@ -1101,8 +1055,8 @@ bool sx126x_create(radio_t* radio)
 
             /* Initialize defaults */
             data->radio                     = radio;   /* Point back to owner radio */
-            data->sync_word                 = 0x12;    /* 0x34 LoRaWAN; 0x12 LoRa */
-            data->preamble_length           = 32;      /* Was 8 */
+            data->sync_word                 = SX126x_REG_LoRa_Sync_Word_PRIVATE;
+            data->preamble_length           = 32;
             data->coding_rate               = 5;
             data->implicit_header           = false;
             data->implicit_header_set       = false;
@@ -1141,79 +1095,83 @@ static void rx_handle_interrupt(radio_t *radio)
 
     data->rx_interrupts++;
 
+    bool crc_error = (data->irq_flags & SX126x_IrqFlags_CrcErr) != 0;
+    bool timeout = (data->irq_flags & SX126x_IrqFlags_Timeout) != 0;
+
     /* Clear rx interrupt */
-    data->irq_flags &= ~(SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout);
+    data->irq_flags &= ~(SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr);
 
-    uint8_t chipmode;
-    uint8_t command;
-    uint8_t message_start;
-    uint8_t message_length;
+    if  (crc_error) {
+        ESP_LOGE(TAG, "%s: rxint with crc", __func__);
+        data->packet_crc_errors++;
+    } else {
+        uint8_t chipmode;
+        uint8_t command;
+        uint8_t message_start;
+        uint8_t message_length;
 
-    if (dev_GetRxBufferStatus(radio, &chipmode, &command, &message_length, &message_start)) {
+        if (dev_GetRxBufferStatus(radio, &chipmode, &command, &message_length, &message_start)) {
 
-         /* Cannot reliably capture packet if CRC error so don't even try */
-         if ((data->irq_flags & (SX126x_IrqFlags_CrcErr | SX126x_IrqFlags_Timeout )) == 0) {
+            if (!timeout) {
 
-            /* Get a packet */
-            packet_t* packet = data->rx_next_packet;
-            if (packet != NULL) {
+                /* Get a packet */
+                packet_t* packet = data->rx_next_packet;
+                if (packet != NULL) {
 
-                data->rx_next_packet = NULL;
+                    data->rx_next_packet = NULL;
 
-                uint8_t status;
+                    uint8_t status;
 
-                if (dev_GetPacketStatus(radio, &status, &packet->rssi, &packet->snr, NULL) &&
-                    dev_ReadBuffer(radio, message_start, packet->buffer, message_length)) {
+                    if (dev_GetPacketStatus(radio, &status, &packet->rssi, &packet->snr, NULL) &&
+                        dev_ReadBuffer(radio, message_start, packet->buffer, message_length)) {
 #ifdef CONFIG_LASTLINK_CRC16_PACKETS
-                    bool crcok = false;
-                    if (message_length >= 3) {
-                        /* Check the add crc on the packets */
-                        crcok = calc_crc16(CRC16_SEED, packet->buffer, message_length) == 0;
-                        if (crcok) {
-                           message_length = message_length - 2;
+                        bool crcok = false;
+                        if (message_length >= 3) {
+                            /* Check the addtional crc on the packets */
+                            crcok = calc_crc16(CRC16_SEED, packet->buffer, message_length) == 0;
+                            if (crcok) {
+                               message_length = message_length - 2;
+                            } else {
+                               dump_buffer("CRC ERROR", packet->buffer, message_length);
+                            }
                         }
-                    }
 #else
-                    bool crcok = true;
+                        bool crcok = true;
 #endif
+                        /* Reactivate receiver now */
+                        activate_receive_mode(radio);
 
-                    /* Buffer has been read.  Set length */
-                    packet->length = message_length;
-                    packet->crc_ok = crcok;
-                    packet->radio_num = radio->radio_num;
+                        /* Buffer has been read.  Set length */
+                        packet->length = message_length;
+                        packet->crc_ok = crcok;
+                        packet->radio_num = radio->radio_num;
 
-                    /* Pass it to protocol layer */
-                    radio->on_receive(ref_packet(packet));
+                        /* Pass it to protocol layer */
+                        radio->on_receive(ref_packet(packet));
 
-                    /* Calculate window and starting point */
-                    int window = calculate_window_number(radio, packet);
-                    int time_of_flight = get_message_time(radio, packet->length);
+                        /* Calculate window and starting point */
+                        int window = calculate_window_number(radio, packet);
+                        int time_of_flight = get_message_time(radio, packet->length);
 
 #ifdef MEASURE_RX_TIME
 int measured = (int) (data->rx_end_time - data->rx_start_time);
 printf("%s: rx msg time: calc %d measured %d delta %d\n", __func__, time_of_flight, measured, time_of_flight - measured);
 #endif /* MEASURE_RX_TIME */
 
-                    /* Synchronize window to align to next assumed slot (it is reset inside interval handler) */
-                    os_stop_timer(data->window_timer_id);
-                    data->window_number = window;
-                    os_set_timer(data->window_timer_id, data->window_width - time_of_flight);
+                        /* Synchronize window to align to next assumed slot (it is reset inside interval handler) */
+                        os_stop_timer(data->window_timer_id);
+                        data->window_number = window;
+                        os_set_timer(data->window_timer_id, data->window_width - time_of_flight);
+                    }
+
+                    release_packet(packet);
+
+                } else {
+                    data->packet_memory_failed++;
                 }
-
-                release_packet(packet);
-
-            } else {
-                data->packet_memory_failed++;
             }
         } else {
         }
-    } else {
-//ESP_LOGE(TAG, "%s: errors %02x", __func__, data->irq_flags);
-        if ((data->irq_flags & SX126x_IrqFlags_CrcErr) != 0) {
-ESP_LOGE(TAG, "%s: rxint with crc", __func__);
-           data->packet_crc_errors++;
-        }
-        data->irq_flags &= ~(SX126x_IrqFlags_CrcErr | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_Timeout);
     }
 }
 
@@ -1291,7 +1249,7 @@ static bool tx_recycle_packet(radio_t* radio)
         ok = os_put_queue_with_timeout(radio->transmit_queue, (os_queue_item_t) &data->current_packet, 0);
         if (ok) {
             data->current_packet = NULL;
-        } 
+        }
     }
     return ok;
 }
@@ -1304,10 +1262,73 @@ static bool tx_start_packet(radio_t* radio)
     //bool ok = dev_SetStandby(radio, SX126x_SetStandby_XOSC);
     bool ok = dev_SetStandby(radio, SX126x_SetStandby_RC);
 
-    if (ok) {
-        show_device_status(radio, __func__);
+    // Calculate length
+    uint8_t length = data->current_packet->length;
 
-        /* Workaround:
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
+    unsigned char crcbuf[2];
+#endif /* CONFIG_LASTLINK_CRC16_PACKETS */
+
+    if (ok) {
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
+        unsigned short crc = calc_crc16(CRC16_SEED, data->current_packet->buffer, length);
+
+        crcbuf[0] = crc >> 8;
+        crcbuf[1] = crc & 0xFF;
+
+        length += 2;
+#endif /* CONFIG_LASTLINK_CRC16_PACKETS */
+
+        if (!dev_UpdatePacketParams(radio, length)) {
+            ESP_LOGE(TAG, "%s: unable set packet params", __func__);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        if (! set_dio_irq_mask(radio,
+                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
+                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
+                0, 0)) {
+
+            ESP_LOGE(TAG, "%s: unable to set dio/irq mask", __func__);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        if (!dev_SetBufferBaseAddress(radio, 0,  0)) {
+            ESP_LOGE(TAG, "%s: unable to set buffer base address", __func__);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        dump_buffer("OUT", data->current_packet->buffer, length);
+        if (!dev_WriteBuffer(radio, 0, data->current_packet->buffer, length)) {
+            ESP_LOGE(TAG, "%s: Unable to write packet data", __func__);
+            ok = false;
+        }
+    }
+
+#ifdef CONFIG_LASTLINK_CRC16_PACKETS
+    if (ok) {
+        if (!dev_WriteBuffer(radio, length, crcbuf, sizeof(crcbuf))) {
+            ESP_LOGE(TAG, "%s: Unable to write crc", __func__);
+            ok = false;
+        }
+    }
+#endif /* CONFIG_LASTLINK_CRC16_PACKETS */
+
+    if (ok) {
+        if (! dev_ClearIrqStatus(radio, 0xFFFF)) {
+            ESP_LOGE(TAG, "%s: Unable to clear irq status", __func__);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        /* Sensitivity Workaround:
          * Datasheet v1.1 workaround: Before any packet transmission, bit #2 at address 0x0889 shall be set to:
          *   • 0 if the LoRa BW = 500 kHz
          *   • 1 for any other LoRa BW
@@ -1316,6 +1337,7 @@ static bool tx_start_packet(radio_t* radio)
         uint8_t txmod[1];
         if (! dev_ReadRegister(radio, SX126x_REG_TxModulation, txmod, sizeof(txmod))) {
             ESP_LOGE(TAG, "%s: Unable to read TxModulation", __func__);
+            ok = false;
         } else {
             uint8_t txmodout[1];
             if (data->bandwidth == BW500000) {
@@ -1326,52 +1348,23 @@ static bool tx_start_packet(radio_t* radio)
             if (txmod[0] != txmodout[0]) {
                 if (! dev_WriteRegister(radio, SX126x_REG_TxModulation, txmod, sizeof(txmod))) {
                     ESP_LOGE(TAG, "%s: Unable to write TxModulation", __func__);
+                    ok = false;
                 }
             }
         }
-        /* end workaround */
-    } else {
-        ESP_LOGE(TAG, "%s: Standby failed", __func__);
+        /* end sensitivity workaround */
     }
 
-    show_device_status(radio, __func__);
-
-    ok = dev_WriteBuffer(radio, 0, data->current_packet->buffer, data->current_packet->length);
-
-#ifdef CONFIG_LASTLINK_CRC16_PACKETS
     if (ok) {
-        unsigned short crc = calc_crc16(CRC16_SEED, data->current_packet->buffer, data->current_packet->length);
-        unsigned char crcbuf[2] = { crc >> 8, crc & 0xFF };
-
-        ok = WriteBuffer(radio, data->current_packet->length, crcbuf, sizeof(crcbuf));
-    }
-#endif
-
-    if (ok) {
-        show_device_status(radio, __func__);
-
-        ok = set_dio_irq_mask(radio,
-                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
-                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
-                0, 0);
-
-        if (ok) {
-            show_device_status(radio, __func__);
-            ok = dev_ClearIrqStatus(radio, 0xFFFF);
-            if (ok) {
-                ok = dev_SetTx(radio, SX_TIMER(TX_TIMEOUT_TIME));
-                // ok = dev_SetTx(radio, 0);
-            } else {
-               ESP_LOGE(TAG, "%s: ClearIrqStatus failed", __func__);
-            }
-        } else {
-            ESP_LOGE(TAG, "%s: set_dio_irq_mask failed", __func__);
+        if (!dev_SetTx(radio, SX_TIMER(TX_TIMEOUT_TIME))) {
+            ESP_LOGE(TAG, "%s: unable to start transmit", __func__);
+            ok = false;
         }
-    } else {
-        ESP_LOGE(TAG, "%s: dev_WriteBuffer failed", __func__);
     }
 
-    show_device_status(radio, __func__);
+    if (!ok) {
+        show_device_status(radio, __func__);
+    }
 
 ESP_LOGI(TAG, "%s: ok %s", __func__, ok ? "True" : "False");
 
@@ -1387,15 +1380,6 @@ static void transmit_start(radio_t* radio)
 ESP_LOGI(TAG, "%s: called for radio %d", __func__, radio->radio_num);
     // STUB - not used
 }
-
-#ifdef ENABLE_CAD_MODE
-static void cad_restart(os_timer_t timer_id)
-{
-ESP_LOGD(TAG, "%s", __func__);
-    radio_t *radio = (radio_t*) os_get_timer_data(timer_id);
-    set_cad_detect_mode(radio);
-}
-#endif /* ENABLE_CAD_MODE */
 
 static void global_interrupt_handler(void* param)
 {
@@ -1414,22 +1398,13 @@ static void global_interrupt_handler(void* param)
                 sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
 
                 switch (event.type) {
-#ifdef ENABLE_CAD_MODE
-                    case HQI_RESET: {
-                        /* Force state transition */
-                        data->handler_state = event.state;
-                        data->cad_timeouts++;
-                        break;
-                    } 
-#else
                     case HQI_SET_STATE: {
                         data->handler_state = event.state;
                         ESP_LOGE(TAG, "%s: HQI_SET_STATE event", __func__);
                         break;
                     }
-#endif /* ENABLE_CAD_MODE */
 
-                    case HQI_INTERRUPT: { 
+                    case HQI_INTERRUPT: {
                         // ESP_LOGE(TAG, "%s: interrupt detected radio %d", __func__, radio->radio_num);
                         data->hqi_interrupts++;
                         break;
@@ -1466,9 +1441,9 @@ static void global_interrupt_handler(void* param)
                     }
 
                     /* If status says data is present, */
-//ESP_LOGI(TAG, "%s: irq chipmode 0x%x command 0x%x irq_flags 0x%04x", __func__, chipmode, command, irq_flags);
-     
+
                     if (irq_flags != 0) {
+ESP_LOGI(TAG, "%s: irq chipmode 0x%x command 0x%x irq_flags 0x%04x", __func__, chipmode, command, irq_flags);
                         //ESP_LOGI(TAG, "%s: irq_flags 0x%x", __func__, irq_flags);
 
                         /* Remember new interrupt flags not yet serviced */
@@ -1476,7 +1451,6 @@ static void global_interrupt_handler(void* param)
 
                         /* Physically clear the interrupts detected */
                         dev_ClearIrqStatus(radio, irq_flags);
-
 //ESP_LOGI(TAG, "%s: clear irq status %x", __func__, irq_flags);
                     }
 
@@ -1486,13 +1460,6 @@ static void global_interrupt_handler(void* param)
                         data->irq_flags &= ~SX126x_IRQ_FHSS_CHANGE_CHANNEL;
                     }
 #endif /* USE_FHSS */
-
-#ifdef DISPLAY_HANDLER_STATE
-                    if (data->handler_state != data->last_handler_state) {
-                        ESP_LOGE(TAG, "Handler state %s\n", handler_state_of(data->handler_state));
-                        data->last_handler_state = data->handler_state;
-                    }
-#endif
 
                     /* Allocate a new receive packet if we can */
                     if (data->rx_next_packet == NULL) {
@@ -1532,87 +1499,55 @@ static void global_interrupt_handler(void* param)
                     switch (data->handler_state) {
                         default:
                         case HS_STARTUP: {
-                            /* Default state of receiving until interrupt seen or transmit packet is ready to go.
-                             * To start transmit, caller places packet into the transmit queue and puts a radio*
-                             * pointer into the handler queue.  The handler sees this pointer and determines if
-                             * it can start a new packet at that time.  If the handerl is in receive mode and
-                             * the transmit delay timer has expired, it attempts to start the packet.
-                             */
+                            activate_receive_mode(radio);
+                            data->handler_state = HS_RECEIVING;
                             break;
                         }
 
-#ifdef ENABLE_CAD_MODE
-                        /*
-                         * Waiting in Carrier Detect mode.  When we get an input signal, go to receive mode.
-                         * If we get a packet to send, go to transmit mode if it's been long enough since
-                         * lasst receive/transmit.
-                         */
-
-                        case HS_WAITING: {
-                            if ((data->irq_flags & (SX126x_IrqFlags_CadDone)) != 0) {
-                                data->cad_interrupts++;
-
-                                if ((data->irq_flags & (SX126x_IrqFlags_CadDetected)) != 0) {
-                                    data->cad_detected++;
-                                    data->handler_state = HS_RECEIVING;
-                                }
-
-                                data->irq_flags &= ~(SX126x_IrqFlags_CadDone | SX126x_IrqFlags_CadDetected);
-                            }
-
-                            if ((data->handler_state == HS_WAITING) && (event.type == HQI_WINDOW)) {
-//printf("%s: window %d\n", __func__, data->current_packet_window);
-                                /* If packet exists and it's window id is for the current window, start it going */
-                                if (tx_next_packet(radio)) {
-                                    if (data->current_packet_window == event.window) {
-                                        if (packet_lock(data->current_packet)) {
-                                            /* Remains locked through the interrupt return */
-                                            tx_start_packet(radio);
-                                            data->handler_state = HS_WAIT_TX_INT;
-                                        } else {
-                                            /* Recycle packet to end of queue in hopes we can do some other work while waiting. */
-                                            /* If not, we'll keep moving it back into the queue on each CAD interrupt for a while. */
-                                            tx_recycle_packet(radio);
-                                        }
-                                    }
-//else { printf("%s: window %d want %d\n", __func__, event.window, data->current_packet_window); }
-                                }
-                            }
-                            break;
-                        }
-#endif /* ENABLE_CAD_MODE */
-
-                        /*
-                         * A carrier was detected.  Attempt to receive the packet or wait for timeout.
-                         */
+                        /* Waiting for packet or timeout */
                         case HS_RECEIVING: {
-                            if (data->irq_flags & SX126x_IrqFlags_RxDone) {
+                            bool restart_receive = true;   /* By default we restart the receive cycle */
+                            if (data->irq_flags & SX126x_IrqFlags_HeaderValid) {
+                                data->rx_busy = true;
+ESP_LOGI(TAG, "%s: header valid", __func__);
+#ifdef MEASURE_RX_TIME
+                                data->rx_start_time = get_milliseconds();
+#endif /* MEASURE_RX_TIME */
+                                data->irq_flags &= ~SX126x_IrqFlags_HeaderValid;
+
+                            } else if (data->irq_flags & SX126x_IrqFlags_RxDone) {
+ESP_LOGI(TAG, "%s: rx done", __func__);
                                 /* Packet arrived.  Process it */
 #ifdef MEASURE_RX_TIME
                                 data->rx_end_time = get_milliseconds();
 #endif /* MEASURE_RX_TIME */
+                                data->rx_busy = false;
+
                                 rx_handle_interrupt(radio);
+
+                                /* rx_handle_interrupt has reactivated already  */
+                                restart_receive = false;
 
                                 /* Allocate a new packet if we can */
                                 if (data->rx_next_packet == NULL) {
                                     data->rx_next_packet = allocate_packet();
                                 }
-                                data->handler_state = HS_RECEIVE_DONE;
+                            } else if ((data->irq_flags & SX126x_IrqFlags_Timeout) != 0) {
+                                data->irq_flags &= ~SX126x_IrqFlags_Timeout;
 
-                            } else if ((data->irq_flags & (SX126x_IrqFlags_Timeout)) != 0) {
                                 data->rx_timeouts++;
 
                                 /* Receive attempt timed out.  Return to active mode and clear receive busy */
                                 data->irq_flags &= ~(SX126x_IrqFlags_Timeout);
-#ifdef ENABLE_CAD_MODE
-                                data->handler_state = HS_CAD_RESTART;
-#else
                                 if (tx_next_packet(radio)) {
                                     if (data->current_packet_window == event.window) {
                                         if (packet_lock(data->current_packet)) {
                                             /* Remains locked through the interrupt return */
                                             tx_start_packet(radio);
                                             data->handler_state = HS_WAIT_TX_INT;
+
+                                            /* Transmitting now so do not restart receive */
+                                            restart_receive = false;
                                         } else {
                                             /* Recycle packet to end of queue in hopes we can do some other work while waiting. */
                                             /* If not, we'll keep moving it back into the queue on each CAD interrupt for a while. */
@@ -1620,10 +1555,23 @@ static void global_interrupt_handler(void* param)
                                         }
                                     }
                                 }
-//else { printf("%s: window %d want %d\n", __func__, event.window, data->current_packet_window); }
-                           }
-#endif /* ENABLE_CAD_MODE */
+                            } else {
+                                restart_receive = false;  /* No work to do */
+                            }
 
+
+                            /* If a channel change has been made, do it now */
+                            if (data->new_channel >= 0) {
+                                if (!change_channel(radio, data->new_channel)) {
+                                    ESP_LOGE(TAG, "%s: change_channel to %d failed", __func__, data->new_channel);
+                                }
+                                data->new_channel = -1;
+                                restart_receive = true;
+                            }
+
+                            if (restart_receive) {
+                                activate_receive_mode(radio);
+                            }
                             break;
                         }
 
@@ -1637,8 +1585,16 @@ static void global_interrupt_handler(void* param)
                                 } else {
                                     ESP_LOGI(TAG, "%s: tx done", __func__);
                                 }
-                                /* Turns off indicator and releases packet */
-                                data->handler_state = tx_handle_interrupt(radio, failed) ? HS_TRANSMIT_DONE_PRIORITY : HS_TRANSMIT_DONE;
+
+                                /* Turns off indicator and releases packet (failed is true for Timeout) */
+                                if (tx_handle_interrupt(radio, failed)) {
+                                    /* High  priority finish*/
+                                } else {
+                                    /* Low priority finish */
+                                }
+                                /* Start another receive window */
+                                data->handler_state = HS_RECEIVING;
+                                activate_receive_mode(radio);
                             }
                             break;
                         }
@@ -1647,94 +1603,6 @@ static void global_interrupt_handler(void* param)
 #ifdef DISPLAY_HANDLER_STATE
                     if (data->handler_state != data->last_handler_state) {
                         ESP_LOGE(TAG, "Handler state %s\n", handler_state_of(data->handler_state));
-                        data->last_handler_state = data->handler_state;
-                    }
-#endif
-
-                    switch (data->handler_state) {
-                        case HS_STARTUP:
-#ifdef ENABLE_CAD_MODE
-                        case HS_CAD_RESTART: {
-                            activate_cad_detect_mode(radio);
-                            data->handler_state = HS_WAITING;
-                            break;
-                        }
-
-                        case HS_WAITING: {
-                            if (radio->cad_restart_delay != 0) {
-                                // Fire a timer in <cad_restart_delay> ms to check start cad waiting again
-                                if (data->cad_restart_timer_id == NULL) {
-                                    ESP_LOGD(TAG, "%s: creating cad_restart_timer_id", __func__);
-                                    data->cad_restart_timer_id = os_create_timer("cad_restart", radio->cad_restart_delay, radio, cad_restart);
-                                }
-                                os_start_timer(data->cad_restart_timer_id);
-                                data->handler_state = HS_WAITING_TIMER;
-                            } else {
-                                activate_cad_detect_mode(radio);
-                                data->handler_state = HS_WAITING;
-                            }
-                            break;
-                        }
-
-                        case HS_WAITING_TIMER: {
-                            // Stall
-                            break;
-                        }
-#endif /* ENABLE_CAD_MODE */
-                        case HS_RECEIVING: {
-                            activate_receive_mode(radio);
-#ifdef MEASURE_RX_TIME
-                            data->rx_start_time = get_milliseconds();
-#endif /* MEASURE_RX_TIME */
-                            break;
-                        }
-
-                        case HS_RECEIVE_DONE: {
-
-#ifdef ENABLE_CAD_MODE
-                            activate_cad_detect_mode(radio);
-                            /* And go back to waiting */
-                            data->handler_state = HS_WAITING;
-#else
-                            data->handler_state = HS_RECEIVING;
-#endif /* ENABLE_CAD_MODE */
-                            break;
-                        }
-
-                        case HS_TRANSMIT_DONE_PRIORITY: {
-                            set_standby_mode(radio);
-#ifdef ENABLE_CAD_MODE
-                            activate_cad_detect_mode(radio);
-
-                            /* And go back to waiting */
-                            data->handler_state = HS_WAITING;
-#else
-                            data->handler_state = HS_RECEIVING;
-#endif /* ENABLE_CAD_MODE */
-                            break;
-                        }
-
-                        case HS_TRANSMIT_DONE: {
-                            set_standby_mode(radio);
-#ifdef ENABLE_CAD_MODE
-                            activate_cad_detect_mode(radio);
-
-                            /* And go back to waiting */
-                            data->handler_state = HS_WAITING;
-#else
-                            data->handler_state = HS_RECEIVING;
-#endif /* ENABLE_CAD_MODE */
-                            break;
-                        }
-
-                        case HS_WAIT_TX_INT: {
-                            break;
-                        }
-                    }
-
-#ifdef DISPLAY_HANDLER_STATE
-                    if (data->handler_state != data->last_handler_state) {
-                        ESP_LOGI(TAG, "Handler state %s\n", handler_state_of(data->handler_state));
                         data->last_handler_state = data->handler_state;
                     }
 #endif
@@ -1779,12 +1647,6 @@ static bool radio_stop(radio_t* radio)
         /* Kill handler window timer */
         os_delete_timer(data->window_timer_id);
         data->window_timer_id = NULL;
-
-#ifdef ENABLE_CAD_MODE
-        /* Kill handler wakeup timer */
-        os_delete_timer(data->handler_wakeup_timer_id);
-        data->handler_wakeup_timer_id = NULL;
-#endif /* ENABLE_CAD_MODE */
 
         if (ok && --global_number_radios_active == 0) {
             /* Kill interrupt thread and queue */
@@ -1858,10 +1720,12 @@ static bool radio_start(radio_t* radio)
 
     if (acquire_lock(radio)) {
 
+ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->model);
         /* Turn on activity led */
         radio->activity_indicator(radio, true);
 
         sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+        data->new_channel = -1;  /* No new channel */
 
         /* Start global interrupt processing thread if not yet running */
         if (global_interrupt_handler_queue == NULL) {
@@ -1873,12 +1737,6 @@ static bool radio_start(radio_t* radio)
                                                                        GLOBAL_IRQ_THREAD_STACK, GLOBAL_IRQ_THREAD_PRIORITY, NULL, 0);
         }
 
-#ifdef ENABLE_CAD_MODE
-        /* Create the wakeup timer and leave it stopped */
-        data->handler_wakeup_timer_id = os_create_repeating_timer("wakeup_timer", HANDLER_WAKEUP_TIMER_PERIOD, radio, handler_wakeup_timer);
-        os_stop_timer(data->handler_wakeup_timer_id);
-#endif /* ENABLE_CAD_MODE */
-
         /* Create window event timer */
         data->window_timer_id = os_create_timer("wakeup_timer", INITIAL_WINDOW_TIMER_PERIOD, radio, window_timer);
         os_stop_timer(data->window_timer_id);  /* Leave it stopped */
@@ -1889,13 +1747,13 @@ static bool radio_start(radio_t* radio)
         /* Wake it up into standby mode */
         simpletimer_t timer;
         simpletimer_start(&timer, 1000);
-        while (!simpletimer_is_expired(&timer) && !set_standby_mode(radio)) {
+        while (!simpletimer_is_expired(&timer) && !dev_SetStandby(radio, SX126x_SetStandby_RC)) {
             busy_wait(radio);
         }
-            
+
         /* place in standby one more time */
-        if (!set_standby_mode(radio)) {
-            ESP_LOGE(TAG, "%s: set_standby_mode radio %d failed", __func__, radio->radio_num);
+        if (!dev_SetStandby(radio, SX126x_SetStandby_RC)) {
+            ESP_LOGE(TAG, "%s: SetStandby radio %d failed", __func__, radio->radio_num);
         }
 
         /* Initial configuration */
@@ -1916,11 +1774,9 @@ static bool radio_start(radio_t* radio)
             ESP_LOGE(TAG, "%s: SetRxTxFallback failed", __func__);
         }
 
-        //if (!dev_SetSyncWord(radio, SX126x_REG_LoRa_Sync_Word_PRIVATE)) {
-        if (!dev_SetSyncWord(radio, SX126x_REG_LoRa_Sync_Word_PUBLIC)) {
+        if (!dev_SetSyncWord(radio, data->sync_word)) {
             ESP_LOGE(TAG, "%s: SetSyncWord failed", __func__);
         }
-
 
         if (strcmp(radio->model, "1262") == 0) {
             if (!dev_SetCurrentLimit(radio, SX126x_REG_OCP_Configuration_140mA)) {
@@ -1939,16 +1795,12 @@ static bool radio_start(radio_t* radio)
             }
         }
         /* End workaround */
-          
-        if (!dev_SetRxDutyCycle(radio, SX_TIMER(RX_RECEIVE_TIME), SX_TIMER(RX_IDLE_TIME))) {
-            ESP_LOGE(TAG, "%s: SetRxDutyCycle failed", __func__);
-        }
 
         if (!set_txpower(radio, data->tx_power)) {
             ESP_LOGE(TAG, "%s: set_txpower radio %d failed", __func__, radio->radio_num);
         }
 
-        if (!dev_UpdatePacketParams(radio)) {
+        if (!dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)) {
             ESP_LOGE(TAG, "%s: UpdatePacketParams radio %d failed", __func__, radio->radio_num);
         }
 
@@ -1987,9 +1839,8 @@ static bool radio_start(radio_t* radio)
         }
 
         /* Configure the unit for receive channel 0; probably overriden by caller */
-        int old_channel = set_channel(radio, 0);
-        if (old_channel < 0) {
-            ESP_LOGE(TAG, "%s: set_channel returned %d", __func__, old_channel);
+        if (!change_channel(radio, 0)) {
+            ESP_LOGE(TAG, "%s: change_channel failed", __func__);
         }
 
         if (!dev_SetDio2AsRfSwitch(radio, true)) {
@@ -2000,12 +1851,6 @@ static bool radio_start(radio_t* radio)
         if (!radio->attach_interrupt(radio, radio->irq_dio_num, GPIO_PIN_INTR_POSEDGE, catch_interrupt)) {
             ESP_LOGE(TAG, "%s: attach dio0 interrupt radio %d failed", __func__, radio->radio_num);
         }
-
-#ifdef GPIO_DIO1
-        if (!radio->attach_interrupt(radio, GPIO_DIO1, GPIO_PIN_INTR_POSEDGE, catch_interrupt)) {
-            ESP_LOGE(TAG, "%s: attach dio1 interrupt radio %d failed", __func__, radio->radio_num);
-        }
-#endif
 
         /* Send initial wakeup call to handler */
         handler_queue_event_t event = {
@@ -2069,22 +1914,67 @@ static bool set_receive_mode(radio_t* radio)
  */
 static bool activate_receive_mode(radio_t* radio)
 {
-     bool ok = false;
 
-// ESP_LOGI(TAG, "%s: radio %d", __func__, radio->radio_num);
+    bool ok = false;
 
     if (acquire_lock(radio)) {
+
         if (radio->inactive) {
             /* Leave in sleep mode */
             ok = radio->set_sleep_mode(radio);
         } else {
-            ok = dev_SetStandby(radio, SX126x_SetStandby_XOSC) &&
-            //ok = dev_SetStandby(radio, SX126x_SetStandby_XOSC) &&
-                 set_dio_irq_mask(radio,
-                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid,
-                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid,
-                               0, 0) &&
-                 dev_SetRx(radio, SX_TIMER(RX_TIMEOUT_TIME));
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+            unsigned int sleep_period_ticks = 0;
+            unsigned int wake_period_ticks;
+
+            sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
+
+            if (2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS <= data->preamble_length) {
+                /* Maximum sleep time before missing header */
+                unsigned int sleep_symbols = data->preamble_length - 2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS;
+                unsigned int symbol_length = (10000L << data->spreading_factor) / (10 * data->bandwidth_bits);
+                unsigned int sleep_period = symbol_length * sleep_symbols;
+
+                unsigned int wake_period = fmax(
+                    (symbol_length * (data->preamble_length + 1) - (sleep_period - 1000)) / 2,
+                    symbol_length * (CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS + 1)
+                );
+
+                sleep_period_ticks = SX_TIMER(sleep_period);
+                wake_period_ticks = SX_TIMER(wake_period);
+
+                if ((sleep_period_ticks & 0xFF000000L) != 0) {
+                    ESP_LOGE(TAG, "%s: sleep_period too large: %d", __func__, sleep_period);
+                    ok = false;
+
+                } else if ((wake_period_ticks & 0xFF000000L) != 0) {
+                    ESP_LOGE(TAG, "%s: wake_period too large: %d", __func__, wake_period);
+                    ok = false;
+                }
+            }
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
+
+            ok = set_dio_irq_mask(radio,
+                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
+                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
+                               0, 0)
+              && dev_SetBufferBaseAddress(radio, 0, 0)
+              && dev_ClearIrqStatus(radio, 0xFFFF)
+              && dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)
+              ; /* end */
+
+            if (!ok) {
+                ESP_LOGE(TAG, "%s: receive setup failed", __func__);
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+            } else if (sleep_period_ticks != 0) {
+
+ESP_LOGI(TAG, "%s: rx dutycycle wake %.3f S; sleep %.3f S", __func__, wake_period_ticks * (SX_TIMER_INTERVAL / 1000000.0), sleep_period_ticks * (SX_TIMER_INTERVAL / 1000000.0));
+
+                ok = dev_SetRxDutyCycle(radio, wake_period_ticks, sleep_period_ticks);
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
+            } else {
+                ok = dev_SetRx(radio, SX_TIMER(RX_TIMEOUT_TIME));
+            }
         }
 
         release_lock(radio);
@@ -2092,37 +1982,6 @@ static bool activate_receive_mode(radio_t* radio)
 
     return ok;
 }
-
-#ifdef ENABLE_CAD_MODE
-/*
- * Set receive mode requesst
- */
-static bool set_cad_detect_mode(radio_t* radio)
-{
-    return set_handler_state(radio, HS_CAD_RESTART);
-}
-
-static bool activate_cad_detect_mode(radio_t* radio)
-{
-    bool ok = false;
-
-    /* Just put the unit into continuous receive */
-    if (acquire_lock(radio)) {
-        ok = set_standby_mode(radio)
-          && set_dio_irq_mask(radio,
-                SX126x_IrqFlags_CadDetected | SX126x_IrqFlags_CadDone,
-                SX126x_IrqFlags_CadDetected | SX126x_IrqFlags_CadDone,
-                0, 0)
-          && dev_SetCad(radio);
-
-if (!ok) ESP_LOGE(TAG, "%s: failed", __func__);
-
-        release_lock(radio);
-    }
-
-    return ok;
-}
-#endif /* ENABLE_CAD_MODE */
 
 /* Used to power down radio to standy mode */
 static bool set_inactive(radio_t* radio, bool inactive)
@@ -2138,11 +1997,6 @@ static bool set_inactive(radio_t* radio, bool inactive)
             /* Do the work to change active mode */
             if (inactive == 0) {
                 radio->set_receive_mode(radio);
-#ifdef ENABLE_CAD_MODE
-                sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-                /* Restart wakeup timer */
-                os_start_timer(data->handler_wakeup_timer_id);
-#endif /* ENABLE_CAD_MODE */
             }
         }
         release_lock(radio);
@@ -2171,7 +2025,7 @@ ESP_LOGI(TAG, "%s: power %d", __func__, power);
          *  Selection between high power PA and low power PA is done with the command SetPaConfig
          *  and the parameter deviceSel.  By default low power PA and +14 dBm are set.
          */
-        
+
         int duty_cycle = 0;
         int hp_max = 0;
         int pa_lut = 1; /* Fixed for now */
@@ -2249,42 +2103,50 @@ static int get_txpower(radio_t* radio)
  * set_channel
  *
  * selects the channel and sets the datarate to the lowest for the channel.
- *
- * Returns old channel if successful else -1.
  */
-static int set_channel(radio_t* radio, int channel)
+static bool set_channel(radio_t* radio, int channel)
 {
-    int old_channel = -1;
+    bool ok = false;
 
 ESP_LOGI(TAG, "%s: channel %d", __func__, channel);
 
     if (channel >= 0 && channel < ELEMENTS_OF(channel_table.channels)) {
 
         if (acquire_lock(radio)) {
-            old_channel = get_channel(radio);
-
-            set_standby_mode(radio);
-
-            sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-            const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
-
-            /* Set frequency control */
-            dev_SetFrequency(radio, chanp->freq);
-
-            radio->set_datarate(radio, 0);
-
-            radio->set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][0].tx);
-
-            data->channel = channel;
-
-            radio->set_receive_mode(radio);
-
+            sx126x_private_data_t *data = (sx126x_private_data_t*) (radio->driver_private_data);
+            data->new_channel = channel;
             release_lock(radio);
+            ok = true;
         }
-else ESP_LOGI(TAG, "%s: failed to get lock", __func__);
+        else ESP_LOGI(TAG, "%s: failed to get lock", __func__);
     }
 
-    return old_channel;
+    return ok;
+}
+
+
+static bool change_channel(radio_t*radio, int channel)
+{
+    //dev_SetStandby(radio, SX126x_SetStandby_RC);
+
+    sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+    const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
+
+    /* Set frequency control */
+    bool ok = false;
+
+    if (!dev_SetFrequency(radio, chanp->freq)) {
+        ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
+    } else if (!radio->set_datarate(radio, 0)) {
+        ESP_LOGE(TAG, "%s: set_datarate failed", __func__);
+    } else if (!radio->set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][0].tx)) {
+        ESP_LOGE(TAG, "%s: change_channel se_txpower failed", __func__);
+    } else {
+        data->channel = channel;
+        ok = true;
+    }
+
+    return ok;
 }
 
 static int get_channel(radio_t* radio)
@@ -2296,15 +2158,13 @@ static int get_channel(radio_t* radio)
 
 /*
  * Set the datarate.
- *
- * Return old datarate if successful, otherwise -1.
  */
-static int set_datarate(radio_t* radio, int datarate)
+static bool set_datarate(radio_t* radio, int datarate)
 {
-    int old_datarate = -1;
+    bool ok = false;
 
     if (acquire_lock(radio)) {
-        old_datarate = get_datarate(radio);
+        int old_datarate = get_datarate(radio);
 
         sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
 
@@ -2320,8 +2180,7 @@ static int set_datarate(radio_t* radio, int datarate)
 
             if (!set_bandwidth(radio, bw) || !set_spreading_factor(radio, sf) || !set_coding_rate(radio, cr) || !set_txpower(radio, tx)) {
                 /* Restore datarate (caution - recursion); better not be an error on the old datarate. */
-                set_datarate(radio, data->datarate);
-                old_datarate = -1;
+                set_datarate(radio, old_datarate);
             } else {
                 /* Ok */
                 data->datarate = datarate;
@@ -2338,19 +2197,14 @@ ESP_LOGI(TAG, "%s: window_width %d window_timer_id %p", __func__, data->window_w
                 os_set_timer(data->window_timer_id, data->window_width);
 
                 /* Update radio with the parameters */
-                dev_UpdateModulationParams(radio);
-
-#ifdef ENABLE_CAD_MODE
-                /* Update CAD operation details */
-                dev_UpdateCadParams(radio);
-#endif
+                ok = dev_UpdateModulationParams(radio);
             }
         }
 
         release_lock(radio);
     }
 
-    return old_datarate;
+    return ok;
 }
 
 static int get_datarate(radio_t* radio)
@@ -2360,7 +2214,7 @@ static int get_datarate(radio_t* radio)
     return data->datarate;
 }
 
-     
+
 /*
  *  Set bandwidth
  *
@@ -2437,7 +2291,7 @@ ESP_LOGI(TAG, "%s: length %d", __func__, length);
     if (length != data->preamble_length) {
         data->preamble_length = length;
 
-        ok = dev_UpdatePacketParams(radio);
+        ok = dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH);
     }
 
     return ok;
@@ -2462,13 +2316,13 @@ ESP_LOGI(TAG, "%s: sync %02x", __func__, sync);
     if (acquire_lock(radio)) {
         sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
         data->sync_word = sync;
-        ok = dev_UpdatePacketParams(radio);
+        ok = dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH);
         release_lock(radio);
     }
 
     return ok;
 }
-#endif  
+#endif
 
 static bool set_implicit_header(radio_t* radio, bool implicit_header)
 {
@@ -2477,7 +2331,7 @@ static bool set_implicit_header(radio_t* radio, bool implicit_header)
 ESP_LOGI(TAG, "%s: enable %s", __func__, implicit_header ? "TRUE" : "FALSE");
 
     data->implicit_header = implicit_header;
-    return dev_UpdatePacketParams(radio);
+    return dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH);
 }
 
 /*
@@ -2552,11 +2406,6 @@ void print_status(command_context_t* context, radio_t *radio)
         command_reply(context, "D", "tx_interrupts:          %d", data.tx_interrupts);
         command_reply(context, "D", "tx_timeouts:            %d", data.tx_timeouts);
         command_reply(context, "D", "hqi_interrupts:         %d", data.hqi_interrupts);
-#ifdef ENABLE_CAD_MODE
-        command_reply(context, "D", "cad_interrupts:         %d", data.cad_interrupts);
-        command_reply(context, "D", "cad_detected:           %d", data.cad_detected);
-        command_reply(context, "D", "cad_timeouts:           %d", data.cad_timeouts);
-#endif /* ENABLE_CAD_MODE */
         command_reply(context, "D", "packet_memory_failed:   %d", data.packet_memory_failed);
         command_reply(context, "D", "packet_crc_errors:      %d", data.packet_crc_errors);
         command_reply(context, "D", "irq_flags:              %04x", data.irq_flags);
@@ -2571,16 +2420,6 @@ void print_status(command_context_t* context, radio_t *radio)
         command_reply(context, "D", "current_packet_window:  %d", data.current_packet_window);
         command_reply(context, "D", "window_width:           %d", data.window_width);
         command_reply(context, "D", "window_event_count:     %d", data.window_event_count);
-
-#ifdef ENABLE_CAD_MODE
-        int wakeup_timer_remaining = simpletimer_remaining(&data.handler_wakeup_timer_status);
-
-        if (simpletimer_is_running(&data.handler_wakeup_timer_status)) {
-            command_reply(context, "D", "wakeup_timer:           %d", wakeup_timer_remaining);
-        } else {
-            command_reply(context, "D", "wakeup_timer:           %s", simpletimer_is_expired(&data.handler_wakeup_timer_status) ? "expired" : "stopped");
-        }
-#endif /* ENABLE_CAD_MODE */
     } else {
         command_reply(context, "E", "Unable to lock data");
     }

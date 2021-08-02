@@ -90,7 +90,8 @@ bool io_init(radio_t* radio, const radio_config_t* config)
 
 bool io_deinit(radio_t* radio)
 {
-    return radio->stop(radio);
+    /* Nothing further to do */
+    return true;
 }
 
 
@@ -262,8 +263,8 @@ ESP_LOGV(TAG, "%s: %02x for %d bytes into %p", __func__, reg, len, buffer);
 
 static void dump_spi_transaction(bool ok, const char* dir, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
 {
-    char buffer[120];
-    int   used;
+    char buffer[300];
+    int  used;
 
     used = snprintf(buffer, sizeof(buffer), "%02x", command);
     if (extra_address_bits != 0) {
@@ -290,7 +291,13 @@ static void dump_spi_transaction(bool ok, const char* dir, uint8_t command, int 
         }
     }
 
+#if 1
+#if 0
+    printf("SPI: %s: %s%s\n", dir, buffer, ok ? "" :  " [Error]");
+#else
     ESP_LOGI(TAG, "SPI: %s: %s%s", dir, buffer, ok ? "" : " [Error]");
+#endif
+#endif
 }       
 
 static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuffer, int outlen, uint8_t* inbuffer, int inlen)
@@ -321,15 +328,15 @@ static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits
         t.address_bits = 8 + extra_address_bits;
     }
 
-#if 0
-dump_spi_transaction(true, "Out", command, extra_address_bits, address, outbuffer, outlen, NULL, 0);
+#if 1
+if (command == 0x0E || command == 0x1E) dump_spi_transaction(true, "Out", command, extra_address_bits, address, outbuffer, outlen, NULL, 0);
 #endif
 
     ok = spi_device_transmit(radio->spi, (spi_transaction_t*) &t) == ESP_OK;
 
-#if 0
+#if 1
 if (inbuffer != NULL) {
-    dump_spi_transaction(ok, " In", command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
+    if (command == 0x0E || command == 0x1E) dump_spi_transaction(ok, " In", command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
 }
 #endif
 

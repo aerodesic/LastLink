@@ -823,17 +823,18 @@ bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate
             radio_t *radio = radio_table[radio_num];
 
             if (radio != NULL) {
-                old_channel[radio_num] = radio->set_channel(radio, channel);
-                old_datarate[radio_num] = radio->set_datarate(radio, datarate);
-                ok = ok && old_channel[radio_num] >= 0 && old_datarate[radio_num] >= 0;
+                old_channel[radio_num] = radio->get_channel(radio);
+                old_datarate[radio_num] = radio->get_datarate(radio);
+
+                ok = ok && radio->set_channel(radio, channel) && radio->set_datarate(radio, datarate);
             } else {
                 old_channel[radio_num] = -1;
                 old_datarate[radio_num] = -1;
             }
         }
 
+        /* If any failed, put them all back and ignore any further errors. */
         if (!ok) {
-            /* Put back all that aren't -1 */
             for (radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
                 if (old_channel[radio_num] >= 0) {
                     radio_table[radio_num]->set_channel(radio_table[radio_num], old_channel[radio_num]);
@@ -848,17 +849,14 @@ bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate
     } else if (radio_num >= 0 && radio_num < NUM_RADIOS) {
         radio_t *radio = radio_table[radio_num];
 
-        int old_channel = radio->set_channel(radio, channel);
-        int old_datarate = radio->set_datarate(radio, datarate);
+        int old_channel = radio->get_channel(radio);
+        int old_datarate = radio->get_datarate(radio);
 
-        if (old_channel < 0) {
+        if (! radio->set_channel(radio, channel) || ! radio->set_datarate(radio, datarate)) {
             radio->set_channel(radio, old_channel);
-        }
-        if (old_datarate < 0) {
             radio->set_datarate(radio, old_datarate);
+            ok = false;
         }
-
-        ok = old_channel >= 0 && old_datarate >= 0;
     }
 
     return ok;
@@ -918,8 +916,8 @@ ESP_LOGD(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
             }
 #endif
             if (ok) {
-                if (radio->set_channel(radio, config->channel) >= 0) {
-                    if (radio->set_datarate(radio, config->datarate) >= 0) {
+                if (radio->set_channel(radio, config->channel)) {
+                    if (radio->set_datarate(radio, config->datarate)) {
                         /* Put radio in active table. If no radio, create one. */
                         if (radio_table == NULL) {
                             /* Create radio table */
@@ -931,13 +929,15 @@ ESP_LOGD(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
                             }
                         }
                     } else {
-                        printf("**** Invalid datarate: %d\n", config->datarate);
+                        ESP_LOGE(TAG, "%s: **** Invalid datarate: %d\n", __func__, config->datarate);
                         ok = false;
                     }
                 } else {
-                        printf("**** Invalid channel: %d\n", config->channel);
+                    ESP_LOGE(TAG, "%s:  **** Invalid channel: %d\n", __func__, config->channel);
                     ok = false;
                 }
+            } else {
+                ESP_LOGE(TAG, "%s: radio create failed", __func__);
             }
 
             if (radio_table != NULL) {
