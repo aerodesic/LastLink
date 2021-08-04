@@ -121,14 +121,11 @@ typedef struct radio {
     /* Stop and disassemble the radio */
     bool (*stop)(radio_t* radio);
 
-    /* Set sleeping mode (low power) */
-    bool (*set_sleep_mode)(radio_t* radio);
-
     /* Set standby mode */
-    bool (*set_standby_mode)(radio_t* radio);
+    bool (*disable_radio)(radio_t* radio);
 
     /* Set active receiving mode */
-    bool (*set_receive_mode)(radio_t* radio);
+    bool (*enable_radio)(radio_t* radio);
 
     /* Set transmitter power level */
     bool (*set_txpower)(radio_t* radio, int power);

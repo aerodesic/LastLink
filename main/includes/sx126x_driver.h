@@ -39,8 +39,10 @@
 
 #define SX126x_StopTimerOnPreamble                       0x9F
 #define SX126x_StopTimerOnPreamble_bytes                   1
-#define SX126x_StopTimerOnPreamble_disable                   0x00
-#define SX126x_StopTimerOnPreamble_enable                    0x01
+#define SX126x_StopTimerOnPreamble_enable                    0
+#define SX126x_StopTimerOnPreamble_enable_bytes                1
+#define SX126x_StopTimerOnPreamble_disabled                      0x00
+#define SX126x_StopTimerOnPreamble_enabled                       0x01
 
 #define SX126x_SetRxDutyCycle                            0x94
 #define SX126x_SetRxDutyCycle_bytes                        6

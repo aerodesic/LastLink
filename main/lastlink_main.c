@@ -196,7 +196,7 @@ void app_main(void)
         linklayer_init(get_config_int("lastlink.address", 1), get_config_int("lastlink.flags", 0), get_config_int("lastlink.announce", 0));
     #endif
 
-    //linklayer_set_channel_and_datarate(-1, get_config_int("lastlink.channel", 0), get_config_int("lastlink.datarate", 0));
+    linklayer_set_channel_and_datarate(-1, get_config_int("lastlink.channel", 0), get_config_int("lastlink.datarate", 0));
 
 #if CONFIG_LASTLINK_RECEIVE_ONLY_FROM_TABLE
     linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));

@@ -7,6 +7,8 @@
 
 #define LORA_HEADER_OVERHEAD   22
 
+#define MEASURE_RX_TIME
+
 //#define ENABLE_CAD_MODE
 
 //#define DEBUG_LOCKS
@@ -45,11 +47,11 @@ typedef struct sx126x_private_data sx126x_private_data_t;  // Forward ref
 
 static bool radio_stop(radio_t* radio);                              /* Stop and disassemble the radio */
 
-static bool set_sleep_mode(radio_t* radio);                          /* Set sleeping mode (low power) */
-static bool set_standby_mode(radio_t* radio);                        /* Set standby mode */
-static bool set_receive_mode(radio_t* radio);                        /* Request state change to receive mode */
+static bool disable_radio(radio_t* radio);                           /* Set sleeping mode (low power) */
+static bool enable_radio(radio_t* radio);
+
+static bool activate_radio(radio_t* radio);                          /* Hardware activation of radio */
 static bool activate_receive_mode(radio_t* radio);                   /* Activates receive mode */
-static bool set_inactive(radio_t* radio, bool inactive);             /* Set inactive/active mode */
 
 static bool set_txpower(radio_t* radio, int power);                  /* Set transmitter power level */
 static int get_txpower(radio_t* radio);                              /* Get current transmit power */
@@ -59,12 +61,12 @@ static bool change_channel(radio_t* radio, int channel);             /* Perform 
 static bool set_datarate(radio_t* radio, int datarate);               /* Set datarate */
 static int get_datarate(radio_t* radio);                             /* Get datarate */
 
-static bool set_dio_irq_mask(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask);
+static bool set_dio_irq_masks(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask);
 
 
 
 static void catch_interrupt(void *param);
-static void rx_handle_interrupt(radio_t *radio);
+static bool rx_handle_interrupt(radio_t *radio);
 #ifdef USE_FHSS
 static void fhss_handle_interrupt(radio_t *radio);
 #endif /* USE_FHSS */
@@ -109,25 +111,32 @@ static bool set_sync_word(radio_t* radio, uint16_t sync);
 
 #define SX_TIMER_INTERVAL  15.625    /* Microseconds per tick interval */
 
-#define SX_TIMER(ms) ((int) ((((ms * 1000.0)) / SX_TIMER_INTERVAL) + 0.5))
+#define SX_TIMER_uS(us) ((int) (((us) / SX_TIMER_INTERVAL) + 0.5))
+#define SX_TIMER_mS(ms) ((int) SX_TIMER_uS((ms)*1000))
 
 typedef enum {
-    HS_STARTUP,
+    HS_ENABLE,                    /* Enable and full start the radio */
+    HS_STARTUP,                   /* Normal startup */
     HS_RECEIVING,                 /* Handler is receiving */
     HS_TRANSMIT_DONE,             /* Handler is finished transmitting */
     HS_TRANSMIT_DONE_PRIORITY,    /* Handler is finished transmitting priority packet */
     HS_WAIT_TX_INT,               /* Wait for TX to finish */
+    HS_SLEEP,                     /* Go to low power sleep */
+    HS_SLEEPING,                  /* Sleeping */
 } handler_state_t;
 
 #if defined(CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS) || defined(DISPLAY_HANDLER_STATE)
 inline const char *handler_state_of(handler_state_t state)
 {
     switch (state) {
+        case HS_ENABLE:                 return "HS_ENABLE";
         case HS_STARTUP:                return "HS_STARTUP";
         case HS_RECEIVING:              return "HS_RECEIVING";
         case HS_TRANSMIT_DONE:          return "HS_TRANSMIT_DONE";
         case HS_TRANSMIT_DONE_PRIORITY: return "HS_TRANSMIT_DONE";
         case HS_WAIT_TX_INT:            return "HS_WAIT_TX_INT";
+        case HS_SLEEP:                  return "HS_SLEEP";
+        case HS_SLEEPING:               return "HS_SLEEPING";
         default:                        return "UNKNONWN";
     }
 }
@@ -140,6 +149,7 @@ typedef struct sx126x_private_data {
     uint8_t           coding_rate;
     bool              implicit_header;
     bool              implicit_header_set;
+    int               frequency;  /* Display purposes only */
     int               channel;
     int               new_channel;
     uint8_t           datarate;
@@ -147,9 +157,13 @@ typedef struct sx126x_private_data {
     int               bandwidth_bits;
     uint8_t           spreading_factor;
     bool              enable_crc;
+    int               channel_change_counter;
     int               data_rate_bps;
     uint8_t           tx_power;
     uint8_t           tx_ramp;
+    int               sleep_period_ticks;
+    int               wake_period_ticks;
+    int               sleep_wake_recalc;
     packet_t          *rx_next_packet;
     int               rx_interrupts;
     bool              rx_busy;
@@ -160,9 +174,11 @@ typedef struct sx126x_private_data {
 #endif
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
   #define RX_TIMEOUT_TIME CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
+#else
+  #define RX_TIMEOUT_TIME 50
 #endif
     int               tx_interrupts;
-#define TX_TIMEOUT_TIME  1000
+#define TX_TIMEOUT_TIME  5000
 #ifdef USE_FHSS
     int               fhss_interrupts;
     int               hop_period;
@@ -223,6 +239,9 @@ static bool busy_wait_debug(radio_t* radio, int line)
 {
     uint64_t start = get_milliseconds();
 
+    os_delay(1);
+
+    /* Just yield processor while busy is high */
     while (radio->test_gpio(radio, radio->busy_dio_num)) {
         os_delay(0);
     }
@@ -355,16 +374,15 @@ static inline uint32_t sx_get(uint8_t* buffer, int offset, int len)
 /*
  * Place device in sleep mode
  */
-static bool dev_SetSleep(radio_t* radio, bool retain, bool rtc)
+static bool dev_SetSleep(radio_t* radio, bool warm)
 {
     uint8_t buffer[SX126x_SetSleep_bytes] = {0};
 
-    if (retain) {
-        SX_PUT(buffer, SX126x_SetSleep_Param, SX126x_SetSleep_WarmStart | rtc ? SX126x_SetSleep_Rtc : 0);
+    if (warm) {
+        SX_PUT(buffer, SX126x_SetSleep_Param, SX126x_SetSleep_WarmStart | SX126x_SetSleep_Rtc);
     }
 
     return radio->io_transact(radio, SX126x_SetSleep, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetSleep, 0, 0, buffer, sizeof(buffer), NULL, 0);
 }
 
 /*
@@ -376,12 +394,8 @@ static bool dev_SetStandby(radio_t* radio, uint8_t mode)
 
     SX_PUT(buffer, SX126x_SetStandby_Param, mode);
 
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetStandby, 0, 0, buffer, sizeof(buffer), NULL, 0);
-    bool ok = radio->io_transact(radio, SX126x_SetStandby, 0, 0, buffer, sizeof(buffer), NULL, 0);
-    if (ok) {
-        os_delay(5);
-        busy_wait(radio);
-    }
+    bool ok = radio->io_transact(radio, SX126x_SetStandby, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
+
     return ok;
 }
 
@@ -391,15 +405,13 @@ static bool dev_SetStandby(radio_t* radio, uint8_t mode)
 static bool dev_SetFs(radio_t* radio)
 {
     return radio->io_transact(radio, SX126x_SetFs, 0, 0, NULL, 0, NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetFs, 0, 0, NULL, 0, NULL, 0);
 }
 
 static bool dev_GetStatus(radio_t* radio, int* chipmode, int* command)
 {
     uint8_t buffer[SX126x_GetStatus_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetStatus, 0, 0, NULL, 0, buffer, sizeof(buffer));
+    bool ok = radio->io_transact(radio, SX126x_GetStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
 //dump_buffer("GetStatus", buffer, sizeof(buffer));
@@ -419,8 +431,7 @@ static bool dev_GetDeviceErrors(radio_t* radio, int* chipmode, int* command, uin
 {
     uint8_t buffer[SX126x_GetDeviceErrors_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetDeviceErrors, 0, 0, NULL, 0, buffer, sizeof(buffer)) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetDeviceErrors, 0, 0, NULL, 0, buffer, sizeof(buffer));
+    bool ok = radio->io_transact(radio, SX126x_GetDeviceErrors, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
         if (chipmode != NULL) {
@@ -443,8 +454,7 @@ static bool dev_ClearDeviceErrors(radio_t* radio)
 {
     uint8_t buffer[SX126x_ClearDeviceErrors_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_ClearDeviceErrors, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_ClearDeviceErrors, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    bool ok = radio->io_transact(radio, SX126x_ClearDeviceErrors, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 
     return ok;
 }
@@ -475,7 +485,6 @@ static bool dev_SetTx(radio_t* radio, uint32_t timeout)
     SX_PUT(buffer, SX126x_SetTx_Timeout, timeout);
 
     bool ok = radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_SetTx, 0, 0, buffer, sizeof(buffer), NULL, 0);
 
     return ok;
 }
@@ -487,8 +496,7 @@ static bool dev_SetBufferBaseAddress(radio_t* radio, int txbase, int rxbase)
     SX_PUT(buffer, SX126x_SetBufferBaseAddress_TX, txbase);
     SX_PUT(buffer, SX126x_SetBufferBaseAddress_RX, rxbase);
 
-    return radio->io_transact(radio, SX126x_SetBufferBaseAddress, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetBufferBaseAddress, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetBufferBaseAddress, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetLoRaSymbNumTimeout(radio_t* radio, int symbnum)
@@ -497,8 +505,7 @@ static bool dev_SetLoRaSymbNumTimeout(radio_t* radio, int symbnum)
 
     SX_PUT(buffer, SX126x_SetLoRaSymbNumTimeout_SymbNum, symbnum);
 
-    return radio->io_transact(radio, SX126x_SetLoRaSymbNumTimeout, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetLoRaSymbNumTimeout, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetLoRaSymbNumTimeout, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetRxTxFallbackMode(radio_t* radio, int mode)
@@ -507,16 +514,14 @@ static bool dev_SetRxTxFallbackMode(radio_t* radio, int mode)
 
     SX_PUT(buffer, SX126x_SetRxTxFallbackMode_Param, mode);
 
-    return radio->io_transact(radio, SX126x_SetRxTxFallbackMode, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRxTxFallbackMode, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetRxTxFallbackMode, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_GetRxBufferStatus(radio_t* radio, uint8_t* chipmode, uint8_t* command, uint8_t* length, uint8_t* start)
 {
     uint8_t buffer[SX126x_GetRxBufferStatus_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetRxBufferStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetRxBufferStatus, 0, 0, NULL, 0, buffer, sizeof(buffer));
+    bool ok = radio->io_transact(radio, SX126x_GetRxBufferStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
     if (ok) {
         if (chipmode != NULL) {
            *chipmode = SX_ALIGN(buffer[SX126x_GetRxBufferStatus_Status], SX126x_GetRxBufferStatus_Status_Chipmode);
@@ -542,8 +547,7 @@ static bool dev_GetIrqStatus(radio_t* radio, uint8_t* chipmode, uint8_t* command
 {
     uint8_t buffer[SX126x_GetIrqStatus_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetIrqStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetIrqStatus, 0, 0, NULL, 0, buffer, sizeof(buffer));
+    bool ok = radio->io_transact(radio, SX126x_GetIrqStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
         if (chipmode != NULL) {
@@ -586,8 +590,7 @@ static bool dev_ClearIrqStatus(radio_t* radio, uint16_t irqflags)
 
     SX_PUT(buffer, SX126x_ClearIrqStatus_IrqFlags, irqflags);
 
-    return radio->io_transact(radio, SX126x_ClearIrqStatus, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_ClearIrqStatus, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_ClearIrqStatus, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_Calibrate(radio_t* radio, uint8_t modules)
@@ -596,13 +599,7 @@ static bool dev_Calibrate(radio_t* radio, uint8_t modules)
 
     SX_PUT(buffer, SX126x_Calibrate_Param, modules);
 
-    //return radio->io_transact(radio, SX126x_Calibrate, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    bool ok = radio->io_transact(radio, SX126x_Calibrate, 0, 0, buffer, sizeof(buffer), NULL, 0);
-    if (ok) {
-        os_delay(5);
-        busy_wait(radio);
-    }
-    return ok;
+    return radio->io_transact(radio, SX126x_Calibrate, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
 }
 
 /*
@@ -614,8 +611,7 @@ static bool dev_SetFrequency(radio_t* radio, uint32_t FREQ)
 
     SX_PUT(buffer, SX126x_SetRfFrequency_FREQ, FREQ);
 
-    return radio->io_transact(radio, SX126x_SetRfFrequency, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRfFrequency, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetRfFrequency, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 /*
@@ -634,8 +630,7 @@ static bool dev_UpdateDioIrqMasks(radio_t* radio)
 
 //dump_buffer("SetDioIrqParamsmasks", dio_irq_settings, sizeof(dio_irq_settings));
 
-    return radio->io_transact(radio, SX126x_SetDioIrqParams, 0, 0, dio_irq_settings, sizeof(dio_irq_settings), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetDioIrqParams, 0, 0, dio_irq_settings, sizeof(dio_irq_settings), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetDioIrqParams, 0, 0, dio_irq_settings, sizeof(dio_irq_settings), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetDio3AsTcxoCtrl(radio_t* radio, float voltage, int ms)
@@ -662,10 +657,9 @@ static bool dev_SetDio3AsTcxoCtrl(radio_t* radio, float voltage, int ms)
         ESP_LOGE(TAG, "%s: invalid voltage %f", __func__, voltage);
     }
 
-    SX_PUT(txcoctrl, SX126x_SetDio3AsTcxoCtrl_delay, SX_TIMER(ms));
+    SX_PUT(txcoctrl, SX126x_SetDio3AsTcxoCtrl_delay, SX_TIMER_mS(ms));
 
-    return radio->io_transact(radio, SX126x_SetDio3AsTcxoCtrl, 0, 0, txcoctrl, sizeof(txcoctrl), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetDio3AsTcxoCtrl, 0, 0, txcoctrl, sizeof(txcoctrl), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetDio3AsTcxoCtrl, 0, 0, txcoctrl, sizeof(txcoctrl), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetDio2AsRfSwitch(radio_t* radio, bool enable)
@@ -676,8 +670,7 @@ static bool dev_SetDio2AsRfSwitch(radio_t* radio, bool enable)
 
 //dump_buffer("SetDio2AsRfSwitch", rfswitch, sizeof(rfswitch));
 
-    return radio->io_transact(radio, SX126x_SetDio2AsRfSwitchCtrl, 0, 0, rfswitch, sizeof(rfswitch), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetDio2AsRfSwitchCtrl, 0, 0, rfswitch, sizeof(rfswitch), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetDio2AsRfSwitchCtrl, 0, 0, rfswitch, sizeof(rfswitch), NULL, 0); // && busy_wait(radio);
 }
 
 /*
@@ -690,8 +683,7 @@ static bool dev_SetTxParams(radio_t* radio, int tx_power, int tx_ramp)
     SX_PUT(tx_params, SX126x_SetTxParams_TxPower, tx_power);
     SX_PUT(tx_params, SX126x_SetTxParams_TxRamp, tx_ramp);
 
-    return radio->io_transact(radio, SX126x_SetTxParams, 0, 0, tx_params, sizeof(tx_params), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetTxParams, 0, 0, tx_params, sizeof(tx_params), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetTxParams, 0, 0, tx_params, sizeof(tx_params), NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_UpdatePacketParams(radio_t* radio, uint8_t payload)
@@ -706,8 +698,7 @@ static bool dev_UpdatePacketParams(radio_t* radio, uint8_t payload)
     SX_PUT(packet_params, SX126x_SetPacketParams_CrcType, data->enable_crc ? SX126x_SetPacketParams_CrcType_On : SX126x_SetPacketParams_CrcType_Off);
     SX_PUT(packet_params, SX126x_SetPacketParams_InvertIQ, SX126x_SetPacketParams_InvertIQ_Off);
 
-    return radio->io_transact(radio, SX126x_SetPacketParams, 0, 0, packet_params, sizeof(packet_params), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetPacketParams, 0, 0, packet_params, sizeof(packet_params), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetPacketParams, 0, 0, packet_params, sizeof(packet_params), NULL, 0); // && busy_wait(radio);
 }
 
 /*
@@ -721,10 +712,7 @@ static bool dev_SetRx(radio_t* radio, uint32_t timeout)
 
     SX_PUT(buffer, SX126x_SetRx_Timeout, timeout);
 
-    bool ok = radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
- //   show_irq_status(radio, __func__);
-    return ok;
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetRx, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
 }
 
 /*
@@ -738,8 +726,16 @@ static bool dev_SetRxDutyCycle(radio_t* radio, int rx_period, int sleep_period)
     SX_PUT(buffer, SX126x_SetRxDutyCycle_rxPeriod, rx_period);
     SX_PUT(buffer, SX126x_SetRxDutyCycle_sleepPeriod, sleep_period);
 
-    return radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetRxDutyCycle, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
+}
+
+static bool dev_StopTimerOnPreamble(radio_t* radio, bool enabled)
+{
+    uint8_t buffer[SX126x_StopTimerOnPreamble_bytes] = {0};
+
+    SX_PUT(buffer, SX126x_StopTimerOnPreamble_enable, enabled ? SX126x_StopTimerOnPreamble_enabled : SX126x_StopTimerOnPreamble_disabled);
+
+    return radio->io_transact(radio, SX126x_StopTimerOnPreamble, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 #endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
 
@@ -750,8 +746,7 @@ static bool dev_SetRxDutyCycle(radio_t* radio, int rx_period, int sleep_period)
  */
 static bool dev_SetCad(radio_t* radio)
 {
-    return radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0);
+    return radio->io_transact(radio, SX126x_SetCad, 0, 0, NULL, 0, NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetCadParams(radio_t* radio, int symbol_num, int detect_peak, int detect_min, int exit_mode, int timeout)
@@ -764,8 +759,7 @@ static bool dev_SetCadParams(radio_t* radio, int symbol_num, int detect_peak, in
     SX_PUT(buffer, SX126x_SetCadParams_cadExitMode, exit_mode);
     SX_PUT(buffer, SX126x_SetCadParams_cadTimeout, timeout);
 
-    return radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetCadParams, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 #endif
 
@@ -777,7 +771,7 @@ static bool dev_UpdateCadParams(radio_t* radio)
     int cadSymbolNum = SX126x_SetCadPraams_cadSymbolNum_CAD_ON_1_SYMB;
     int cadDetPeak;
     int cadDetMin;
-    int cadDetTimeout = SX_TIMER(10);
+    int cadDetTimeout = SX_TIMER_mS(10);
     int cadDetExitMode = SX126x_SetCadParams_cadExitMode_CAD_ONLY;
 
     switch (data->spreading_factor) {
@@ -809,8 +803,7 @@ static bool dev_GetPacketStatus(radio_t* radio, uint8_t* status, int8_t* rssi, i
 {
     uint8_t buffer[SX126x_GetPacketStatus_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetPacketStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetPacketStatus, 0, 0, NULL, 0, buffer, sizeof(buffer));
+    bool ok = radio->io_transact(radio, SX126x_GetPacketStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
         if (status != NULL) {
@@ -842,11 +835,10 @@ static bool dev_SetPaConfig(radio_t* radio, int duty_cycle, int hp_max, int devi
     SX_PUT(buffer, SX126x_SetPaConfig_deviceSel, device_sel);
     SX_PUT(buffer, SX126x_SetPaConfig_paLut, pa_lut);
 
-    return radio->io_transact(radio, SX126x_SetPaConfig, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetPaConfig, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetPaConfig, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
-static bool set_dio_irq_mask(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask)
+static bool set_dio_irq_masks(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask)
 {
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
 
@@ -875,15 +867,12 @@ static bool dev_ReadBuffer(radio_t* radio, int address, uint8_t* buffer, int len
     /* Extra 16 bits of address to include the buffer address and a NOP.  The NOP period
      * is the return of the device Status and we don't want to store that in the output buffer.
      */
-    return radio->io_transact(radio, SX126x_ReadBuffer, 16, address<<8, NULL, 0, buffer, len) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_ReadBuffer, 16, address<<8, NULL, 0, buffer, len);
+    return radio->io_transact(radio, SX126x_ReadBuffer, 16, address<<8, NULL, 0, buffer, len); // && busy_wait(radio);
 }
 
 static bool dev_WriteBuffer(radio_t* radio, int address, uint8_t* buffer, int len)
 {
-    //bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0) && busy_wait(radio);
-    bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 16, address<<8, buffer, len, NULL, 0) && busy_wait(radio);
-    //bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0);
+    bool ok = radio->io_transact(radio, SX126x_WriteBuffer, 8, address, buffer, len, NULL, 0); // && busy_wait(radio);
 
 #ifdef NOTUSED
     ESP_LOGI(TAG, "%s: len %d", __func__, len);
@@ -892,7 +881,7 @@ static bool dev_WriteBuffer(radio_t* radio, int address, uint8_t* buffer, int le
         /* Read buffer back */
         uint8_t readbuffer[len];
 
-        if (dev_ReadBuffer(radio, 0, readbuffer, sizeof(readbuffer))) {
+        if (dev_ReadBuffer(radio, address, readbuffer, sizeof(readbuffer))) {
             dump_buffer("Readback", readbuffer, sizeof(readbuffer));
         } else {
             ESP_LOGE(TAG, "%s: readback of buffer failed", __func__);
@@ -906,15 +895,13 @@ static bool dev_WriteBuffer(radio_t* radio, int address, uint8_t* buffer, int le
 static bool dev_ReadRegister(radio_t* radio, uint16_t address, uint8_t* buffer, int len)
 {
     /* The extra 24 bits of address are the REGISTER identifier + status byte. */
-    return radio->io_transact(radio, SX126x_ReadRegister, 24, address<<8, NULL, 0, buffer, len) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_ReadRegister, 24, address<<8, NULL, 0, buffer, len);
+    return radio->io_transact(radio, SX126x_ReadRegister, 24, address<<8, NULL, 0, buffer, len); // && busy_wait(radio);
 }
 
 static bool dev_WriteRegister(radio_t* radio, uint16_t address, uint8_t* buffer, int len)
 {
     /* The extra 16 bits of address are the REGISTER identifier */
-    return radio->io_transact(radio, SX126x_WriteRegister, 16, address, buffer, len, NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_WriteRegister, 16, address, buffer, len, NULL, 0);
+    return radio->io_transact(radio, SX126x_WriteRegister, 16, address, buffer, len, NULL, 0); // && busy_wait(radio);
 }
 
 static bool dev_SetSyncWord(radio_t* radio, uint16_t syncword_value)
@@ -938,8 +925,7 @@ static bool dev_SetPacketType(radio_t* radio, uint8_t packet_type)
 
     SX_PUT(buffer, SX126x_SetPacketType_PacketType, packet_type);
 
-    return radio->io_transact(radio, SX126x_SetPacketType, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetPacketType, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetPacketType, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 
@@ -1007,8 +993,7 @@ static bool dev_UpdateModulationParams(radio_t* radio)
 
     SX_PUT(buffer, SX126x_SetModulationParams_LdOpt, LdOpt);
 
-    return radio->io_transact(radio, SX126x_SetModulationParams, 0, 0, buffer, sizeof(buffer), NULL, 0) && busy_wait(radio);
-    //return busy_wait(radio) && radio->io_transact(radio, SX126x_SetModulationParams, 0, 0, buffer, sizeof(buffer), NULL, 0);
+    return radio->io_transact(radio, SX126x_SetModulationParams, 0, 0, buffer, sizeof(buffer), NULL, 0); // && busy_wait(radio);
 }
 
 /******************************************************
@@ -1029,12 +1014,12 @@ bool sx126x_create(radio_t* radio)
     if (radio != NULL) {
         /* Add callouts into the driver.  All are called with radio as first parameter */
         radio->stop             = radio_stop;
-        radio->set_sleep_mode   = set_sleep_mode;
-        radio->set_standby_mode = set_standby_mode;
+        radio->disable_radio    = disable_radio;
+        radio->enable_radio     = enable_radio;
+
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
         radio->print_status     = print_status;
 #endif
-        radio->set_receive_mode = set_receive_mode;
         radio->set_txpower      = set_txpower;
         radio->get_txpower      = get_txpower;
         radio->set_channel      = set_channel;
@@ -1043,7 +1028,6 @@ bool sx126x_create(radio_t* radio)
         radio->get_datarate     = get_datarate;
         radio->transmit_start   = transmit_start;
         radio->get_message_time = get_message_time;
-        radio->set_inactive     = set_inactive;
 
         /* Allocate a data block for local data */
         radio->driver_private_data = malloc(sizeof(sx126x_private_data_t));
@@ -1088,9 +1072,12 @@ bool sx126x_create(radio_t* radio)
  *    This thread processes these elements one at a time and processes each
  *    passing, the radio and irq flags value at time of interrupt.
  *
+ *    Returns true if packet processed - receive has been restarted.
  ************************************************************************************/
-static void rx_handle_interrupt(radio_t *radio)
+static bool rx_handle_interrupt(radio_t *radio)
 {
+    bool processed = false;
+
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
 
     data->rx_interrupts++;
@@ -1111,6 +1098,7 @@ static void rx_handle_interrupt(radio_t *radio)
         uint8_t message_length;
 
         if (dev_GetRxBufferStatus(radio, &chipmode, &command, &message_length, &message_start)) {
+ESP_LOGI(TAG, "%s: message_length %d  message_start %d", __func__, message_length, message_start);
 
             if (!timeout) {
 
@@ -1139,7 +1127,7 @@ static void rx_handle_interrupt(radio_t *radio)
                         bool crcok = true;
 #endif
                         /* Reactivate receiver now */
-                        activate_receive_mode(radio);
+                        processed = activate_receive_mode(radio);
 
                         /* Buffer has been read.  Set length */
                         packet->length = message_length;
@@ -1162,6 +1150,8 @@ printf("%s: rx msg time: calc %d measured %d delta %d\n", __func__, time_of_flig
                         os_stop_timer(data->window_timer_id);
                         data->window_number = window;
                         os_set_timer(data->window_timer_id, data->window_width - time_of_flight);
+                    } else {
+                        ESP_LOGE(TAG, "%s: failed to read packet", __func__);
                     }
 
                     release_packet(packet);
@@ -1170,9 +1160,10 @@ printf("%s: rx msg time: calc %d measured %d delta %d\n", __func__, time_of_flig
                     data->packet_memory_failed++;
                 }
             }
-        } else {
         }
     }
+
+    return processed;
 }
 
 static bool tx_handle_interrupt(radio_t *radio, bool failed)
@@ -1223,7 +1214,7 @@ static bool tx_handle_interrupt(radio_t *radio, bool failed)
     return priority;
 }
 
-static bool tx_next_packet(radio_t* radio)
+static bool get_next_tx_packet(radio_t* radio)
 {
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
 
@@ -1255,110 +1246,104 @@ static bool tx_recycle_packet(radio_t* radio)
 }
 
 
-static bool tx_start_packet(radio_t* radio)
+static bool activate_transmit_mode(radio_t* radio)
 {
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
 
-    //bool ok = dev_SetStandby(radio, SX126x_SetStandby_XOSC);
     bool ok = dev_SetStandby(radio, SX126x_SetStandby_RC);
 
-    // Calculate length
-    uint8_t length = data->current_packet->length;
+    if (!ok) {
+        ESP_LOGE(TAG, "%s: SetStandby faiied", __func__);
+    } else {
+        int length = data->current_packet->length;
 
 #ifdef CONFIG_LASTLINK_CRC16_PACKETS
-    unsigned char crcbuf[2];
-#endif /* CONFIG_LASTLINK_CRC16_PACKETS */
+        /* Create copy of data on stack with extra space to receive crc */
+        uint8_t buffer[length + sizeof(uint8_t) * 2]; // Room  for CRC
 
-    if (ok) {
-#ifdef CONFIG_LASTLINK_CRC16_PACKETS
-        unsigned short crc = calc_crc16(CRC16_SEED, data->current_packet->buffer, length);
+        memcpy(buffer, data->current_packet->buffer, length);
 
-        crcbuf[0] = crc >> 8;
-        crcbuf[1] = crc & 0xFF;
+        unsigned short crc = calc_crc16(CRC16_SEED, buffer, length);
 
-        length += 2;
+        buffer[length++] = crc >> 8;
+        buffer[length++] = crc & 0xFF;
+#else
+        buffer = data->current_packet->buffer;
 #endif /* CONFIG_LASTLINK_CRC16_PACKETS */
 
         if (!dev_UpdatePacketParams(radio, length)) {
             ESP_LOGE(TAG, "%s: unable set packet params", __func__);
             ok = false;
         }
-    }
 
-    if (ok) {
-        if (! set_dio_irq_mask(radio,
-                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
-                SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
-                0, 0)) {
+        if (ok) {
+            if (! set_dio_irq_masks(radio,
+                    SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
+                    SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
+                    0, 0)) {
 
-            ESP_LOGE(TAG, "%s: unable to set dio/irq mask", __func__);
-            ok = false;
-        }
-    }
-
-    if (ok) {
-        if (!dev_SetBufferBaseAddress(radio, 0,  0)) {
-            ESP_LOGE(TAG, "%s: unable to set buffer base address", __func__);
-            ok = false;
-        }
-    }
-
-    if (ok) {
-        dump_buffer("OUT", data->current_packet->buffer, length);
-        if (!dev_WriteBuffer(radio, 0, data->current_packet->buffer, length)) {
-            ESP_LOGE(TAG, "%s: Unable to write packet data", __func__);
-            ok = false;
-        }
-    }
-
-#ifdef CONFIG_LASTLINK_CRC16_PACKETS
-    if (ok) {
-        if (!dev_WriteBuffer(radio, length, crcbuf, sizeof(crcbuf))) {
-            ESP_LOGE(TAG, "%s: Unable to write crc", __func__);
-            ok = false;
-        }
-    }
-#endif /* CONFIG_LASTLINK_CRC16_PACKETS */
-
-    if (ok) {
-        if (! dev_ClearIrqStatus(radio, 0xFFFF)) {
-            ESP_LOGE(TAG, "%s: Unable to clear irq status", __func__);
-            ok = false;
-        }
-    }
-
-    if (ok) {
-        /* Sensitivity Workaround:
-         * Datasheet v1.1 workaround: Before any packet transmission, bit #2 at address 0x0889 shall be set to:
-         *   • 0 if the LoRa BW = 500 kHz
-         *   • 1 for any other LoRa BW
-         */
-
-        uint8_t txmod[1];
-        if (! dev_ReadRegister(radio, SX126x_REG_TxModulation, txmod, sizeof(txmod))) {
-            ESP_LOGE(TAG, "%s: Unable to read TxModulation", __func__);
-            ok = false;
-        } else {
-            uint8_t txmodout[1];
-            if (data->bandwidth == BW500000) {
-                txmodout[0] = txmod[0] & ~0x04;
-            } else {
-                txmodout[0] = txmod[0] | 0x04;
+                ESP_LOGE(TAG, "%s: unable to set dio/irq mask", __func__);
+                ok = false;
             }
-            if (txmod[0] != txmodout[0]) {
-                if (! dev_WriteRegister(radio, SX126x_REG_TxModulation, txmod, sizeof(txmod))) {
-                    ESP_LOGE(TAG, "%s: Unable to write TxModulation", __func__);
-                    ok = false;
+        }
+
+#if 0
+        if (ok) {
+            if (!dev_SetBufferBaseAddress(radio, 0,  0)) {
+                ESP_LOGE(TAG, "%s: unable to set buffer base address", __func__);
+                ok = false;
+            }
+        }
+#endif
+
+        if (ok) {
+            dump_buffer("OUT", buffer, length);
+            if (!dev_WriteBuffer(radio, 0, buffer, length)) {
+                ESP_LOGE(TAG, "%s: Unable to write packet data", __func__);
+                ok = false;
+            }
+        }
+
+        if (ok) {
+            if (! dev_ClearIrqStatus(radio, 0xFFFF)) {
+                ESP_LOGE(TAG, "%s: Unable to clear irq status", __func__);
+                ok = false;
+            }
+        }
+
+        if (ok) {
+            /* Sensitivity Workaround:
+             * Datasheet v1.1 workaround: Before any packet transmission, bit #2 at address 0x0889 shall be set to:
+             *   • 0 if the LoRa BW = 500 kHz
+             *   • 1 for any other LoRa BW
+             */
+
+            uint8_t txmod[1];
+            if (! dev_ReadRegister(radio, SX126x_REG_TxModulation, txmod, sizeof(txmod))) {
+                ESP_LOGE(TAG, "%s: Unable to read TxModulation", __func__);
+                ok = false;
+            } else {
+                uint8_t txmodout[1];
+                if (data->bandwidth == BW500000) {
+                    txmodout[0] = txmod[0] & ~0x04;
+                } else {
+                    txmodout[0] = txmod[0] | 0x04;
+                }
+                if (txmod[0] != txmodout[0]) {
+                    if (! dev_WriteRegister(radio, SX126x_REG_TxModulation, txmodout, sizeof(txmodout))) {
+                        ESP_LOGE(TAG, "%s: Unable to write TxModulation", __func__);
+                        ok = false;
+                    }
                 }
             }
+            /* end sensitivity workaround */
         }
-        /* end sensitivity workaround */
-    }
 
-    if (ok) {
-        if (!dev_SetTx(radio, SX_TIMER(TX_TIMEOUT_TIME))) {
-            ESP_LOGE(TAG, "%s: unable to start transmit", __func__);
-            ok = false;
+        if (ok) {
+            if (!dev_SetTx(radio, SX_TIMER_mS(TX_TIMEOUT_TIME))) {
+                ESP_LOGE(TAG, "%s: unable to start transmit", __func__);
+                ok = false;
+            }
         }
     }
 
@@ -1395,64 +1380,60 @@ static void global_interrupt_handler(void* param)
             radio_t *radio = event.radio;
 
             if (radio != NULL) {
-                sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-
-                switch (event.type) {
-                    case HQI_SET_STATE: {
-                        data->handler_state = event.state;
-                        ESP_LOGE(TAG, "%s: HQI_SET_STATE event", __func__);
-                        break;
-                    }
-
-                    case HQI_INTERRUPT: {
-                        // ESP_LOGE(TAG, "%s: interrupt detected radio %d", __func__, radio->radio_num);
-                        data->hqi_interrupts++;
-                        break;
-                    }
-
-                    case HQI_WINDOW: {
-                        // ESP_LOGI(TAG, "%s: window %d", __func__, event.window);
-                        break;
-                    }
-                }
-
-                data->handler_cycles++;
-
                 if (acquire_lock(radio)) {
-                    /* Remember what we have */
-                    uint8_t chipmode;
-                    uint8_t command;
-                    uint16_t operrors;
-                    uint16_t irq_flags;
+                    sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
 
-                    /* See if any errors were seen */
-                    if (dev_GetDeviceErrors(radio, NULL, NULL, &operrors)) {
-                         if (operrors != 0) {
-                             dev_ClearDeviceErrors(radio);
-                             ESP_LOGE(TAG, "%s: device errors: 0x%x", __func__, operrors);
-                         }
+                    switch (event.type) {
+                        case HQI_SET_STATE: {
+                            data->handler_state = event.state;
+                            ESP_LOGE(TAG, "%s: HQI_SET_STATE event", __func__);
+                            break;
+                        }
+
+                        case HQI_INTERRUPT: {
+                            // ESP_LOGE(TAG, "%s: interrupt detected radio %d", __func__, radio->radio_num);
+                            data->hqi_interrupts++;
+
+                            uint8_t chipmode;
+                            uint8_t command;
+                            uint16_t operrors;
+                            uint16_t irq_flags;
+
+                            /* See if any errors were seen */
+                            if (dev_GetDeviceErrors(radio, NULL, NULL, &operrors)) {
+                                /* Ignore XOSC not starting when coming out of sleep */
+                                if (operrors != 0) {
+                                    dev_ClearDeviceErrors(radio);
+                                    operrors &= ~SX126x_GetDeviceErrors_OpErrors_XOSC_START_ERR;
+                                    if (operrors != 0) {
+                                        ESP_LOGE(TAG, "%s: device errors: 0x%x", __func__, operrors);
+                                    }
+                                }
+                            }
+    
+                            if (! dev_GetIrqStatus(radio, &chipmode, &command, &irq_flags)) {
+                                chipmode = 0;
+                                command = 0;
+                                irq_flags = 0;
+                            }
+
+                            if (irq_flags != 0) {
+                                /* Remember new interrupt flags not yet serviced */
+                                data->irq_flags |= irq_flags;
+
+                                /* Physically clear the interrupts detected */
+                                dev_ClearIrqStatus(radio, irq_flags);
+                            }
+                            break;
+                        }
+
+                        case HQI_WINDOW: {
+                            // ESP_LOGI(TAG, "%s: window %d", __func__, event.window);
+                            break;
+                        }
                     }
 
-                    if (! dev_GetIrqStatus(radio, &chipmode, &command, &irq_flags)) {
-                        chipmode = 0;
-                        command = 0;
-                        irq_flags = 0;
-//ESP_LOGI(TAG, "%s: failed GetIrqStatus", __func__);
-                    }
-
-                    /* If status says data is present, */
-
-                    if (irq_flags != 0) {
-ESP_LOGI(TAG, "%s: irq chipmode 0x%x command 0x%x irq_flags 0x%04x", __func__, chipmode, command, irq_flags);
-                        //ESP_LOGI(TAG, "%s: irq_flags 0x%x", __func__, irq_flags);
-
-                        /* Remember new interrupt flags not yet serviced */
-                        data->irq_flags |= irq_flags;
-
-                        /* Physically clear the interrupts detected */
-                        dev_ClearIrqStatus(radio, irq_flags);
-//ESP_LOGI(TAG, "%s: clear irq status %x", __func__, irq_flags);
-                    }
+                    data->handler_cycles++;
 
 #ifdef USE_FHSS
                     if (data->irq_flags & SX126x_IRQ_FHSS_CHANGE_CHANNEL) {
@@ -1497,6 +1478,13 @@ ESP_LOGI(TAG, "%s: irq chipmode 0x%x command 0x%x irq_flags 0x%04x", __func__, c
                     }
 
                     switch (data->handler_state) {
+                        case HS_ENABLE: {
+                            radio->inactive = false;
+                            activate_radio(radio);
+                        }
+
+                        /* Fall through */
+
                         default:
                         case HS_STARTUP: {
                             activate_receive_mode(radio);
@@ -1504,9 +1492,31 @@ ESP_LOGI(TAG, "%s: irq chipmode 0x%x command 0x%x irq_flags 0x%04x", __func__, c
                             break;
                         }
 
+                        case HS_SLEEP: {
+                            /* Just stop everything for now */
+                            if (!set_dio_irq_masks(radio, 0, 0, 0, 0)) {
+                                ESP_LOGE(TAG, "%s: unable to disable irqs on radio %d", __func__, radio->radio_num);
+                            }
+                            if (!dev_ClearDeviceErrors(radio)) {
+                                ESP_LOGE(TAG, "%s: unable to clear device errors on radio %d", __func__, radio->radio_num);
+                            }
+                            if (!dev_SetSleep(radio, true)) {
+                                ESP_LOGE(TAG, "%s: unable to set sleep on radio %d", __func__, radio->radio_num);
+                            }
+                            data->handler_state = HS_SLEEPING;
+                            radio->inactive = true;
+                            break;
+                        }
+
+                        case HS_SLEEPING: {
+                            /* Wait for wakeup (set_receive_mode) call */
+                            break;
+                        }
+
                         /* Waiting for packet or timeout */
                         case HS_RECEIVING: {
-                            bool restart_receive = true;   /* By default we restart the receive cycle */
+                            bool restart_receive = false;   /* By default we do not restart receive */
+
                             if (data->irq_flags & SX126x_IrqFlags_HeaderValid) {
                                 data->rx_busy = true;
 ESP_LOGI(TAG, "%s: header valid", __func__);
@@ -1515,6 +1525,34 @@ ESP_LOGI(TAG, "%s: header valid", __func__);
 #endif /* MEASURE_RX_TIME */
                                 data->irq_flags &= ~SX126x_IrqFlags_HeaderValid;
 
+                            /* If not receiving, see if work to do */
+                            } else if (!data->rx_busy) {
+                                /* If a channel change has been made, do it now */
+                                if (data->new_channel >= 0) {
+                                    if (!change_channel(radio, data->new_channel)) {
+                                        ESP_LOGE(TAG, "%s: change_channel to %d failed", __func__, data->new_channel);
+                                    }
+                                    data->new_channel = -1;
+                                    restart_receive = true;  /* Restart receiver then check again */
+                                } else if ((data->irq_flags & SX126x_IrqFlags_Timeout) != 0) {
+                                    data->irq_flags &= ~SX126x_IrqFlags_Timeout;
+                                    data->rx_timeouts++;
+                                } else {
+                                    /* Receive attempt timed out.  Return to active mode and clear receive busy */
+                                    if (get_next_tx_packet(radio)) {
+                                        if (data->current_packet_window == event.window) {
+                                            if (packet_lock(data->current_packet)) {
+                                                /* Remains locked through the interrupt return */
+                                                activate_transmit_mode(radio);
+                                                data->handler_state = HS_WAIT_TX_INT;
+                                            } else {
+                                                /* Recycle packet to end of queue in hopes we can do some other work while waiting. */
+                                                /* If not, we'll keep moving it back into the queue on each CAD interrupt for a while. */
+                                                tx_recycle_packet(radio);
+                                            }
+                                        }
+                                    }
+                                }
                             } else if (data->irq_flags & SX126x_IrqFlags_RxDone) {
 ESP_LOGI(TAG, "%s: rx done", __func__);
                                 /* Packet arrived.  Process it */
@@ -1523,50 +1561,13 @@ ESP_LOGI(TAG, "%s: rx done", __func__);
 #endif /* MEASURE_RX_TIME */
                                 data->rx_busy = false;
 
-                                rx_handle_interrupt(radio);
-
-                                /* rx_handle_interrupt has reactivated already  */
-                                restart_receive = false;
+                                /* rx_handle_interrupt has reactivated already.  Only restart if no packet handled.  */
+                                restart_receive = !rx_handle_interrupt(radio);
 
                                 /* Allocate a new packet if we can */
                                 if (data->rx_next_packet == NULL) {
                                     data->rx_next_packet = allocate_packet();
                                 }
-                            } else if ((data->irq_flags & SX126x_IrqFlags_Timeout) != 0) {
-                                data->irq_flags &= ~SX126x_IrqFlags_Timeout;
-
-                                data->rx_timeouts++;
-
-                                /* Receive attempt timed out.  Return to active mode and clear receive busy */
-                                data->irq_flags &= ~(SX126x_IrqFlags_Timeout);
-                                if (tx_next_packet(radio)) {
-                                    if (data->current_packet_window == event.window) {
-                                        if (packet_lock(data->current_packet)) {
-                                            /* Remains locked through the interrupt return */
-                                            tx_start_packet(radio);
-                                            data->handler_state = HS_WAIT_TX_INT;
-
-                                            /* Transmitting now so do not restart receive */
-                                            restart_receive = false;
-                                        } else {
-                                            /* Recycle packet to end of queue in hopes we can do some other work while waiting. */
-                                            /* If not, we'll keep moving it back into the queue on each CAD interrupt for a while. */
-                                            tx_recycle_packet(radio);
-                                        }
-                                    }
-                                }
-                            } else {
-                                restart_receive = false;  /* No work to do */
-                            }
-
-
-                            /* If a channel change has been made, do it now */
-                            if (data->new_channel >= 0) {
-                                if (!change_channel(radio, data->new_channel)) {
-                                    ESP_LOGE(TAG, "%s: change_channel to %d failed", __func__, data->new_channel);
-                                }
-                                data->new_channel = -1;
-                                restart_receive = true;
                             }
 
                             if (restart_receive) {
@@ -1608,7 +1609,8 @@ ESP_LOGI(TAG, "%s: rx done", __func__);
 #endif
 
                     if (data->irq_flags != 0) {
-                        ESP_LOGI(TAG, "%s: unhandled irq_flags 0x%x", __func__, data->irq_flags);
+                        ESP_LOGI(TAG, "%s: unhandled irq_flags 0x%x in state %s", __func__, data->irq_flags, handler_state_of(data->handler_state));
+                        data->irq_flags = 0;
                     }
 
                     release_lock(radio);
@@ -1640,7 +1642,7 @@ static bool radio_stop(radio_t* radio)
 
     if (acquire_lock(radio)) {
         /* Disable all interrupts */
-        ok = set_dio_irq_mask(radio, 0, 0, 0, 0)
+        ok = set_dio_irq_masks(radio, 0, 0, 0, 0)
              && radio->attach_interrupt(radio, radio->irq_dio_num, GPIO_PIN_INTR_DISABLE, NULL)
              ;
 
@@ -1741,6 +1743,21 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
         data->window_timer_id = os_create_timer("wakeup_timer", INITIAL_WINDOW_TIMER_PERIOD, radio, window_timer);
         os_stop_timer(data->window_timer_id);  /* Leave it stopped */
 
+        ok = activate_radio(radio);
+
+        release_lock(radio);
+    }
+
+    return ok;
+}    
+
+    
+static bool activate_radio(radio_t* radio)
+{
+    bool ok = false;
+    if (acquire_lock(radio)) {
+        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+
         /* Reset physical device */
         radio->reset_device(radio);
 
@@ -1760,13 +1777,19 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
         /* Set initial default  parameters parameters */
         data->tx_ramp = SX126x_SetTxParams_TxRamp_200uS;
 
+#if 0
         if (!dev_SetBufferBaseAddress(radio, 0, 0)) {
             ESP_LOGE(TAG, "%s: SetBufferBaseAddress radio %d failed", __func__, radio->radio_num);
         }
+#endif
 
         /* Set LORA packets */
         if (!dev_SetPacketType(radio, SX126x_SetPacketType_PacketType_LORA)) {
             ESP_LOGE(TAG, "%s: SetPacketType failed", __func__);
+        }
+
+        if (!dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)) {
+            ESP_LOGE(TAG, "%s: UpdatePacketParams radio %d failed", __func__, radio->radio_num);
         }
 
         /* Set fallback to standby RC */
@@ -1800,12 +1823,14 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
             ESP_LOGE(TAG, "%s: set_txpower radio %d failed", __func__, radio->radio_num);
         }
 
+#if 0
         if (!dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)) {
             ESP_LOGE(TAG, "%s: UpdatePacketParams radio %d failed", __func__, radio->radio_num);
         }
+#endif
 
         /* Mask all IRQs */
-        if (!set_dio_irq_mask(radio, 0, 0, 0, 0)) {
+        if (!set_dio_irq_masks(radio, 0, 0, 0, 0)) {
             ESP_LOGE(TAG, "%s: set_dio_irq_mask radio %d failed", __func__, radio->radio_num);
         }
 
@@ -1847,6 +1872,12 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
             ESP_LOGE(TAG, "%s: SetDio2AsRfSwitch radio %d failed", __func__, radio->radio_num);
         }
 
+#ifdef xxxCONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+        if (!dev_StopTimerOnPreamble(radio, true)) {
+            ESP_LOGE(TAG, "%s: StopTimerOnPreamble  on radio %d failed", __func__, radio->radio_num);
+        }
+#endif /* xxxCONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
+      
         /* Capture receive/transmit interrupts */
         if (!radio->attach_interrupt(radio, radio->irq_dio_num, GPIO_PIN_INTR_POSEDGE, catch_interrupt)) {
             ESP_LOGE(TAG, "%s: attach dio0 interrupt radio %d failed", __func__, radio->radio_num);
@@ -1864,49 +1895,22 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
         radio->activity_indicator(radio, false);
 
         release_lock(radio);
-
-        ESP_LOGD(TAG, "SX126x radio started");
-    }
-
-ESP_LOGI(TAG, "%s: returned %s", __func__, ok ? "True" : "False");
-
-    return ok;
-}
-
-
-static bool set_standby_mode(radio_t* radio)
-{
-    bool ok = false;
-
-    if (acquire_lock(radio)) {
-        ok = dev_SetStandby(radio, SX126x_SetStandby_RC);
-        release_lock(radio);
     }
 
     return ok;
 }
 
-static bool set_sleep_mode(radio_t* radio)
+static bool disable_radio(radio_t* radio)
 {
-    bool ok = false;
-
-    if (acquire_lock(radio)) {
-        ok = dev_SetSleep(radio, /* retain */true, /* rtc */true);
-        if (ok) {
-            os_delay(2);
-        }
-        release_lock(radio);
-    }
-
-    return ok;
+    return set_handler_state(radio, HS_SLEEP);
 }
 
 /*
  * Set receive mode requesst
  */
-static bool set_receive_mode(radio_t* radio)
+static bool enable_radio(radio_t* radio)
 {
-    return set_handler_state(radio, HS_RECEIVING);
+    return set_handler_state(radio, HS_ENABLE);
 }
 
 /*
@@ -1914,96 +1918,75 @@ static bool set_receive_mode(radio_t* radio)
  */
 static bool activate_receive_mode(radio_t* radio)
 {
-
     bool ok = false;
 
-    if (acquire_lock(radio)) {
-
-        if (radio->inactive) {
-            /* Leave in sleep mode */
-            ok = radio->set_sleep_mode(radio);
-        } else {
+    if (radio->inactive) {
+        /* Leave in sleep mode */
+        ok = radio->disable_radio(radio);
+    } else {
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
-            unsigned int sleep_period_ticks = 0;
-            unsigned int wake_period_ticks;
+        sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
 
-            sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
-
-            if (2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS <= data->preamble_length) {
+        if (2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS <= data->preamble_length) {
+            if (data->sleep_wake_recalc != data->channel_change_counter) {
                 /* Maximum sleep time before missing header */
                 unsigned int sleep_symbols = data->preamble_length - 2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS;
-                unsigned int symbol_length = (10000L << data->spreading_factor) / (10 * data->bandwidth_bits);
+                unsigned int symbol_length = (1000L << data->spreading_factor) / (float) (data->bandwidth_bits/1000.0);
                 unsigned int sleep_period = symbol_length * sleep_symbols;
 
                 unsigned int wake_period = fmax(
-                    (symbol_length * (data->preamble_length + 1) - (sleep_period - 1000)) / 2,
-                    symbol_length * (CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS + 1)
+                        (symbol_length * (data->preamble_length + 1) - (sleep_period - 1000)) / 2,
+                        symbol_length * (CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS + 1)
                 );
 
-                sleep_period_ticks = SX_TIMER(sleep_period);
-                wake_period_ticks = SX_TIMER(wake_period);
+                /* The above calculation produces microsecond intervas */
+                data->sleep_period_ticks = SX_TIMER_uS(sleep_period);
+                data->wake_period_ticks = SX_TIMER_uS(wake_period);
 
-                if ((sleep_period_ticks & 0xFF000000L) != 0) {
+                if ((data->sleep_period_ticks & 0xFF000000L) != 0) {
                     ESP_LOGE(TAG, "%s: sleep_period too large: %d", __func__, sleep_period);
-                    ok = false;
+                    data->sleep_period_ticks = 0;
 
-                } else if ((wake_period_ticks & 0xFF000000L) != 0) {
+                } else if ((data->wake_period_ticks & 0xFF000000L) != 0) {
                     ESP_LOGE(TAG, "%s: wake_period too large: %d", __func__, wake_period);
-                    ok = false;
+                    data->sleep_period_ticks = 0;
                 }
+                data->sleep_wake_recalc = data->channel_change_counter;
             }
+        }
 #endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
 
-            ok = set_dio_irq_mask(radio,
+        ok = dev_SetStandby(radio, SX126x_SetStandby_RC)
+          && set_dio_irq_masks(radio,
                                SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
                                SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
                                0, 0)
-              && dev_SetBufferBaseAddress(radio, 0, 0)
-              && dev_ClearIrqStatus(radio, 0xFFFF)
-              && dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)
-              ; /* end */
+#if 0
+          && dev_SetBufferBaseAddress(radio, 0, 0)
+#endif
+          && dev_ClearIrqStatus(radio, 0xFFFF)
+          && dev_UpdatePacketParams(radio, CONFIG_LASTLINK_MAX_PACKET_LENGTH)
+          ; /* end */
 
-            if (!ok) {
-                ESP_LOGE(TAG, "%s: receive setup failed", __func__);
+        if (!ok) {
+            ESP_LOGE(TAG, "%s: receive setup failed", __func__);
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
-            } else if (sleep_period_ticks != 0) {
+        } else if (data->sleep_period_ticks != 0) {
 
-ESP_LOGI(TAG, "%s: rx dutycycle wake %.3f S; sleep %.3f S", __func__, wake_period_ticks * (SX_TIMER_INTERVAL / 1000000.0), sleep_period_ticks * (SX_TIMER_INTERVAL / 1000000.0));
+ESP_LOGI(TAG, "%s: rx dutycycle wake %.3f S; sleep %.3f S", __func__, data->wake_period_ticks * (SX_TIMER_INTERVAL / 1000000.0), data->sleep_period_ticks * (SX_TIMER_INTERVAL / 1000000.0));
 
-                ok = dev_SetRxDutyCycle(radio, wake_period_ticks, sleep_period_ticks);
+            ok = dev_SetRxDutyCycle(radio, data->wake_period_ticks, data->sleep_period_ticks)
+              && dev_StopTimerOnPreamble(radio, true);
 #endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
-            } else {
-                ok = dev_SetRx(radio, SX_TIMER(RX_TIMEOUT_TIME));
-            }
+        } else {
+ESP_LOGI(TAG, "%s: SetRx with timeout", __func__);
+            ok = dev_SetRx(radio, SX_TIMER_mS(RX_TIMEOUT_TIME));
         }
-
-        release_lock(radio);
     }
 
     return ok;
 }
 
-/* Used to power down radio to standy mode */
-static bool set_inactive(radio_t* radio, bool inactive)
-{
-    bool ok = true;
-
-    ESP_LOGD(TAG, "%s: radio %d %sactive", __func__, radio->radio_num, inactive ? "in" : "");
-
-    if (acquire_lock(radio)) {
-        if (inactive != radio->inactive) {
-            radio->inactive = inactive;
-
-            /* Do the work to change active mode */
-            if (inactive == 0) {
-                radio->set_receive_mode(radio);
-            }
-        }
-        release_lock(radio);
-    }
-
-    return ok;
-}
 
 /*
  * Set power from -15 to +17 dbm.  Chose PA mode as apprpriate
@@ -2127,23 +2110,31 @@ ESP_LOGI(TAG, "%s: channel %d", __func__, channel);
 
 static bool change_channel(radio_t*radio, int channel)
 {
-    //dev_SetStandby(radio, SX126x_SetStandby_RC);
-
-    sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-    const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
-
     /* Set frequency control */
     bool ok = false;
 
-    if (!dev_SetFrequency(radio, chanp->freq)) {
-        ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
-    } else if (!radio->set_datarate(radio, 0)) {
-        ESP_LOGE(TAG, "%s: set_datarate failed", __func__);
-    } else if (!radio->set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][0].tx)) {
-        ESP_LOGE(TAG, "%s: change_channel se_txpower failed", __func__);
-    } else {
+    //dev_SetStandby(radio, SX126x_SetStandby_RC);
+
+    if (channel >= 0 && channel < ELEMENTS_OF(channel_table_sx126x.channels)) {
+        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+        const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
+
+        ESP_LOGE(TAG, "%s: channel to %d", __func__, channel);
+
         data->channel = channel;
-        ok = true;
+
+        if (!dev_SetFrequency(radio, chanp->freq)) {
+            ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
+        } else if (!radio->set_datarate(radio, 0)) {
+            ESP_LOGE(TAG, "%s: set_datarate failed", __func__);
+        } else if (!radio->set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][0].tx)) {
+            ESP_LOGE(TAG, "%s: change_channel se_txpower failed", __func__);
+        } else {
+            data->frequency = (int) (chanp->freq * channel_table_sx126x.pll_step + 0.5); /* Display purposes */
+            ok = true;
+        }
+    } else {
+        ESP_LOGE(TAG, "%s: bad channel %d", __func__, channel);
     }
 
     return ok;
@@ -2184,6 +2175,7 @@ static bool set_datarate(radio_t* radio, int datarate)
             } else {
                 /* Ok */
                 data->datarate = datarate;
+                data->channel_change_counter++;
                 data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth_bits) / (data->coding_rate * (1 << data->spreading_factor));
 
 ESP_LOGI(TAG, "%s: datarate %d data_rate_bps %d", __func__, data->datarate, data->data_rate_bps);
@@ -2394,18 +2386,23 @@ void print_status(command_context_t* context, radio_t *radio)
         command_reply(context, "D", "hop_period:             %d", data.hop_period);
         command_reply(context, "D", "fhss_interrupts:        %d", data.fhss_interrupts);
 #endif
+        command_reply(context, "D", "frequency:              %d", data.frequency);
         command_reply(context, "D", "channel:                %d", data.channel);
         command_reply(context, "D", "datarate:               %d", data.datarate);
         command_reply(context, "D", "bandwidth_bits:         %d", data.bandwidth_bits);
         command_reply(context, "D", "bandwidth:              %d", data.bandwidth);
         command_reply(context, "D", "spreading_factor:       %d", data.spreading_factor);
+        command_reply(context, "D", "channel_change_counter: %d", data.channel_change_counter);
         command_reply(context, "D", "tx_power:               %d", data.tx_power);
         command_reply(context, "D", "rx_interrupts:          %d", data.rx_interrupts);
         command_reply(context, "D", "rx_interrupts:          %d", data.rx_interrupts);
         command_reply(context, "D", "rx_timeouts:            %d", data.rx_timeouts);
+        command_reply(context, "D", "rx_busy:                %s", data.rx_busy ? "Yes": "No");
         command_reply(context, "D", "tx_interrupts:          %d", data.tx_interrupts);
         command_reply(context, "D", "tx_timeouts:            %d", data.tx_timeouts);
         command_reply(context, "D", "hqi_interrupts:         %d", data.hqi_interrupts);
+        command_reply(context, "D", "sleep_period_ticks:     %d", data.sleep_period_ticks);
+        command_reply(context, "D", "wake_period_ticks:      %d", data.wake_period_ticks);
         command_reply(context, "D", "packet_memory_failed:   %d", data.packet_memory_failed);
         command_reply(context, "D", "packet_crc_errors:      %d", data.packet_crc_errors);
         command_reply(context, "D", "irq_flags:              %04x", data.irq_flags);

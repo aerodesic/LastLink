@@ -818,18 +818,22 @@ bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate
         int old_channel[NUM_RADIOS];
         int old_datarate[NUM_RADIOS];
 
-        /* Read and save old values */
         for (radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
+            old_channel[radio_num] = old_datarate[radio_num] = -1;
+        }
+
+        /* Read and save old values */
+        for (radio_num = 0; ok && radio_num < NUM_RADIOS; ++radio_num) {
             radio_t *radio = radio_table[radio_num];
 
             if (radio != NULL) {
                 old_channel[radio_num] = radio->get_channel(radio);
                 old_datarate[radio_num] = radio->get_datarate(radio);
 
-                ok = ok && radio->set_channel(radio, channel) && radio->set_datarate(radio, datarate);
-            } else {
-                old_channel[radio_num] = -1;
-                old_datarate[radio_num] = -1;
+                ok = radio->set_channel(radio, channel) && radio->set_datarate(radio, datarate);
+                if (!ok) {
+                    ESP_LOGE(TAG, "%s: set channel %d and datarate %d on radio %d failed", __func__, channel, datarate, radio_num);
+                }
             }
         }
 
@@ -837,9 +841,11 @@ bool linklayer_set_channel_and_datarate(int radio_num, int channel, int datarate
         if (!ok) {
             for (radio_num = 0; radio_num < NUM_RADIOS; ++radio_num) {
                 if (old_channel[radio_num] >= 0) {
+                    ESP_LOGE(TAG, "%s: restoring channel %d on radio %d", __func__, old_channel[radio_num], radio_num);
                     radio_table[radio_num]->set_channel(radio_table[radio_num], old_channel[radio_num]);
                 }
                 if (old_datarate[radio_num] >= 0) {
+                    ESP_LOGE(TAG, "%s: restoring datarate %d on radio %d", __func__, old_datarate[radio_num], radio_num);
                     radio_table[radio_num]->set_datarate(radio_table[radio_num], old_datarate[radio_num]);
                 }
             }
@@ -1680,6 +1686,50 @@ static void linklayer_print_status(command_context_t* context)
     }
 }
 
+static void linklayer_disable_radio(command_context_t* context)
+{
+    if (context->argc == 0) {
+        show_help(context, "<number>", "Disable radio operation");
+    } else if (context->argc > 1) {
+        int radio_num = strtol(context->argv[1], NULL, 10);
+
+        if (radio_num >= 0 && radio_num < NUM_RADIOS) {
+            if (radio_table[radio_num] != NULL) {
+                radio_table[radio_num]->disable_radio(radio_table[radio_num]);
+            } else {
+                command_reply(context, "E", "No radio pointer for %d", radio_num);
+            }
+        } else {
+            command_reply(context, "E", "Invalid radio number %d", radio_num);
+        }
+    } else {
+        command_reply(context, "E", "No radio number");
+    }
+}
+
+
+static void linklayer_enable_radio(command_context_t* context)
+{
+    if (context->argc == 0) {
+        show_help(context, "<number>", "Enable radio operation");
+    } else if (context->argc > 1) {
+        int radio_num = strtol(context->argv[1], NULL, 10);
+
+        if (radio_num >= 0 && radio_num < NUM_RADIOS) {
+            if (radio_table[radio_num] != NULL) {
+                radio_table[radio_num]->enable_radio(radio_table[radio_num]);
+            } else {
+                command_reply(context, "E", "No radio pointer for %d", radio_num);
+            }
+        } else {
+            command_reply(context, "E", "Invalid radio number %d", radio_num);
+        }
+    } else {
+        command_reply(context, "E", "No radio number");
+    }
+}
+
+
 static void linklayer_debug_flag(command_context_t* context)
 {
     if (context->argc == 0) {
@@ -1814,8 +1864,10 @@ bool linklayer_init(int address, int flags, int announce)
 #endif /* CONFIG_LASTLINK_SEND_INITIAL_RESET_BEACON */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
-    add_command("ll",  linklayer_print_status, COMMAND_ONCE);
-    add_command("ldb", linklayer_debug_flag,   COMMAND_ONCE);
+    add_command("ll",       linklayer_print_status,  COMMAND_ONCE);
+    add_command("ldb",      linklayer_debug_flag,    COMMAND_ONCE);
+    add_command("disable",  linklayer_disable_radio, COMMAND_ONCE);
+    add_command("enable",   linklayer_enable_radio,  COMMAND_ONCE);
 //  add_command("srb", send_reset_beacon,      COMMAND_ONCE);
 #endif /* CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS */
 
