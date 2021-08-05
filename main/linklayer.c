@@ -922,25 +922,15 @@ ESP_LOGD(TAG, "%s: radio_num %d allocated radio_t at %p", __func__, radio_num, r
             }
 #endif
             if (ok) {
-                if (radio->set_channel(radio, config->channel)) {
-                    if (radio->set_datarate(radio, config->datarate)) {
-                        /* Put radio in active table. If no radio, create one. */
-                        if (radio_table == NULL) {
-                            /* Create radio table */
-                            radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
+                /* Put radio in active table. If no radio, create one. */
+                if (radio_table == NULL) {
+                    /* Create radio table */
+                    radio_table = (radio_t**) malloc(sizeof(radio_t*) * NUM_RADIOS);
 
 ESP_LOGD(TAG, "%s: allocated radio_table at %p", __func__, radio_table);
-                            if (radio_table != NULL) {
-                                memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
-                            }
-                        }
-                    } else {
-                        ESP_LOGE(TAG, "%s: **** Invalid datarate: %d\n", __func__, config->datarate);
-                        ok = false;
+                    if (radio_table != NULL) {
+                        memset(radio_table, 0, sizeof(radio_t*) * NUM_RADIOS);
                     }
-                } else {
-                    ESP_LOGE(TAG, "%s:  **** Invalid channel: %d\n", __func__, config->channel);
-                    ok = false;
                 }
             } else {
                 ESP_LOGE(TAG, "%s: radio create failed", __func__);

@@ -57,9 +57,11 @@ static bool set_txpower(radio_t* radio, int power);                  /* Set tran
 static int get_txpower(radio_t* radio);                              /* Get current transmit power */
 static bool set_channel(radio_t* radio, int channel);                /* Request channel change */
 static int get_channel(radio_t* radio);                              /* Get channel */
-static bool change_channel(radio_t* radio, int channel);             /* Perform channel change */
 static bool set_datarate(radio_t* radio, int datarate);               /* Set datarate */
 static int get_datarate(radio_t* radio);                             /* Get datarate */
+
+static bool update_datarate(radio_t* radio, int channel, int datarate);
+static bool update_channel_and_datarate(radio_t* radio, int channel, int datarate, bool recursion_ok);
 
 static bool set_dio_irq_masks(radio_t* radio, int irq_mask, int dio0_mask, int dio1_mask, int dio2_mask);
 
@@ -151,7 +153,6 @@ typedef struct sx126x_private_data {
     bool              implicit_header_set;
     int               frequency;  /* Display purposes only */
     int               channel;
-    int               new_channel;
     uint8_t           datarate;
     uint8_t           bandwidth;
     int               bandwidth_bits;
@@ -161,10 +162,12 @@ typedef struct sx126x_private_data {
     int               data_rate_bps;
     uint8_t           tx_power;
     uint8_t           tx_ramp;
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
     int               sleep_period_ticks;
     int               wake_period_ticks;
-    int               sleep_wake_recalc;
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
     packet_t          *rx_next_packet;
+    int               irq_count;
     int               rx_interrupts;
     bool              rx_busy;
     int               hqi_interrupts;
@@ -175,7 +178,7 @@ typedef struct sx126x_private_data {
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
   #define RX_TIMEOUT_TIME CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_TIMEOUT
 #else
-  #define RX_TIMEOUT_TIME 50
+  #define RX_TIMEOUT_TIME 0
 #endif
     int               tx_interrupts;
 #define TX_TIMEOUT_TIME  5000
@@ -248,7 +251,7 @@ static bool busy_wait_debug(radio_t* radio, int line)
 
     int elapsed = get_milliseconds() - start;
 
-    if (elapsed >= 10) {
+    if (elapsed >= 100) {
         ESP_LOGI(TAG, "%s: elapsed %d: line %d", __func__, elapsed, line);
     }
 
@@ -431,7 +434,7 @@ static bool dev_GetDeviceErrors(radio_t* radio, int* chipmode, int* command, uin
 {
     uint8_t buffer[SX126x_GetDeviceErrors_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetDeviceErrors, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
+    bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetDeviceErrors, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
         if (chipmode != NULL) {
@@ -547,7 +550,7 @@ static bool dev_GetIrqStatus(radio_t* radio, uint8_t* chipmode, uint8_t* command
 {
     uint8_t buffer[SX126x_GetIrqStatus_bytes] = {0};
 
-    bool ok = radio->io_transact(radio, SX126x_GetIrqStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
+    bool ok = busy_wait(radio) && radio->io_transact(radio, SX126x_GetIrqStatus, 0, 0, NULL, 0, buffer, sizeof(buffer)); // && busy_wait(radio);
 
     if (ok) {
         if (chipmode != NULL) {
@@ -1098,7 +1101,7 @@ static bool rx_handle_interrupt(radio_t *radio)
         uint8_t message_length;
 
         if (dev_GetRxBufferStatus(radio, &chipmode, &command, &message_length, &message_start)) {
-ESP_LOGI(TAG, "%s: message_length %d  message_start %d", __func__, message_length, message_start);
+//ESP_LOGI(TAG, "%s: message_length %d  message_start %d", __func__, message_length, message_start);
 
             if (!timeout) {
 
@@ -1224,7 +1227,7 @@ static bool get_next_tx_packet(radio_t* radio)
 
             /* Fetched a new packet, so calculate it's window */
             data->current_packet_window = calculate_window_number(radio, data->current_packet);
-ESP_LOGI(TAG, "%s: window %d", __func__, data->current_packet_window);
+//ESP_LOGI(TAG, "%s: window %d", __func__, data->current_packet_window);
         }
     }
 
@@ -1279,7 +1282,7 @@ static bool activate_transmit_mode(radio_t* radio)
         if (ok) {
             if (! set_dio_irq_masks(radio,
                     SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
-                    SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout,
+                    SX126x_IrqFlags_TxDone,
                     0, 0)) {
 
                 ESP_LOGE(TAG, "%s: unable to set dio/irq mask", __func__);
@@ -1297,7 +1300,7 @@ static bool activate_transmit_mode(radio_t* radio)
 #endif
 
         if (ok) {
-            dump_buffer("OUT", buffer, length);
+            //dump_buffer("OUT", buffer, length);
             if (!dev_WriteBuffer(radio, 0, buffer, length)) {
                 ESP_LOGE(TAG, "%s: Unable to write packet data", __func__);
                 ok = false;
@@ -1351,7 +1354,7 @@ static bool activate_transmit_mode(radio_t* radio)
         show_device_status(radio, __func__);
     }
 
-ESP_LOGI(TAG, "%s: ok %s", __func__, ok ? "True" : "False");
+//ESP_LOGI(TAG, "%s: ok %s", __func__, ok ? "True" : "False");
 
     if (ok && radio->activity_indicator != NULL) {
         radio->activity_indicator(radio, true);
@@ -1362,7 +1365,7 @@ ESP_LOGI(TAG, "%s: ok %s", __func__, ok ? "True" : "False");
 
 static void transmit_start(radio_t* radio)
 {
-ESP_LOGI(TAG, "%s: called for radio %d", __func__, radio->radio_num);
+//ESP_LOGI(TAG, "%s: called for radio %d", __func__, radio->radio_num);
     // STUB - not used
 }
 
@@ -1386,18 +1389,25 @@ static void global_interrupt_handler(void* param)
                     switch (event.type) {
                         case HQI_SET_STATE: {
                             data->handler_state = event.state;
-                            ESP_LOGE(TAG, "%s: HQI_SET_STATE event", __func__);
+                            //ESP_LOGE(TAG, "%s: HQI_SET_STATE event", __func__);
                             break;
                         }
 
                         case HQI_INTERRUPT: {
-                            // ESP_LOGE(TAG, "%s: interrupt detected radio %d", __func__, radio->radio_num);
                             data->hqi_interrupts++;
 
                             uint8_t chipmode;
                             uint8_t command;
                             uint16_t operrors;
                             uint16_t irq_flags;
+
+                            if (! dev_GetIrqStatus(radio, &chipmode, &command, &irq_flags)) {
+                                chipmode = 0;
+                                command = 0;
+                                irq_flags = 0;
+                            }
+
+                            // ESP_LOGE(TAG, "%s: interrupt detected radio %d irq_flags 0x%x irqmask 0x%x dio1 0x%x dio2 0x%x dio3 0x%x", __func__, radio->radio_num, irq_flags, data->irq_mask, data->dio_mask[0], data->dio_mask[1], data->dio_mask[2]);
 
                             /* See if any errors were seen */
                             if (dev_GetDeviceErrors(radio, NULL, NULL, &operrors)) {
@@ -1411,13 +1421,8 @@ static void global_interrupt_handler(void* param)
                                 }
                             }
     
-                            if (! dev_GetIrqStatus(radio, &chipmode, &command, &irq_flags)) {
-                                chipmode = 0;
-                                command = 0;
-                                irq_flags = 0;
-                            }
-
                             if (irq_flags != 0) {
+                                //ESP_LOGI(TAG, "%s: irq_flags 0x%x", __func__, irq_flags);
                                 /* Remember new interrupt flags not yet serviced */
                                 data->irq_flags |= irq_flags;
 
@@ -1519,7 +1524,7 @@ static void global_interrupt_handler(void* param)
 
                             if (data->irq_flags & SX126x_IrqFlags_HeaderValid) {
                                 data->rx_busy = true;
-ESP_LOGI(TAG, "%s: header valid", __func__);
+//ESP_LOGI(TAG, "%s: header valid", __func__);
 #ifdef MEASURE_RX_TIME
                                 data->rx_start_time = get_milliseconds();
 #endif /* MEASURE_RX_TIME */
@@ -1528,13 +1533,7 @@ ESP_LOGI(TAG, "%s: header valid", __func__);
                             /* If not receiving, see if work to do */
                             } else if (!data->rx_busy) {
                                 /* If a channel change has been made, do it now */
-                                if (data->new_channel >= 0) {
-                                    if (!change_channel(radio, data->new_channel)) {
-                                        ESP_LOGE(TAG, "%s: change_channel to %d failed", __func__, data->new_channel);
-                                    }
-                                    data->new_channel = -1;
-                                    restart_receive = true;  /* Restart receiver then check again */
-                                } else if ((data->irq_flags & SX126x_IrqFlags_Timeout) != 0) {
+                                if ((data->irq_flags & SX126x_IrqFlags_Timeout) != 0) {
                                     data->irq_flags &= ~SX126x_IrqFlags_Timeout;
                                     data->rx_timeouts++;
                                 } else {
@@ -1554,7 +1553,7 @@ ESP_LOGI(TAG, "%s: header valid", __func__);
                                     }
                                 }
                             } else if (data->irq_flags & SX126x_IrqFlags_RxDone) {
-ESP_LOGI(TAG, "%s: rx done", __func__);
+//ESP_LOGI(TAG, "%s: rx done", __func__);
                                 /* Packet arrived.  Process it */
 #ifdef MEASURE_RX_TIME
                                 data->rx_end_time = get_milliseconds();
@@ -1579,12 +1578,12 @@ ESP_LOGI(TAG, "%s: rx done", __func__);
                         /* Actively transmitting - wait for interrupt */
                         case HS_WAIT_TX_INT: {
                             /* Wait for TxDone or Timeout ... */
-                            if ((data->irq_flags & (SX126x_IrqFlags_TxDone | SX126x_IrqFlags_Timeout)) != 0) {
-                                bool failed = (data->irq_flags & SX126x_IrqFlags_TxDone) == 0;
+                            if ((data->irq_flags & (SX126x_IrqFlags_TxDone)) != 0) {
+                                bool failed = (data->irq_flags & SX126x_IrqFlags_Timeout) != 0;
                                 if (failed) {
                                     ESP_LOGE(TAG, "%s: tx failed", __func__);
                                 } else {
-                                    ESP_LOGI(TAG, "%s: tx done", __func__);
+                                    //ESP_LOGI(TAG, "%s: tx done", __func__);
                                 }
 
                                 /* Turns off indicator and releases packet (failed is true for Timeout) */
@@ -1603,13 +1602,13 @@ ESP_LOGI(TAG, "%s: rx done", __func__);
 
 #ifdef DISPLAY_HANDLER_STATE
                     if (data->handler_state != data->last_handler_state) {
-                        ESP_LOGE(TAG, "Handler state %s\n", handler_state_of(data->handler_state));
+                        //ESP_LOGE(TAG, "Handler state %s\n", handler_state_of(data->handler_state));
                         data->last_handler_state = data->handler_state;
                     }
 #endif
 
                     if (data->irq_flags != 0) {
-                        ESP_LOGI(TAG, "%s: unhandled irq_flags 0x%x in state %s", __func__, data->irq_flags, handler_state_of(data->handler_state));
+                        // ESP_LOGI(TAG, "%s: unhandled irq_flags 0x%x in state %s", __func__, data->irq_flags, handler_state_of(data->handler_state));
                         data->irq_flags = 0;
                     }
 
@@ -1727,7 +1726,6 @@ ESP_LOGE(TAG, "%s: starting radio %d as %s", __func__, radio->radio_num, radio->
         radio->activity_indicator(radio, true);
 
         sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-        data->new_channel = -1;  /* No new channel */
 
         /* Start global interrupt processing thread if not yet running */
         if (global_interrupt_handler_queue == NULL) {
@@ -1792,10 +1790,12 @@ static bool activate_radio(radio_t* radio)
             ESP_LOGE(TAG, "%s: UpdatePacketParams radio %d failed", __func__, radio->radio_num);
         }
 
+#if 0
         /* Set fallback to standby RC */
         if (!dev_SetRxTxFallbackMode(radio, SX126x_SetRxTxFallbackMode_Param_STDBY_RC)) {
             ESP_LOGE(TAG, "%s: SetRxTxFallback failed", __func__);
         }
+#endif
 
         if (!dev_SetSyncWord(radio, data->sync_word)) {
             ESP_LOGE(TAG, "%s: SetSyncWord failed", __func__);
@@ -1863,9 +1863,9 @@ static bool activate_radio(radio_t* radio)
             ESP_LOGE(TAG, "%s: ClearDeviceErrors radio %d failed", __func__, radio->radio_num);
         }
 
-        /* Configure the unit for receive channel 0; probably overriden by caller */
-        if (!change_channel(radio, 0)) {
-            ESP_LOGE(TAG, "%s: change_channel failed", __func__);
+        /* Configure the unit for receive channel 0 with default datarate */
+        if (!set_channel(radio, 0)) {
+            ESP_LOGE(TAG, "%s: set_channel failed", __func__);
         }
 
         if (!dev_SetDio2AsRfSwitch(radio, true)) {
@@ -1926,40 +1926,12 @@ static bool activate_receive_mode(radio_t* radio)
     } else {
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
         sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
-
-        if (2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS <= data->preamble_length) {
-            if (data->sleep_wake_recalc != data->channel_change_counter) {
-                /* Maximum sleep time before missing header */
-                unsigned int sleep_symbols = data->preamble_length - 2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS;
-                unsigned int symbol_length = (1000L << data->spreading_factor) / (float) (data->bandwidth_bits/1000.0);
-                unsigned int sleep_period = symbol_length * sleep_symbols;
-
-                unsigned int wake_period = fmax(
-                        (symbol_length * (data->preamble_length + 1) - (sleep_period - 1000)) / 2,
-                        symbol_length * (CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS + 1)
-                );
-
-                /* The above calculation produces microsecond intervas */
-                data->sleep_period_ticks = SX_TIMER_uS(sleep_period);
-                data->wake_period_ticks = SX_TIMER_uS(wake_period);
-
-                if ((data->sleep_period_ticks & 0xFF000000L) != 0) {
-                    ESP_LOGE(TAG, "%s: sleep_period too large: %d", __func__, sleep_period);
-                    data->sleep_period_ticks = 0;
-
-                } else if ((data->wake_period_ticks & 0xFF000000L) != 0) {
-                    ESP_LOGE(TAG, "%s: wake_period too large: %d", __func__, wake_period);
-                    data->sleep_period_ticks = 0;
-                }
-                data->sleep_wake_recalc = data->channel_change_counter;
-            }
-        }
 #endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
 
         ok = dev_SetStandby(radio, SX126x_SetStandby_RC)
           && set_dio_irq_masks(radio,
                                SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
-                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_Timeout | SX126x_IrqFlags_HeaderValid | SX126x_IrqFlags_CrcErr,
+                               SX126x_IrqFlags_RxDone | SX126x_IrqFlags_HeaderValid,
                                0, 0)
 #if 0
           && dev_SetBufferBaseAddress(radio, 0, 0)
@@ -1987,6 +1959,45 @@ ESP_LOGI(TAG, "%s: SetRx with timeout", __func__);
     return ok;
 }
 
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+/*
+ * Called from set_datarate; update receive dutycycle parameters.
+ */
+static void update_duty_cycle(sx126x_private_data_t *data)
+{
+    if (2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS <= data->preamble_length) {
+ESP_LOGI(TAG, "%s: preamble_length %d spreading_factor %d bandwidth_bits %d", __func__, data->preamble_length, data->spreading_factor, data->bandwidth_bits);
+
+        /* Maximum sleep time before missing header */
+        unsigned int sleep_symbols = data->preamble_length - 2 * CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS;
+        unsigned int symbol_length = (1000L << data->spreading_factor) / (float) (data->bandwidth_bits/1000.0);
+        unsigned int sleep_period = symbol_length * sleep_symbols;
+
+        unsigned int wake_period = fmax(
+                (symbol_length * (data->preamble_length + 1) - (sleep_period - 1000)) / 2,
+                symbol_length * (CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_MIN_SYMBOLS + 1)
+        );
+
+        /* The above calculation produces microsecond intervas */
+        unsigned int sleep_period_ticks = SX_TIMER_uS(sleep_period);
+        unsigned int wake_period_ticks = SX_TIMER_uS(wake_period);
+
+ESP_LOGI(TAG, "%s: sleep_period_ticks %u wake_period_ticks %u", __func__, sleep_period_ticks, wake_period_ticks);
+
+        if ((sleep_period_ticks & 0xFF000000L) != 0) {
+            ESP_LOGE(TAG, "%s: sleep_period too large: %d", __func__, sleep_period);
+        } else if ((wake_period_ticks & 0xFF000000L) != 0) {
+            ESP_LOGE(TAG, "%s: wake_period too large: %d", __func__, wake_period);
+        } else {
+            /* Update the values */
+            data->sleep_period_ticks = sleep_period_ticks;
+            data->wake_period_ticks = wake_period_ticks;
+
+            ESP_LOGI(TAG, "%s: sleep %.6f wake %.6f", __func__, sleep_period/1000000.0, wake_period/1000000.0);
+        }
+    }
+}
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
 
 /*
  * Set power from -15 to +17 dbm.  Chose PA mode as apprpriate
@@ -2070,7 +2081,7 @@ ESP_LOGI(TAG, "%s: power %d", __func__, power);
         ok = true;
     }
 
-ESP_LOGI(TAG, "%s: returning %s", __func__, ok ? "True" : "False");
+//ESP_LOGI(TAG, "%s: returning %s", __func__, ok ? "True" : "False");
 
     return ok;
 }
@@ -2082,62 +2093,9 @@ static int get_txpower(radio_t* radio)
     return data->tx_power;
 }
 
-/*
- * set_channel
- *
- * selects the channel and sets the datarate to the lowest for the channel.
- */
-static bool set_channel(radio_t* radio, int channel)
+static bool set_channel(radio_t*radio, int channel)
 {
-    bool ok = false;
-
-ESP_LOGI(TAG, "%s: channel %d", __func__, channel);
-
-    if (channel >= 0 && channel < ELEMENTS_OF(channel_table.channels)) {
-
-        if (acquire_lock(radio)) {
-            sx126x_private_data_t *data = (sx126x_private_data_t*) (radio->driver_private_data);
-            data->new_channel = channel;
-            release_lock(radio);
-            ok = true;
-        }
-        else ESP_LOGI(TAG, "%s: failed to get lock", __func__);
-    }
-
-    return ok;
-}
-
-
-static bool change_channel(radio_t*radio, int channel)
-{
-    /* Set frequency control */
-    bool ok = false;
-
-    //dev_SetStandby(radio, SX126x_SetStandby_RC);
-
-    if (channel >= 0 && channel < ELEMENTS_OF(channel_table_sx126x.channels)) {
-        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
-        const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
-
-        ESP_LOGE(TAG, "%s: channel to %d", __func__, channel);
-
-        data->channel = channel;
-
-        if (!dev_SetFrequency(radio, chanp->freq)) {
-            ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
-        } else if (!radio->set_datarate(radio, 0)) {
-            ESP_LOGE(TAG, "%s: set_datarate failed", __func__);
-        } else if (!radio->set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][0].tx)) {
-            ESP_LOGE(TAG, "%s: change_channel se_txpower failed", __func__);
-        } else {
-            data->frequency = (int) (chanp->freq * channel_table_sx126x.pll_step + 0.5); /* Display purposes */
-            ok = true;
-        }
-    } else {
-        ESP_LOGE(TAG, "%s: bad channel %d", __func__, channel);
-    }
-
-    return ok;
+    return update_channel_and_datarate(radio, channel, -1, true);
 }
 
 static int get_channel(radio_t* radio)
@@ -2152,45 +2110,54 @@ static int get_channel(radio_t* radio)
  */
 static bool set_datarate(radio_t* radio, int datarate)
 {
+    return update_channel_and_datarate(radio, -1, datarate, true);
+}
+
+static int get_datarate(radio_t* radio)
+{
+    sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+
+    return data->datarate;
+}
+
+
+static bool update_datarate(radio_t* radio, int channel, int datarate)
+{
     bool ok = false;
 
-    if (acquire_lock(radio)) {
-        int old_datarate = get_datarate(radio);
+    int datarate_group = channel_table_sx126x.channels[channel].datarate_group;
 
-        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+ESP_LOGE(TAG, "%s: %u elements in channel_table.datarates[%d]", __func__, ELEMENTS_OF(channel_table_sx126x.datarates[datarate_group]), datarate_group);
 
-        int datarate_group = channel_table_sx126x.channels[data->channel].datarate_group;
+ESP_LOGE(TAG, "%s: datarate %d", __func__, datarate);
+ESP_LOGE(TAG, "%s: ELEMENTS_OF(channel_table_sx126x.datarates[%d]) %d", __func__, datarate_group, ELEMENTS_OF(channel_table_sx126x.datarates[datarate_group]));
+ESP_LOGE(TAG, "%s: channel_table_sx126x.datarates[%d][%d].payload %d", __func__, datarate_group, datarate, channel_table_sx126x.datarates[datarate_group][datarate].payload);
 
-        const datarate_entry_sx126x_t* dataratep = channel_table.datarates[datarate_group];
+    if (datarate >= 0 && datarate < ELEMENTS_OF(channel_table_sx126x.datarates[datarate_group]) && channel_table_sx126x.datarates[datarate_group][datarate].payload != 0) {
+        int bw = channel_table_sx126x.datarates[datarate_group][datarate].bw;
+        int sf = channel_table_sx126x.datarates[datarate_group][datarate].sf;
+        int cr = channel_table_sx126x.datarates[datarate_group][datarate].cr;
+        int tx = channel_table_sx126x.datarates[datarate_group][datarate].tx;
 
-        if (datarate >= 0 && datarate < ELEMENTS_OF(channel_table.datarates[datarate_group]) && dataratep[datarate].payload != 0) {
-            int sf = dataratep[datarate].sf;
-            int bw = dataratep[datarate].bw;
-            int cr = dataratep[datarate].cr;
-            int tx = dataratep[datarate].tx;
+ESP_LOGE(TAG, "%s: setting datarate %d on channel %d: bw %d sf %d cr %d tx %d", __func__, datarate, channel, bw, sf, cr, tx);
 
-            if (!set_bandwidth(radio, bw) || !set_spreading_factor(radio, sf) || !set_coding_rate(radio, cr) || !set_txpower(radio, tx)) {
-                /* Restore datarate (caution - recursion); better not be an error on the old datarate. */
-                set_datarate(radio, old_datarate);
-            } else {
-                /* Ok */
-                data->datarate = datarate;
-                data->channel_change_counter++;
-                data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth_bits) / (data->coding_rate * (1 << data->spreading_factor));
+        if (set_bandwidth(radio, bw) && set_spreading_factor(radio, sf) && set_coding_rate(radio, cr) && set_txpower(radio, tx)) {
+            sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
 
-ESP_LOGI(TAG, "%s: datarate %d data_rate_bps %d", __func__, data->datarate, data->data_rate_bps);
+            data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth_bits) / (data->coding_rate * (1 << data->spreading_factor));
 
-                /* Set the width of the transmit window in milliseconds */
-                data->window_width = (get_message_time(radio, MAX_PACKET_LEN) * radio->window_width_percent) / 100;
+//ESP_LOGI(TAG, "%s: datarate %d data_rate_bps %d", __func__, datarate, data->data_rate_bps);
 
-ESP_LOGI(TAG, "%s: window_width %d window_timer_id %p", __func__, data->window_width, data->window_timer_id);
+            /* Set the width of the transmit window in milliseconds */
+            data->window_width = (get_message_time(radio, MAX_PACKET_LEN) * radio->window_width_percent) / 100;
 
-                /* Change the window update rate.  Things may be a bit wonky until the first packet is received */
-                os_set_timer(data->window_timer_id, data->window_width);
+//ESP_LOGI(TAG, "%s: window_width %d window_timer_id %p", __func__, data->window_width, data->window_timer_id);
 
-                /* Update radio with the parameters */
-                ok = dev_UpdateModulationParams(radio);
-            }
+            /* Change the window update rate.  Things may be a bit wonky until the first packet is received */
+            os_set_timer(data->window_timer_id, data->window_width);
+
+            /* Update radio with the parameters */
+            ok = dev_UpdateModulationParams(radio);
         }
 
         release_lock(radio);
@@ -2199,11 +2166,72 @@ ESP_LOGI(TAG, "%s: window_width %d window_timer_id %p", __func__, data->window_w
     return ok;
 }
 
-static int get_datarate(radio_t* radio)
+/*
+ * Accepts a channel and datarate.  If positive, sets data table with values
+ * and tries the update.  If successful, returns true.
+ *
+ * If fail, restores previous values and returns false. 
+ */
+static bool update_channel_and_datarate(radio_t* radio, int channel, int datarate, bool recursion_ok)
 {
-    sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+    bool ok = false;
 
-    return data->datarate;
+    if (acquire_lock(radio)) {
+        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+
+        int original_channel = data->channel;
+        int original_datarate = data->datarate;
+
+        /* Replace args if given as 'use current' */
+        if (channel < 0) {
+            channel = original_channel;
+        }
+
+        if (datarate < 0) {
+            datarate = original_datarate;
+        }
+
+        /* Validate channel number against table size */
+        if (channel >= 0 && channel < ELEMENTS_OF(channel_table_sx126x.channels)) {
+            const channel_entry_sx126x_t *chanp = &channel_table_sx126x.channels[channel];
+
+            /* Validate datarate against table size */
+            if (datarate >= 0 && datarate < ELEMENTS_OF(channel_table_sx126x.datarates[0])) {
+
+                ESP_LOGE(TAG, "%s: channel to %d (datarate is %d)", __func__, channel, data->datarate);
+
+                if (!dev_SetFrequency(radio, chanp->freq)) {
+                    ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
+                } else if (!update_datarate(radio, channel, datarate)) {
+                    ESP_LOGE(TAG, "%s: update_datarate failed", __func__);
+                } else if (!set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][data->datarate].tx)) {
+                    ESP_LOGE(TAG, "%s: set_channel se_txpower failed", __func__);
+                } else {
+                    data->frequency = (int) (chanp->freq * channel_table_sx126x.pll_step + 0.5); /* Display purposes */
+                    ok = true;
+                }
+
+                if (!ok && recursion_ok) {
+                    /* Restore original values */
+                    ok = update_channel_and_datarate(radio, original_channel, original_datarate, false);
+                } else {
+                    data->channel = channel;
+                    data->datarate = datarate;
+                }
+
+#ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
+                update_duty_cycle(data);
+#endif /* CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED */
+
+                /* Let handler know things might have changed */
+                set_handler_state(radio, HS_STARTUP);
+            }
+        }
+
+        release_lock(radio);
+    }
+
+    return ok;
 }
 
 
@@ -2216,7 +2244,7 @@ static bool set_bandwidth(radio_t* radio, int bw)
 {
     sx126x_private_data_t *data = (sx126x_private_data_t*) radio->driver_private_data;
 
-    bool ok = true;
+    bool ok = false;
 
     int bwcode = -1;
     int bwindex = 0;
@@ -2225,12 +2253,13 @@ static bool set_bandwidth(radio_t* radio, int bw)
     while (bwcode < 0 && bwindex < ELEMENTS_OF(channel_table_sx126x.bandwidth_bins)) {
         if (bw == channel_table_sx126x.bandwidth_bins[bwindex]) {
             bwcode = bwindex;
+            ok = true;
         } else {
             bwindex++;
         }
     }
 
-ESP_LOGI(TAG, "%s: bandwidth code %d bits %d", __func__, bwcode, bw);
+//ESP_LOGI(TAG, "%s: bandwidth code %d bits %d", __func__, bwcode, bw);
     data->bandwidth = bwcode;
     data->bandwidth_bits = bw;
 
@@ -2333,7 +2362,14 @@ static int get_message_time(radio_t* radio, int length)
 {
     sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
 
-    int time = ((length + data->preamble_length + LORA_HEADER_OVERHEAD) * 8 * 1000) / data->data_rate_bps;
+    int time;
+
+    /* Prevent divide by 0 */
+    if (data->data_rate_bps != 0) {
+        time = ((length + data->preamble_length + LORA_HEADER_OVERHEAD) * 8 * 1000) / data->data_rate_bps;
+    } else {
+        time = 0;
+    }
 
     return time;
 }
@@ -2345,6 +2381,9 @@ static int get_message_time(radio_t* radio, int length)
 static void catch_interrupt(void *param)
 {
     radio_t *radio = (radio_t*) param;
+    sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
+
+    data->irq_count++;
 
     bool awakened;
 
@@ -2394,7 +2433,7 @@ void print_status(command_context_t* context, radio_t *radio)
         command_reply(context, "D", "spreading_factor:       %d", data.spreading_factor);
         command_reply(context, "D", "channel_change_counter: %d", data.channel_change_counter);
         command_reply(context, "D", "tx_power:               %d", data.tx_power);
-        command_reply(context, "D", "rx_interrupts:          %d", data.rx_interrupts);
+        command_reply(context, "D", "irq_count:              %d", data.irq_count);
         command_reply(context, "D", "rx_interrupts:          %d", data.rx_interrupts);
         command_reply(context, "D", "rx_timeouts:            %d", data.rx_timeouts);
         command_reply(context, "D", "rx_busy:                %s", data.rx_busy ? "Yes": "No");
