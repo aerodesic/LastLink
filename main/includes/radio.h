@@ -93,7 +93,7 @@ typedef struct radio {
     bool (*io_transact)(radio_t* radio, uint8_t command, int extra_address_bits, uint32_t address, uint8_t* outbuf, int outlen, uint8_t* inbuf, int inlen);
 
     /* linklayer functionality */
-    bool (*attach_interrupt)(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
+    bool (*attach_interrupt)(radio_t* radio, int dio, bool pullup, bool pulldown, GPIO_INT_TYPE edge, void (*handler)(void* p));
     void (*on_receive)(packet_t* packet);
 
     /* A global pause on transmission when locked */
@@ -108,7 +108,6 @@ typedef struct radio {
     void (*reset_device)(radio_t* radio);
     void (*activity_indicator)(radio_t* radio, bool active);
     bool (*test_gpio)(radio_t* radio, int dio);
-
 
     /************************************************/
     /* End of io init area and start of driver init */

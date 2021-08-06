@@ -202,6 +202,9 @@ void app_main(void)
     linklayer_set_receive_only_from(get_config_str("lastlink.receive_only_from", ""));
 #endif
 
+    /* Delay a bit to let network start */
+    os_delay(100);
+
 #if CONFIG_LASTLINK_SERVICE_NAMES_ENABLE
     init_service_names();
 

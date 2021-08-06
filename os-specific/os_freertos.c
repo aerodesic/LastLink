@@ -411,7 +411,7 @@ bool os_attach_gpio_interrupt(int gpio, GPIO_INT_TYPE edge, gpio_pullup_t pullup
 {
     bool ok = true;
 
-    ESP_LOGI(TAG, "%s: gpio %d edge %d handler %p param %p", __func__, gpio, edge, handler, param);
+    ESP_LOGI(TAG, "%s: gpio %d edge %d pullup %d pulldown %d handler %p param %p", __func__, gpio, edge, pullup, pulldown, handler, param);
 
     gpio_config_t     io;
 

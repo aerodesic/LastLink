@@ -73,7 +73,7 @@ static int linklayer_transmit_packet(radio_t* radio, packet_t* packet);
 static const  char* linklayer_packet_format(const packet_t* packet, int protocol);
 
 /* Calls from radio driver to linklayer */
-static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p));
+static bool linklayer_attach_interrupt(radio_t* radio, int dio, bool pullup, bool pulldown, GPIO_INT_TYPE edge, void (*handler)(void* p));
 static bool linklayer_test_gpio(radio_t* radio, int dio);
 static void linklayer_receive_packet(packet_t* packet);
 
@@ -1378,14 +1378,21 @@ static bool linklayer_test_gpio(radio_t* radio, int dio)
     }
 }
 
-static bool linklayer_attach_interrupt(radio_t* radio, int dio, GPIO_INT_TYPE edge, void (*handler)(void* p))
+static bool linklayer_attach_interrupt(radio_t* radio, int dio, bool pullup, bool pulldown, GPIO_INT_TYPE edge, void (*handler)(void* p))
 {
     bool ok = false;
 
     if (dio >= 0 && dio < ELEMENTS_OF(radio_config[radio->radio_num].dios)) {
         int gpio = radio_config[radio->radio_num].dios[dio];
 
-        ok = os_attach_gpio_interrupt(gpio, edge, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE, handler, (void*) radio);
+        ok = os_attach_gpio_interrupt(
+                     gpio,
+                     edge,
+                     pullup ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
+                     pulldown ? GPIO_PULLUP_ENABLE : GPIO_PULLDOWN_DISABLE,
+                     handler,
+                     (void*) radio
+             );
     } else {
         ESP_LOGE(TAG, "%s: dio out of range: %d on radio %d", __func__, dio, radio->radio_num);
     }

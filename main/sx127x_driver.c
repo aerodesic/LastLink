@@ -987,9 +987,9 @@ static bool radio_stop(radio_t* radio)
     if (acquire_lock(radio)) {
         /* Disable all interrupts */
         ok = disable_irq(radio, 0xFF)
-             && radio->attach_interrupt(radio, GPIO_DIO0, GPIO_PIN_INTR_DISABLE, NULL)
+             && radio->attach_interrupt(radio, GPIO_DIO0, false, false, GPIO_PIN_INTR_DISABLE, NULL)
 #ifdef GPIO_DIO1
-             && radio->attach_interrupt(radio, GPIO_DIO1, GPIO_PIN_INTR_DISABLE, NULL)
+             && radio->attach_interrupt(radio, GPIO_DIO1, false, false, GPIO_PIN_INTR_DISABLE, NULL)
 #endif
              ;
 
@@ -1120,9 +1120,9 @@ static bool radio_start(radio_t* radio)
             radio->write_register(radio, SX127x_REG_IRQ_FLAGS, 0xFF);
 
             /* Capture receive/transmit interrupts */
-            radio->attach_interrupt(radio, GPIO_DIO0, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+            radio->attach_interrupt(radio, GPIO_DIO0, true, false, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
 #ifdef GPIO_DIO1
-            radio->attach_interrupt(radio, GPIO_DIO1, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
+            radio->attach_interrupt(radio, GPIO_DIO1, true, false, GPIO_PIN_INTR_POSEDGE, catch_interrupt);
 #endif
 
 #ifdef USE_FHSS

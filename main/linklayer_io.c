@@ -327,13 +327,13 @@ static bool spi_transact(radio_t* radio, uint8_t command, int extra_address_bits
         t.address_bits = extra_address_bits;
     }
 
-#if 1
+#if 0
 if (command == 0x08) dump_spi_transaction(true, "Out", command, extra_address_bits, address, outbuffer, outlen, NULL, 0);
 #endif
 
     ok = spi_device_transmit(radio->spi, (spi_transaction_t*) &t) == ESP_OK;
 
-#if 1
+#if 0
 if (inbuffer != NULL) {
     if (command == 0x08) dump_spi_transaction(ok, " In", command, extra_address_bits, address, outbuffer, outlen, inbuffer, inlen);
 }
