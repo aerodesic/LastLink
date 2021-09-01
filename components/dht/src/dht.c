@@ -3,6 +3,9 @@
 //
 
 #include "sdkconfig.h"
+
+#ifdef CONFIG_DHT_PIN
+
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -194,4 +197,4 @@ dht_ret_t dht_read(dht_value_t* rh, dht_value_t* temperature)
 
     return rc;
 }
-
+#endif /* CONFIG_DHT_PIN */

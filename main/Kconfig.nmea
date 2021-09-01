@@ -1,5 +1,19 @@
 menu "NMEA Configuration"
 
+    choice
+        prompt "Select power control for GPS"
+        default NMEA_POWER_CONTROL_LDO3
+        help
+            Controls how power will be managed for GPS device.
+
+        config NMEA_POWER_CONTROL_NONE
+            bool "Radio power control not available"
+
+        config NMEA_POWER_CONTROL_LDO3
+            bool "Radio power controlled by LDO3"
+
+    endchoice
+
     config NMEA_PARSER_RING_BUFFER_SIZE
         int "NMEA Parser Ring Buffer Size"
         range 0 2048

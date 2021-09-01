@@ -144,7 +144,7 @@ static axp192_err_t axp192_enable_bit_in_reg(const axp192_t* axp, uint8_t reg, u
     axp192_err_t err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
     if (err == AXP192_OK) {
         buffer[0] |= mask;
-        err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
+        err = axp->write(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
     }
     return err;    
 }
@@ -155,7 +155,7 @@ static axp192_err_t axp192_disable_bit_in_reg(const axp192_t* axp, uint8_t reg, 
     axp192_err_t err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
     if (err == AXP192_OK) {
         buffer[0] &= ~mask;
-        err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
+        err = axp->write(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
     }
     return err;    
 }
@@ -168,50 +168,65 @@ axp192_err_t axp192_ioctl(const axp192_t *axp, uint16_t command, uint8_t *buffer
     axp192_err_t err;
 
     switch (command) {
-    case AXP192_ENABLE_LDO2:
-    case AXP192_ENABLE_LDO3:
-    case AXP192_ENABLE_DCDC1:
-    case AXP192_ENABLE_DCDC3:
-        err = axp192_enable_bit_in_reg(axp, AXP192_DCDC13_LDO23_CONTROL, command & 0xFF);
-        break;
+        case AXP192_ENABLE_LDO2:
+        case AXP192_ENABLE_LDO3:
+        case AXP192_ENABLE_DCDC1:
+        case AXP192_ENABLE_DCDC3: {
+            err = axp192_enable_bit_in_reg(axp, AXP192_DCDC13_LDO23_CONTROL, command & 0xFF);
+            break;
+        }
  
-    case AXP192_DISABLE_LDO2:
-    case AXP192_DISABLE_LDO3:
-    case AXP192_DISABLE_DCDC1:
-    case AXP192_DISABLE_DCDC3:
-        err = axp192_disable_bit_in_reg(axp, AXP192_DCDC13_LDO23_CONTROL, command & 0xFF);
-        break;
+        case AXP192_DISABLE_LDO2:
+        case AXP192_DISABLE_LDO3:
+        case AXP192_DISABLE_DCDC1:
+        case AXP192_DISABLE_DCDC3: {
+            err = axp192_disable_bit_in_reg(axp, AXP192_DCDC13_LDO23_CONTROL, command & 0xFF);
+            break;
+        }
  
-    case AXP192_TEST_LDO2:
-    case AXP192_TEST_LDO3:
-    case AXP192_TEST_DCDC1:
-    case AXP192_TEST_DCDC3:
-        err = axp->read(axp->handle, AXP192_ADDRESS, AXP192_DCDC13_LDO23_CONTROL, buffer, 1);
-        break;
+        case AXP192_TEST_LDO2:
+        case AXP192_TEST_LDO3:
+        case AXP192_TEST_DCDC1:
+        case AXP192_TEST_DCDC3: {
+            err = axp->read(axp->handle, AXP192_ADDRESS, AXP192_DCDC13_LDO23_CONTROL, buffer, 1);
+            buffer[0] &= command & 0xFF;
+            break;
+        }
 
-    case AXP192_READ_POWER_STATUS:
-    case AXP192_READ_CHARGE_STATUS:
-        err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
-        break;
-    case AXP192_COULOMB_COUNTER_ENABLE:
-        tmp = 0b10000000;
-        err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
-        break;
-    case AXP192_COULOMB_COUNTER_DISABLE:
-        tmp = 0b00000000;
-        err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
-        break;
-    case AXP192_COULOMB_COUNTER_SUSPEND:
-        tmp = 0b11000000;
-        err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
-        break;
-    case AXP192_COULOMB_COUNTER_CLEAR:
-        tmp = 0b10100000;
-        err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
-        break;
-    default:
-        err = AXP192_ERROR_NOTTY;
-        break; 
+        case AXP192_READ_POWER_STATUS:
+        case AXP192_READ_CHARGE_STATUS: {
+            err = axp->read(axp->handle, AXP192_ADDRESS, reg, buffer, 1);
+            break;
+        }
+
+        case AXP192_COULOMB_COUNTER_ENABLE: {
+            tmp = 0b10000000;
+            err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
+            break;
+        }
+
+        case AXP192_COULOMB_COUNTER_DISABLE: {
+            tmp = 0b00000000;
+            err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
+            break;
+        }
+
+        case AXP192_COULOMB_COUNTER_SUSPEND: {
+            tmp = 0b11000000;
+            err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
+            break;
+        }
+
+        case AXP192_COULOMB_COUNTER_CLEAR: {
+            tmp = 0b10100000;
+            err = axp->write(axp->handle, AXP192_ADDRESS, reg, &tmp, 1);
+            break;
+        }
+
+        default: {
+            err = AXP192_ERROR_NOTTY;
+            break; 
+        }
     }
 
     return err;

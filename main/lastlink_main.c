@@ -261,7 +261,11 @@ void app_main(void)
 #endif  /* CONFIG_SSD1306_I2C_ENABLED */
 
 #ifdef CONFIG_LASTLINK_WEB_SERVER_ENABLED
-    httpd_server_start();
+    char *ssid;
+    asprintf(&ssid, "%s-%d", CONFIG_LASTLINK_WIFI_SSID, get_config_int("lastlink.address", 1));
+    httpd_server_start(ssid, CONFIG_LASTLINK_WIFI_PASSWORD);
+    ESP_LOGI(TAG, "%s: httpd start with ssid %s", __func__, ssid);
+    free(ssid);
  #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));
  #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */

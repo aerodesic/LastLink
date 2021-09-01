@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdarg.h>
 
 #include "os_specific.h"
 #include "driver/gpio.h"
@@ -20,6 +21,10 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nmea_parser.h"
+
+#ifdef CONFIG_NMEA_POWER_CONTROL_LDO3
+#include "power_manager.h"
+#endif /* CONFIG_NMEA_POWER_CONTROL_LDO3 */
 
 #if CONFIG_LASTLINK_EXTRA_DEBUG_COMMANDS
 #include "commands.h"
@@ -195,6 +200,35 @@ static bool process_gps_cog(sensor_transaction_t transaction, const char* name, 
     return ok;
 }
 
+#ifdef CONFIG_AXP192_ENABLE
+#ifdef CONFIG_NMEA_POWER_CONTROL_LDO3
+static bool process_gps_power(sensor_transaction_t transaction, const char* name, void* param, char *reply_buffer, size_t reply_len, ...)
+{
+    bool ok = false;
+    if (transaction == SENSOR_READ) {
+        os_acquire_recursive_mutex(gps_lock);
+        int value = axp192_test_ldo3();
+        os_release_recursive_mutex(gps_lock);
+
+        snprintf(reply_buffer, reply_len, "%s", value >= 0 ? (value != 0 ? "1" : "0") : "error");
+
+        ok = true;
+
+    } else if (transaction == SENSOR_WRITE) {
+        va_list ap;
+        va_start(ap, reply_len);
+        const char* value = va_arg(ap, const char*);
+        bool state = strtol(value, NULL, 0);
+        ESP_LOGI(TAG, "Setting gps power to %s", state ? "On" : "Off");
+        ok = axp192_enable_ldo3(state);
+        va_end(ap);
+    }
+
+    return ok;
+}
+#endif /* CONFIG_NMEA_POWER_CONTROL_LDO3 */
+#endif /* CONFIG_AXP192_ENABLE */
+
 static nmea_parser_handle_t nmea_handle;
 
 bool start_gps(void)
@@ -227,6 +261,12 @@ bool start_gps(void)
             nmea_handle = NULL;
         } else {
             /* Add sensors */
+#ifdef CONFIG_AXP192_ENABLE
+#ifdef CONFIG_NMEA_POWER_CONTROL_LDO3
+            if (! register_sensor("gpspower", SENSOR_TYPE_OUTPUT, "Power",   process_gps_power,   NULL)) {
+            }
+#endif /* CONFIG_NMEA_POWER_CONTROL_LDO3 */
+#endif /* CONFIG_AXP192_ENABLE */
             if (! register_sensor("location", SENSOR_TYPE_INPUT, "gps",      process_gps_location, NULL)) {
             }
             if (! register_sensor("gpstime",  SENSOR_TYPE_INPUT, "utc",      process_gps_datetime, NULL)) {

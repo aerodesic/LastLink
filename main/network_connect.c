@@ -42,6 +42,10 @@
 #define NR_OF_IP_ADDRESSES_TO_WAIT_FOR (s_active_interfaces)
 #endif
 
+/* Local min function */
+#define min(a,b) ({ __typeof__ (a) _a = (a);  __typeof__ (b) _b = (b);  _a < _b ? _a : _b; })
+
+
 static int s_active_interfaces = 0;
 static esp_netif_t *s_lastlink_esp_netif = NULL;
 
@@ -62,7 +66,7 @@ static const char *s_ipv6_addr_types[] = {
 static const char *TAG = "network_connect";
 
 #ifdef CONFIG_LASTLINK_CONNECT_WIFI
-static esp_netif_t* wifi_start(void);
+static esp_netif_t* wifi_start(const char* ssid, const char* password);
 static void wifi_stop(void);
 #endif
 
@@ -77,11 +81,11 @@ static bool is_our_netif(const char *prefix, esp_netif_t *netif)
 }
 
 /* set up connection, Wi-Fi and/or Ethernet */
-static void start(void)
+static void start(const char* ssid, const char*  password)
 {
 
 #ifdef CONFIG_LASTLINK_CONNECT_WIFI
-    s_lastlink_esp_netif = wifi_start();
+    s_lastlink_esp_netif = wifi_start(ssid, password);
     s_active_interfaces++;
 #endif
 }
@@ -95,9 +99,9 @@ static void stop(void)
 #endif
 }
 
-esp_err_t network_connect(void)
+esp_err_t network_connect(const char* ssid, const char* password)
 {
-    start();
+    start(ssid, password);
     ESP_ERROR_CHECK(esp_register_shutdown_handler(&stop));
     // iterate over active interfaces, and print out IPs of "our" netifs
     esp_netif_t *netif = NULL;
@@ -131,7 +135,7 @@ esp_err_t network_disconnect(void)
 
 #ifdef CONFIG_LASTLINK_CONNECT_WIFI
 
-static esp_netif_t* wifi_start(void)
+static esp_netif_t* wifi_start(const char* ssid, const char* password)
 {
     char *desc;
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -153,17 +157,20 @@ static esp_netif_t* wifi_start(void)
 
     wifi_config_t wifi_config = {
         .ap = {
-            .ssid = CONFIG_LASTLINK_WIFI_SSID,
-            .ssid_len = strlen(CONFIG_LASTLINK_WIFI_SSID),
-            .password = CONFIG_LASTLINK_WIFI_PASSWORD,
             .max_connection = CONFIG_LASTLINK_MAX_STA_CONN,
             .authmode = WIFI_AUTH_WPA_WPA2_PSK,
             .beacon_interval = 5000,   /* Slow down for power save */
         },
     };
 
-    if (strlen(CONFIG_LASTLINK_WIFI_PASSWORD) == 0) {
+    memcpy((char*) wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid));
+    wifi_config.ap.ssid_len = min(strlen(ssid), sizeof(wifi_config.ap.ssid));
+
+    if (strlen(password) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+        wifi_config.ap.password[0] = '\0';
+    } else {
+        memcpy((char*) wifi_config.ap.password, password, sizeof(wifi_config.ap.password));
     }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));

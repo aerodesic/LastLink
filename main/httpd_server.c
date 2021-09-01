@@ -187,7 +187,7 @@ static esp_err_t  redirect(httpd_req_t *req, const char* uri)
  */
 static bool authenticate(const char *username, const char *password, authtoken_value_t token)
 {
-    os_delay(5000);
+    os_delay(500);
 
     if (strcmp(password, "password") == 0) {
 
@@ -711,7 +711,7 @@ static httpd_handle_t http_server_handler = NULL;
 
 
 
-void httpd_server_start(void)
+void httpd_server_start(const char* ssid, const char* password)
 {
     authtoken_lock = os_create_recursive_mutex();
 
@@ -741,7 +741,7 @@ void httpd_server_start(void)
     assert(heap_caps_check_integrity_all(true));
 #endif /* CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK */
 
-    ESP_ERROR_CHECK(network_connect());
+    ESP_ERROR_CHECK(network_connect(ssid, password));
 
 #ifdef CONFIG_LASTLINK_ADDED_HEAP_CAPS_CHECK
     assert(heap_caps_check_integrity_all(true));

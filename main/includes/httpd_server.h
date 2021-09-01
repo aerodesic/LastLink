@@ -8,7 +8,7 @@
 #ifndef __httpd_server_h_included
 #define __httpd_server_h_included
 
-void httpd_server_start(void);
+void httpd_server_start(const char* ssid, const char *password);
 void httpd_server_stop(void);
 
 #endif /* __httpd_server_h_included */

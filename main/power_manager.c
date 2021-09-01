@@ -244,7 +244,7 @@ int axp192_test_ldo3(void)
     return axp192_ioctl(axp, AXP192_TEST_LDO3, buffer) == AXP192_OK ? buffer[0] : -1;
 }
 
-bool axp192_endable_dcdc1(bool on)
+bool axp192_enable_dcdc1(bool on)
 {
     return axp192_ioctl(axp, on ? AXP192_ENABLE_DCDC1 : AXP192_DISABLE_DCDC1, NULL) == AXP192_OK;
 }

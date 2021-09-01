@@ -43,7 +43,7 @@ extern "C" {
  *
  * @return ESP_OK on successful connection
  */
-esp_err_t network_connect(void);
+esp_err_t network_connect(const char* ssid, const char* password);
 
 /**
  * Counterpart to network_connect, de-initializes Wi-Fi or Ethernet

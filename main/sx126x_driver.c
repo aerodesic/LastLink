@@ -55,7 +55,8 @@ static bool enable_radio(radio_t* radio);
 static bool activate_radio(radio_t* radio);                          /* Hardware activation of radio */
 static bool activate_receive_mode(radio_t* radio);                   /* Activates receive mode */
 
-static bool set_txpower(radio_t* radio, int power);                  /* Set transmitter power level */
+static bool set_txpower(radio_t* radio, int power);                  /* Set transmitter power level variable */
+static bool update_txpower(radio_t* radio);                          /* Updates the hardware */
 static int get_txpower(radio_t* radio);                              /* Get current transmit power */
 static bool set_channel(radio_t* radio, int channel);                /* Request channel change */
 static int get_channel(radio_t* radio);                              /* Get channel */
@@ -166,7 +167,8 @@ typedef struct sx126x_private_data {
     int               channel_change_counter;
     //int               data_rate_bps;
     double            bit_time;
-    uint8_t           tx_power;
+    int8_t            tx_power;
+    int8_t            last_tx_power;
     uint8_t           tx_ramp;
 #ifdef CONFIG_LASTLINK_RADIO_SX126x_RECEIVE_DUTYCYCLE_ENABLED
     int               sleep_period_ticks;
@@ -1057,6 +1059,7 @@ bool sx126x_create(radio_t* radio)
             data->implicit_header           = false;
             data->implicit_header_set       = false;
             data->tx_power                  = 2;
+            data->last_tx_power             = 0;  /* Forces update_txpower to do the work */
             data->enable_crc                = true;
 
             data->rlock                     = os_create_recursive_mutex();
@@ -1899,8 +1902,8 @@ ESP_LOGE(TAG, "%s: workaround 15.2.2 - setting txclampconfig", __func__);
         /* End workaround */
 
 ESP_LOGE(TAG, "%s: setting tx power to %d", __func__, data->tx_power);
-        if (!set_txpower(radio, data->tx_power)) {
-            ESP_LOGE(TAG, "%s: set_txpower radio %d failed", __func__, radio->radio_num);
+        if (!update_txpower(radio)) {
+            ESP_LOGE(TAG, "%s: update_txpower radio %d failed", __func__, radio->radio_num);
         }
 
 #if 0
@@ -2094,77 +2097,91 @@ static void update_duty_cycle(sx126x_private_data_t *data)
  */
 static bool set_txpower(radio_t* radio, int power)
 {
-    bool ok = false;
+    if (acquire_lock(radio)) {
+        sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
+        data->tx_power = power;
+        release_lock(radio);
+    }
 
-ESP_LOGI(TAG, "%s: power %d", __func__, power);
+    return true;
+}
+
+static bool update_txpower(radio_t* radio)
+{
+    bool ok = false;
 
     if (acquire_lock(radio)) {
         sx126x_private_data_t* data = (sx126x_private_data_t*) radio->driver_private_data;
 
+        /* If it has changed sine last time through - do the hard part of the job */
+        if (data->tx_power != data->last_tx_power) {
+            data->last_tx_power = data->tx_power;
 
-        /* Set up PA for power level
-         * From the manual:
-         *  - 17 (0xEF) to +14 (0x0E) dBm by step of 1 dB if low power PA is selected
-         *  - 9 (0xF7) to +22 (0x16) dBm by step of 1 dB if high power PA is selected
-         *  Selection between high power PA and low power PA is done with the command SetPaConfig
-         *  and the parameter deviceSel.  By default low power PA and +14 dBm are set.
-         */
+ESP_LOGI(TAG, "%s: power %d", __func__, data->tx_power);
 
-        int duty_cycle = 0;
-        int hp_max = 0;
-        int pa_lut = 1; /* Fixed for now */
-        int device_sel;
+            /* Set up PA for power level
+             * From the manual:
+             *  - 17 (0xEF) to +14 (0x0E) dBm by step of 1 dB if low power PA is selected
+             *  - 9 (0xF7) to +22 (0x16) dBm by step of 1 dB if high power PA is selected
+             *  Selection between high power PA and low power PA is done with the command SetPaConfig
+             *  and the parameter deviceSel.  By default low power PA and +14 dBm are set.
+             */
 
-        if (strcmp(radio->model, "1262") == 0) {
-            device_sel = SX126x_SetPaConfig_deviceSel_SX1262;
-            if (power < -17) {
-                power = -17;
-            } else if (power > 22) {
-                power = 22;
+            /* Start with the raw txpower specified by user */
+            int power = data->tx_power;
+
+            int duty_cycle = 0;
+            int hp_max = 0;
+            int pa_lut = 1; /* Fixed for now */
+            int device_sel;
+
+            if (strcmp(radio->model, "1262") == 0) {
+                /* Adjust for 1262 with PA */
+                device_sel = SX126x_SetPaConfig_deviceSel_SX1262;
+                if (power < -17) {
+                    power = -17;
+                } else if (power > 22) {
+                    power = 22;
+                }
+
+                switch (power) {
+                    default:  break;
+
+                    case 14:
+                    case 15:
+                    case 16:  hp_max = 2; duty_cycle = 2; power = 14; break;
+
+                    case 17:
+                    case 18:
+                    case 19:  hp_max = 3; duty_cycle = 2; power = 22; break;
+
+                    case 20:
+                    case 21:  hp_max = 5; duty_cycle = 3; power = 22; break;
+    
+                    case 22:  hp_max = 7; duty_cycle = 4; power = 22; break;
+                }
+            } else {
+               device_sel = SX126x_SetPaConfig_deviceSel_SX1261;
+
+                if (power < -17) {
+                    power = -17;
+                } else if (power > 15) {
+                    power = 15;
+                }
+
+                /* 1261 operates only up to 15dBm */
+                switch (power) {
+                    default:  break;
+                    case 13:  duty_cycle = 1;             break;
+                    case 14:  duty_cycle = 4;             break;
+                    case 15:  duty_cycle = 6; power = 14; break;
+                }
             }
 
-            /* The requested power */
-            data->tx_power = power;
-
-            switch (power) {
-                default:  break;
-
-                case 14:
-                case 15:
-                case 16:  hp_max = 2; duty_cycle = 2; power = 14; break;
-
-                case 17:
-                case 18:
-                case 19:  hp_max = 3; duty_cycle = 2; power = 22; break;
-
-                case 20:
-                case 21:  hp_max = 5; duty_cycle = 3; power = 22; break;
-
-                case 22:  hp_max = 7; duty_cycle = 4; power = 22; break;
-            }
-        } else {
-           device_sel = SX126x_SetPaConfig_deviceSel_SX1261;
-
-            if (power < -17) {
-                power = -17;
-            } else if (power > 15) {
-                power = 15;
-            }
-
-            data->tx_power = power;
-
-            /* 1261 operates only up to 15dBm */
-            switch (power) {
-                default:  break;
-                case 13:  duty_cycle = 1;             break;
-                case 14:  duty_cycle = 4;             break;
-                case 15:  duty_cycle = 6; power = 14; break;
-            }
+            dev_SetPaConfig(radio, duty_cycle, hp_max, device_sel, pa_lut);
+    
+            dev_SetTxParams(radio, power, data->tx_ramp);
         }
-
-        dev_SetPaConfig(radio, duty_cycle, hp_max, device_sel, pa_lut);
-
-        dev_SetTxParams(radio, power, data->tx_ramp);
 
         release_lock(radio);
 
@@ -2241,7 +2258,7 @@ static bool update_datarate(radio_t* radio, int channel, int datarate)
 
 ESP_LOGE(TAG, "%s: setting datarate %d on channel %d: bw %d sf %d cr %d tx %d", __func__, datarate, channel, bw, sf, cr, tx);
 
-        if (set_bandwidth(radio, bw) && set_spreading_factor(radio, sf) && set_coding_rate(radio, cr) && set_txpower(radio, tx)) {
+        if (set_bandwidth(radio, bw) && set_spreading_factor(radio, sf) && set_coding_rate(radio, cr) && set_txpower(radio, tx) && update_txpower(radio)) {
             sx126x_private_data_t* data = (sx126x_private_data_t*) (radio->driver_private_data);
 
             //data->data_rate_bps = (data->spreading_factor * 4 * data->bandwidth_bits) / (data->coding_rate * (1 << data->spreading_factor));
@@ -2303,11 +2320,6 @@ static bool change_channel_and_datarate(radio_t* radio, int channel, int datarat
                     ESP_LOGE(TAG,"%s: SetFrequency failed", __func__);
                 } else if (!update_datarate(radio, channel, datarate)) {
                     ESP_LOGE(TAG, "%s: update_datarate failed", __func__);
-#if 0
-/* Done inside update_datarate */
-                } else if (!set_txpower(radio, channel_table_sx126x.datarates[chanp->datarate_group][data->datarate].tx)) {
-                    ESP_LOGE(TAG, "%s: set_channel se_txpower failed", __func__);
-#endif
                 } else {
                     data->frequency = (int) (chanp->freq * channel_table_sx126x.pll_step + 0.5); /* Display purposes */
                     ok = true;
